@@ -31,6 +31,62 @@ class RetailerToolMatcherTest {
         tool("view_cart", """{"type":"object","properties":{}}"""),
     )
 
+    /** Extrait réaliste de fr-grocery-mcp (paramètre `store` = enseigne). */
+    private val frGrocery = listOf(
+        tool("find_stores", """{"type":"object","properties":{"store":{"type":"string","enum":["leclerc","superu"]},"query":{"type":"string"}},"required":["store","query"]}"""),
+        tool("search_products", """{"type":"object","properties":{"store":{"type":"string","enum":["leclerc","superu"]},"query":{"type":"string"},"limit":{"type":"integer"}},"required":["store","query"]}"""),
+        tool("add_to_cart", """{"type":"object","properties":{"store":{"type":"string","enum":["leclerc","superu"]},"product_id":{"type":"string"},"quantity":{"type":"integer"}},"required":["store","product_id"]}"""),
+        tool("remove_from_cart", """{"type":"object","properties":{"store":{"type":"string","enum":["leclerc","superu"]},"product_id":{"type":"string"}}}"""),
+        tool("get_cart", """{"type":"object","properties":{"store":{"type":"string","enum":["leclerc","superu"]}},"required":["store"]}"""),
+    )
+
+    /** Extrait réaliste de CarrefourDriveMCP, y compris un outil de paiement à ne JAMAIS utiliser. */
+    private val carrefourDrive = listOf(
+        tool("submit_checkout_payment", """{"type":"object","properties":{"checkout_type":{"type":"string"}}}"""),
+        tool("validate_checkout_summary", """{"type":"object","properties":{}}"""),
+        tool("autocomplete_search", """{"type":"object","properties":{"q":{"type":"string"}},"required":["q"]}"""),
+        tool("search_products", """{"type":"object","properties":{"q":{"type":"string"},"page":{"type":"integer"}},"required":["q"]}"""),
+        tool("get_cart", """{"type":"object","properties":{}}"""),
+        tool("add_item_to_cart", """{"type":"object","properties":{"ean":{"type":"string"},"counter":{"type":"integer"},"basketServiceId":{"type":"string"},"subBasketType":{"type":"string"}},"required":["ean","counter","basketServiceId","subBasketType"]}"""),
+        tool("get_eligible_drive_stores", """{"type":"object","properties":{"postalCode":{"type":"string"}}}"""),
+    )
+
+    @Test fun fr_grocery_mcp() {
+        val m = RetailerToolMatcher.match(frGrocery, Retailer.LECLERC)
+        assertEquals("search_products", m.searchTool)
+        assertEquals("query", m.searchQueryArg)
+        assertEquals("add_to_cart", m.addTool)
+        assertEquals("product_id", m.addProductArg)
+        assertEquals(mapOf("store" to "leclerc"), m.fixedArgs)
+        assertEquals(emptyList(), m.addContextArgs)
+    }
+
+    @Test fun carrefour_drive_mcp() {
+        val m = RetailerToolMatcher.match(carrefourDrive, Retailer.CARREFOUR)
+        assertEquals("search_products", m.searchTool)
+        assertEquals("q", m.searchQueryArg)
+        assertEquals("add_item_to_cart", m.addTool)
+        assertEquals("ean", m.addProductArg)
+        assertEquals("counter", m.addQuantityArg)
+        assertEquals(listOf("basketServiceId", "subBasketType"), m.addContextArgs)
+    }
+
+    @Test fun outils_dangereux_jamais_utilises() {
+        listOf("submit_checkout_payment", "validate_checkout_slot", "remove_from_cart", "clear_cart", "submitPayment", "place_order")
+            .forEach { kotlin.test.assertFalse(RetailerToolMatcher.isSafe(it), it) }
+        listOf("search_products", "add_to_cart", "get_cart", "add_item_to_cart", "set_quantity")
+            .forEach { kotlin.test.assertTrue(RetailerToolMatcher.isSafe(it), it) }
+    }
+
+    @Test fun produits_format_json_api() {
+        val text = """{"data":[{"type":"product","id":"3017620422003","attributes":{"ean":"3017620422003","title":"Nutella 400g",
+            "brand":"Ferrero","offers":{"3017620422003":{"0001":{"attributes":{"price":{"price":3.49,"perUnitLabel":"8,73 €/kg"}}}}}}}]}"""
+        val p = ProductParser.parse(McpCallResult(text, isError = false)).single()
+        assertEquals("Nutella 400g", p.name)
+        assertEquals(3.49, p.price)
+        assertEquals("3017620422003", p.idFor("ean"))
+    }
+
     @Test fun multi_enseignes() {
         val m = RetailerToolMatcher.match(multiRetailer, Retailer.LECLERC)
         assertEquals("search_products", m.searchTool)

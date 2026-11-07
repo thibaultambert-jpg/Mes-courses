@@ -19,7 +19,11 @@ data class Product(
     val unitPrice: String? = null,
     val packaging: String? = null,
     val available: Boolean = true,
-)
+    /** Tous les identifiants trouvés (id, ean, sku…) : l'outil d'ajout peut en attendre un en particulier. */
+    val identifiers: Map<String, String> = emptyMap(),
+) {
+    fun idFor(param: String?): String = param?.let { p -> identifiers.entries.firstOrNull { it.key.equals(p, true) }?.value } ?: id
+}
 
 /**
  * Lit la réponse d'un outil de recherche MCP, quel que soit son format JSON :
@@ -32,7 +36,7 @@ object ProductParser {
     private val idKeys = listOf("id", "product_id", "productId", "ean", "gtin", "sku", "code", "ref", "reference", "offerId", "offer_id")
     private val nameKeys = listOf("name", "title", "label", "libelle", "designation", "productName", "product_name", "nom")
     private val brandKeys = listOf("brand", "marque", "brandName")
-    private val priceKeys = listOf("price", "prix", "amount", "current_price", "currentPrice", "finalPrice", "sellPrice")
+    private val priceKeys = listOf("price_eur", "priceEur", "price", "prix", "amount", "current_price", "currentPrice", "finalPrice", "sellPrice")
     private val unitPriceKeys = listOf("unit_price", "unitPrice", "price_per_unit", "pricePerUnit", "prixAuKilo", "perUnitLabel", "unitPriceLabel")
     private val packagingKeys = listOf("packaging", "format", "conditionnement", "quantity_label", "size", "weight")
     private val availabilityKeys = listOf("available", "in_stock", "inStock", "isAvailable", "disponible")
@@ -56,8 +60,32 @@ object ProductParser {
 
     private fun collect(element: JsonElement): List<JsonObject> = when (element) {
         is JsonArray -> element.flatMap { collect(it) }
-        is JsonObject -> if (looksLikeProduct(element)) listOf(element) else element.values.flatMap { collect(it) }
+        is JsonObject -> {
+            val flat = flatten(element)
+            if (looksLikeProduct(flat)) listOf(flat) else element.values.flatMap { collect(it) }
+        }
         else -> emptyList()
+    }
+
+    /** Format JSON:API ({ id, attributes: { title, ean… } }) : on remonte les attributs d'un niveau. */
+    private fun flatten(obj: JsonObject): JsonObject {
+        val nested = listOf("attributes", "product", "item").mapNotNull { obj[it] as? JsonObject }
+        if (nested.isEmpty()) return obj
+        val merged = LinkedHashMap<String, JsonElement>()
+        nested.forEach { merged.putAll(it) }
+        merged.putAll(obj.filterKeys { it !in setOf("attributes", "product", "item") })
+        return JsonObject(merged)
+    }
+
+    /** Cherche un prix en profondeur (ex. offers.{ean}.{offre}.attributes.price.price). */
+    private fun deepPrice(element: JsonElement, depth: Int = 0): Double? {
+        if (depth > 6) return null
+        return when (element) {
+            is JsonObject -> priceKeys.firstNotNullOfOrNull { k -> element[k]?.let { (it as? JsonPrimitive).number() ?: deepPrice(it, depth + 1) } }
+                ?: element.values.firstNotNullOfOrNull { deepPrice(it, depth + 1) }
+            is JsonArray -> element.firstNotNullOfOrNull { deepPrice(it, depth + 1) }
+            else -> null
+        }
     }
 
     private fun looksLikeProduct(obj: JsonObject) =
@@ -86,10 +114,11 @@ object ProductParser {
             id = id,
             name = name,
             brand = obj.first(brandKeys).text(),
-            price = obj.first(priceKeys).number(),
+            price = obj.first(priceKeys).number() ?: deepPrice(obj),
             unitPrice = obj.first(unitPriceKeys).text(),
             packaging = obj.first(packagingKeys).text(),
             available = available,
+            identifiers = idKeys.mapNotNull { k -> (obj[k] as? JsonPrimitive)?.contentOrNull?.let { k to it } }.toMap(),
         )
     }
 }
