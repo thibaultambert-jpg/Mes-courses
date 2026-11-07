@@ -82,5 +82,5 @@ dependencies {
     debugImplementation(libs.compose.ui.tooling)
 
     implementation(libs.coroutines.android)
-    implementation(libs.ktor.client.okhttp)
+    implementation(libs.ktor.client.cio)
 }

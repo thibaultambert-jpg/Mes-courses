@@ -21,7 +21,7 @@ import fr.mescourses.core.mcp.SdkMcpToolClient
 import fr.mescourses.core.recipes.RecipeImporter
 import fr.mescourses.core.recipes.SearxngWebSearch
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.sse.SSE
 import kotlinx.coroutines.CoroutineScope
@@ -42,7 +42,7 @@ class AppContainer(context: Context) {
 
     val settings = SettingsStore(context, appScope)
 
-    val http = HttpClient(OkHttp) {
+    val http = HttpClient(CIO) {
         install(SSE)
         install(HttpTimeout) {
             requestTimeoutMillis = 90_000
