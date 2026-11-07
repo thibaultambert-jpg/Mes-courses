@@ -6,11 +6,10 @@ puis **remplir son panier drive** (Carrefour, Leclerc ; Auchan en phase 2) via d
 
 | Onglet | Rôle |
 |---|---|
-| **Assistant** | Chat avec Gemma 4 sur le téléphone. Il propose ou invente des recettes, les cherche sur internet, les enregistre, planifie les repas et remplit la liste (appels d'outils). |
-| **Planning** | Repas planifiés par jour, nombre de personnes ajustable, « ajouter les ingrédients à la liste ». |
-| **Recettes** | Livre de recettes : import depuis une page web (ou « Partager » depuis le navigateur), saisie manuelle, favoris, quantités recalculées selon le nombre de personnes. |
-| **Liste** | Liste de courses libre + ingrédients des recettes ; vue « fusionnée » (doublons regroupés, unités converties). |
-| **Panier** | Pour chaque article, recherche du produit au drive, **validation par toi**, puis ajout au panier. La commande et le paiement se font ensuite chez l'enseigne. |
+| **Menu** | Tu choisis le nombre de repas, les adultes et les enfants, tes envies, puis « Proposer un menu ». Le LLM local propose des plats **sains, bio et de saison**. Tu ajustes en discutant (« ajoute 3 adultes et 2 enfants au plat 2 », « remplace le plat 4 ») ou avec les boutons. « Valider » écrit les recettes, les range dans le livre (Historique) et remplit la liste de courses. |
+| **Recettes** | Livre de recettes vide au départ, en 3 listes : **Historique** (plats validés), **Favoris** (que le LLM peut reproposer ; les recettes partagées depuis un site ou écrites à la main y arrivent), **Ne plus proposer** (jamais reproposées). Un bouton déplace un plat d'une liste à l'autre. |
+| **Liste** | Liste de courses libre + ingrédients des menus ; vue « fusionnée » (doublons regroupés, unités converties). Les quantités tiennent compte des enfants (demi-portion par défaut). |
+| **Panier** | Pour chaque article, recherche du produit au drive (bio en priorité), **validation par toi**, puis ajout au panier. La commande et le paiement se font ensuite chez l'enseigne. |
 
 ## Choix techniques
 
