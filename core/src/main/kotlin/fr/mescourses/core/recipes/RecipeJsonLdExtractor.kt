@@ -19,10 +19,13 @@ object RecipeJsonLdExtractor {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    fun extract(html: String, sourceUrl: String? = null): Recipe? {
-        val doc = Jsoup.parse(html)
-        for (script in doc.select("script[type=application/ld+json]")) {
-            val element = runCatching { json.parseToJsonElement(script.data().trim()) }.getOrNull() ?: continue
+    fun extract(html: String, sourceUrl: String? = null): Recipe? =
+        extractFromJsonLd(Jsoup.parse(html).select("script[type=application/ld+json]").map { it.data() }, sourceUrl)
+
+    /** Même chose à partir du contenu des balises JSON-LD (lues par le navigateur intégré). */
+    fun extractFromJsonLd(blocks: List<String>, sourceUrl: String? = null): Recipe? {
+        for (block in blocks) {
+            val element = runCatching { json.parseToJsonElement(block.trim()) }.getOrNull() ?: continue
             val recipeNode = findRecipe(element) ?: continue
             return toRecipe(recipeNode, sourceUrl)
         }

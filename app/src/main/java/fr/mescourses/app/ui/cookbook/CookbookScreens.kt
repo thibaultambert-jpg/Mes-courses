@@ -8,6 +8,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,6 +50,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -88,6 +90,8 @@ import fr.mescourses.app.ui.components.PillStepper
 import fr.mescourses.app.ui.components.SectionCard
 import fr.mescourses.app.ui.components.SectionHeader
 import fr.mescourses.app.ui.components.StatChip
+import fr.mescourses.app.ui.discover.AddByLinkDialog
+import fr.mescourses.app.ui.discover.DiscoverContent
 import fr.mescourses.app.ui.components.balanceHint
 import fr.mescourses.core.menu.PlateBalance
 import fr.mescourses.core.model.Recipe
@@ -107,8 +111,11 @@ fun CookbookScreen(
     onOpenRecipe: (Long) -> Unit,
     onNewRecipe: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenPreview: (String) -> Unit,
+    onBrowse: (String) -> Unit,
 ) {
     val vm = containerViewModel { CookbookViewModel(it) }
+    val discover by vm.discover.collectAsStateWithLifecycle()
     val recipes by vm.recipes.collectAsStateWithLifecycle()
     val counts by vm.counts.collectAsStateWithLifecycle()
     val tab by vm.tab.collectAsStateWithLifecycle()
@@ -140,9 +147,14 @@ fun CookbookScreen(
                 )
                 DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }) {
                     DropdownMenuItem(
-                        text = { Text("Coller un lien de recette") },
+                        text = { Text("Depuis un lien") },
                         leadingIcon = { Icon(Icons.Filled.Link, null) },
                         onClick = { addMenu = false; showImport = true },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Chercher sur les sites de recettes") },
+                        leadingIcon = { Icon(Icons.Filled.Search, null) },
+                        onClick = { addMenu = false; vm.discover.value = true },
                     )
                     DropdownMenuItem(
                         text = { Text("Écrire une recette") },
@@ -154,22 +166,26 @@ fun CookbookScreen(
         },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
-                RecipeStatus.entries.forEachIndexed { i, s ->
-                    SegmentedButton(
-                        selected = tab == s,
-                        onClick = { vm.tab.value = s },
-                        shape = SegmentedButtonDefaults.itemShape(i, RecipeStatus.entries.size),
-                        icon = {},
-                        label = {
-                            Text(
-                                "${s.emoji} ${if (s == RecipeStatus.BANNI) "Exclus" else s.label} ${counts[s] ?: 0}",
-                                maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            )
-                        },
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                RecipeStatus.entries.forEach { s ->
+                    FilterChip(
+                        selected = !discover && tab == s,
+                        onClick = { vm.tab.value = s; vm.discover.value = false },
+                        label = { Text("${s.emoji} ${if (s == RecipeStatus.BANNI) "Exclus" else s.label} ${counts[s] ?: 0}", maxLines = 1) },
                     )
                 }
+                FilterChip(
+                    selected = discover,
+                    onClick = { vm.discover.value = true },
+                    label = { Text("🔎 Découvrir", maxLines = 1) },
+                )
             }
+            if (discover) {
+                DiscoverContent(snackbar = snackbar, onOpenPreview = onOpenPreview, onBrowse = onBrowse)
+            } else {
             OutlinedTextField(
                 value = query,
                 onValueChange = { vm.query.value = it },
@@ -193,8 +209,8 @@ fun CookbookScreen(
                     RecipeStatus.HISTORIQUE -> EmptyState("🕘", "Ton historique est vide", "Les plats des menus que tu valides arrivent ici.")
                     RecipeStatus.FAVORI -> EmptyState(
                         "⭐", "Aucun favori",
-                        "Partage une recette depuis ton navigateur, colle un lien, ou écris-la. L'assistant pourra te la reproposer.",
-                        actionLabel = "Coller un lien", onAction = { showImport = true },
+                        "Cherche-en dans « Découvrir », partage une recette depuis ton navigateur, colle un lien, ou écris-la. L'assistant pourra te la reproposer.",
+                        actionLabel = "Découvrir des recettes", onAction = { vm.discover.value = true },
                     )
                     RecipeStatus.BANNI -> EmptyState("🚫", "Aucun plat exclu", "Les plats déplacés ici ne te seront plus jamais proposés.")
                 }
@@ -219,25 +235,14 @@ fun CookbookScreen(
                     }
                 }
             }
+            }
         }
     }
 
     if (showImport) {
-        var url by remember { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { showImport = false },
-            icon = { Icon(Icons.Filled.Link, null) },
-            title = { Text("Importer une recette") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Colle l'adresse d'une page (Marmiton, 750g, Cuisine AZ…). Elle rejoindra tes favoris.", style = MaterialTheme.typography.bodyMedium)
-                    OutlinedTextField(url, { url = it }, singleLine = true, placeholder = { Text("https://…") }, shape = RoundedCornerShape(16.dp))
-                }
-            },
-            confirmButton = {
-                Button(enabled = url.startsWith("http"), onClick = { vm.import(url) { onOpenRecipe(it) }; showImport = false }) { Text("Importer") }
-            },
-            dismissButton = { TextButton(onClick = { showImport = false }) { Text("Annuler") } },
+        AddByLinkDialog(
+            onDismiss = { showImport = false },
+            onImport = { url -> vm.import(url) { onOpenRecipe(it) }; showImport = false },
         )
     }
 }

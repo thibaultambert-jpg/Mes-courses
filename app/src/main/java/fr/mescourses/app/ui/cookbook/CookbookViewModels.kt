@@ -20,6 +20,9 @@ import kotlinx.coroutines.launch
 class CookbookViewModel(private val c: AppContainer) : ViewModel() {
     val query = MutableStateFlow("")
     val tab = MutableStateFlow(RecipeStatus.HISTORIQUE)
+    /** Onglet « Découvrir » (recherche sur les sites de recettes) affiché à la place d'une liste du livre. */
+    val discover = MutableStateFlow(false)
+    private val favorites = fr.mescourses.app.ui.discover.Favorites(c, viewModelScope)
     val importing = MutableStateFlow(false)
     val messages = MutableStateFlow<String?>(null)
 
@@ -47,10 +50,10 @@ class CookbookViewModel(private val c: AppContainer) : ViewModel() {
         viewModelScope.launch {
             importing.value = true
             try {
-                val recipe = c.importer.import(url.trim()).copy(status = RecipeStatus.FAVORI)
-                val id = c.recipes.save(recipe)
+                val (id, title) = favorites.addFromUrl(url.trim())
                 tab.value = RecipeStatus.FAVORI
-                messages.value = "« ${recipe.title} » ajoutée aux favoris"
+                discover.value = false
+                messages.value = "« $title » ajoutée aux favoris"
                 onDone(id)
             } catch (e: Exception) {
                 messages.value = "Import impossible : ${e.message}"

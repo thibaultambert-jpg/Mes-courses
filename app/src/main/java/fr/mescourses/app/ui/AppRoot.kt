@@ -45,6 +45,8 @@ import fr.mescourses.core.carrefour.CarrefourRoutes
 import fr.mescourses.app.ui.cookbook.CookbookScreen
 import fr.mescourses.app.ui.cookbook.RecipeDetailScreen
 import fr.mescourses.app.ui.cookbook.RecipeEditScreen
+import fr.mescourses.app.ui.discover.RecipeBrowserScreen
+import fr.mescourses.app.ui.discover.RecipePreviewScreen
 import fr.mescourses.app.ui.menu.MenuScreen
 import fr.mescourses.app.ui.settings.SettingsScreen
 import fr.mescourses.app.ui.shopping.ShoppingListScreen
@@ -132,6 +134,29 @@ fun AppRoot(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
                     onOpenRecipe = { nav.navigate("recipe/$it") },
                     onNewRecipe = { nav.navigate("recipe/edit/0") },
                     onOpenSettings = { nav.navigate("settings") },
+                    onOpenPreview = { nav.navigate("recipes/preview?url=${android.net.Uri.encode(it)}") },
+                    onBrowse = { nav.navigate("recipes/browse?url=${android.net.Uri.encode(it)}") },
+                )
+            }
+            composable(
+                "recipes/preview?url={url}",
+                arguments = listOf(navArgument("url") { type = NavType.StringType; defaultValue = "" }),
+            ) { entry ->
+                RecipePreviewScreen(
+                    url = entry.arguments?.getString("url").orEmpty(),
+                    onBack = { nav.popBackStack() },
+                    onOpenRecipe = { nav.navigate("recipe/$it") },
+                    onBrowse = { nav.navigate("recipes/browse?url=${android.net.Uri.encode(it)}") },
+                )
+            }
+            composable(
+                "recipes/browse?url={url}",
+                arguments = listOf(navArgument("url") { type = NavType.StringType; defaultValue = "" }),
+            ) { entry ->
+                RecipeBrowserScreen(
+                    startUrl = entry.arguments?.getString("url").orEmpty(),
+                    onClose = { nav.popBackStack() },
+                    onOpenRecipe = { nav.navigate("recipe/$it") },
                 )
             }
             composable("shopping") {
