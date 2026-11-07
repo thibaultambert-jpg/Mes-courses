@@ -2,6 +2,7 @@
 
 package fr.mescourses.app.ui.cart
 
+import fr.mescourses.core.carrefour.CarrefourRoutes
 import fr.mescourses.app.llm.ModelStatus
 import fr.mescourses.app.ui.components.ChefCard
 import fr.mescourses.app.ui.components.ModelLoadingCard
@@ -164,8 +165,29 @@ fun CartScreen(
                 }
                 Phase.TERMINE -> item {
                     SectionCard {
-                        Text("🎉 Panier rempli !", style = MaterialTheme.typography.titleLarge)
-                        Text("${state.lines.count { it.status == LineStatus.AJOUTE }} produit(s) ajoutés. Choisis ton créneau et paie sur carrefour.fr.")
+                        when {
+                            state.noDrive -> {
+                                Text("🏪 Drive pas encore reconnu", style = MaterialTheme.typography.titleLarge)
+                                Text(
+                                    "Carrefour ne m'a pas encore donné l'identifiant de ton drive : il apparaît dans ton panier dès qu'il contient " +
+                                        "un article, ou dans les offres d'une recherche. Ajoute un premier article sur le site, puis réessaie.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedButton(onClick = { onOpenSite(CarrefourRoutes.ORIGIN + CarrefourRoutes.search("lait")) }) { Text("Ajouter sur le site") }
+                                    Button(onClick = { vm.send() }) { Text("Réessayer") }
+                                }
+                            }
+                            state.added == 0 -> {
+                                Text("Aucun produit ajouté", style = MaterialTheme.typography.titleLarge)
+                                Text("Regarde le message sous chaque article, puis réessaie.", style = MaterialTheme.typography.bodyMedium)
+                                Button(onClick = { vm.send() }) { Text("Réessayer") }
+                            }
+                            else -> {
+                                Text("🎉 Panier rempli !", style = MaterialTheme.typography.titleLarge)
+                                Text("${state.added} produit(s) ajoutés. Choisis ton créneau et paie sur carrefour.fr.")
+                            }
+                        }
                     }
                 }
                 else -> Unit

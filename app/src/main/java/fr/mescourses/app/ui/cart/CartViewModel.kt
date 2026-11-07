@@ -29,7 +29,15 @@ data class CartState(
     val cart: Cart? = null,
     val slots: List<TimeSlot>? = null,
     val loadingInfo: Boolean = false,
-)
+) {
+    /** Carrefour n'a pas encore donné l'identifiant du drive (panier vide et aucune offre trouvée). */
+    val noDrive: Boolean get() = lines.any { it.status == LineStatus.ERREUR && it.message == NO_DRIVE_MESSAGE }
+    val added: Int get() = lines.count { it.status == LineStatus.AJOUTE }
+
+    companion object {
+        val NO_DRIVE_MESSAGE: String? = fr.mescourses.core.carrefour.CarrefourException.NoDrive().message
+    }
+}
 
 class CartViewModel(private val c: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(CartState())

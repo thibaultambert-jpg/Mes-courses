@@ -42,6 +42,7 @@ import io.ktor.client.plugins.HttpTimeout
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.time.LocalDate
 
@@ -86,7 +87,18 @@ class AppContainer(context: Context) {
 
     // --- Carrefour (natif, via une WebView connectée) ---
     val bridge = CarrefourWebViewBridge(context) { settings.current.uaWithoutWv }
-    val carrefour = CarrefourClient(bridge, savedContext = { settings.current.driveContext() })
+    val carrefour = CarrefourClient(
+        bridge,
+        savedContext = { settings.current.driveContext() },
+        // Drive découvert (panier ou offres d'une recherche) : mémorisé pour les fois suivantes.
+        onContext = { ctx, _ ->
+            appScope.launch {
+                settings.update {
+                    it.copy(basketServiceId = ctx.basketServiceId, subBasketType = ctx.subBasketType, facilityServiceId = ctx.facilityServiceId ?: it.facilityServiceId)
+                }
+            }
+        },
+    )
     val session = CarrefourSession(carrefour, bridge, settings)
     val confirmations = ConfirmationBroker()
     val pendingCart = MutableStateFlow<PendingCart?>(null)

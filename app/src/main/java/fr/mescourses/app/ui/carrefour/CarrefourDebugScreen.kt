@@ -58,6 +58,7 @@ fun CarrefourDebugScreen(onBack: () -> Unit, onOpenSite: () -> Unit) {
     var result by remember { mutableStateOf<HttpResponse?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var millis by remember { mutableStateOf(0L) }
+    var driveInfo by remember { mutableStateOf<String?>(null) }
 
     ScreenScaffold(title = "Debug Carrefour", onBack = onBack) { padding ->
         Column(
@@ -90,6 +91,21 @@ fun CarrefourDebugScreen(onBack: () -> Unit, onOpenSite: () -> Unit) {
                     millis = System.currentTimeMillis() - start
                 }
             }) { Text("Envoyer") }
+
+            // Identifiants du drive seulement (aucune donnée personnelle).
+            OutlinedButton(onClick = {
+                scope.launch {
+                    driveInfo = "Recherche…"
+                    val ctx = c.carrefour.discoverContext()
+                    driveInfo = if (ctx == null) {
+                        "Aucun identifiant de drive trouvé (panier vide et aucune offre dans la recherche)."
+                    } else {
+                        "basketServiceId : ${ctx.basketServiceId}\nsubBasketType : ${ctx.subBasketType}\n" +
+                            "facilityServiceId : ${ctx.facilityServiceId ?: "—"}\nsource : ${c.carrefour.contextSource ?: "?"}"
+                    }
+                }
+            }) { Text("Contexte drive") }
+            driveInfo?.let { Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
 
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             result?.let { r ->
