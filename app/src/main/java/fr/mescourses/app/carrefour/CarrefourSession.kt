@@ -4,6 +4,7 @@ import android.webkit.CookieManager
 import fr.mescourses.app.data.SettingsStore
 import fr.mescourses.core.carrefour.CarrefourClient
 import fr.mescourses.core.carrefour.CarrefourException
+import fr.mescourses.core.carrefour.CarrefourRoutes
 import fr.mescourses.core.carrefour.WriteConfirmer
 import fr.mescourses.core.carrefour.WriteRequest
 import kotlinx.coroutines.CompletableDeferred
@@ -27,10 +28,15 @@ class CarrefourSession(
     private val _state = MutableStateFlow(SessionState.INCONNU)
     val state: StateFlow<SessionState> = _state
 
+    /** Raison du dernier échec de vérification, affichée à l'utilisateur (jamais de donnée personnelle). */
+    @Volatile var lastProblem: String? = null
+        private set
+
     suspend fun check(): SessionState {
         _state.value = try {
-            val cart = client.cart()
-            cart.context?.let { ctx ->
+            val cart = client.sessionProbe()
+            lastProblem = null
+            cart?.context?.let { ctx ->
                 // Mémorise le contexte du drive pour les fois suivantes.
                 settings.update {
                     it.copy(basketServiceId = ctx.basketServiceId, subBasketType = ctx.subBasketType, facilityServiceId = ctx.facilityServiceId ?: it.facilityServiceId)
@@ -38,14 +44,27 @@ class CarrefourSession(
             }
             SessionState.CONNECTE
         } catch (e: CarrefourException.SessionExpired) {
+            lastProblem = "Carrefour répond « non connecté » (401/403)."
             SessionState.CONNEXION_REQUISE
         } catch (e: CarrefourException.ChallengeRequired) {
+            lastProblem = "Carrefour demande une vérification anti-robot."
             SessionState.VERIFICATION
         } catch (e: Exception) {
+            lastProblem = e.message ?: e.toString()
             _state.value
         }
         return _state.value
     }
+
+    /** La WebView visible a constaté elle-même la connexion (GET /api/cart = 200) : on le croit tout de suite. */
+    fun markConnected() {
+        lastProblem = null
+        _state.value = SessionState.CONNECTE
+    }
+
+    /** Présence du cookie SSO Carrefour (jamais lu ni journalisé, on teste seulement son existence). */
+    fun hasSsoCookie(): Boolean =
+        CookieManager.getInstance().getCookie(CarrefourRoutes.IAM_ORIGIN)?.contains("c4iamsecuretk=") == true
 
     /** Vérifie la session, tente un renouvellement silencieux, sinon demande la connexion. */
     suspend fun ensureSession(): Boolean {
@@ -67,7 +86,9 @@ class CarrefourSession(
     /** Après une connexion ou une visite dans la WebView visible. */
     suspend fun onVisibleSiteClosed() {
         CookieManager.getInstance().flush()
-        bridge.reload()
+        bridge.reloadAndWait()
+        // Une erreur réseau (WebView invisible pas prête) laisse l'état inchangé : une connexion déjà constatée
+        // dans la WebView visible reste valable.
         check()
     }
 

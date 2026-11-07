@@ -11,6 +11,8 @@ import fr.mescourses.core.model.RecipeStatus
 import fr.mescourses.core.model.stripAccents
 import fr.mescourses.core.shopping.ShoppingListMerger
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -67,6 +69,48 @@ class RecipeDetailViewModel(private val c: AppContainer, private val id: Long) :
     val messages = MutableStateFlow<String?>(null)
 
     fun childFactor() = c.settings.current.childFactor
+
+    /** Écriture des étapes à la demande (recettes validées dont seuls les ingrédients existent). */
+    sealed interface StepsState {
+        data object Idle : StepsState
+        data object Writing : StepsState
+        data class Failed(val message: String) : StepsState
+    }
+
+    val steps = MutableStateFlow<StepsState>(StepsState.Idle)
+    val model = c.model.status
+    private val writer = c.stepsWriter()
+
+    init {
+        viewModelScope.launch {
+            // Première recette reçue : si les étapes manquent, le chef les écrit tout de suite.
+            val r = recipe.filterNotNull().first()
+            if (writer.needsSteps(r)) writeSteps()
+        }
+    }
+
+    fun writeSteps() {
+        if (steps.value == StepsState.Writing) return
+        viewModelScope.launch {
+            val r = c.recipes.get(id) ?: return@launch
+            if (!writer.needsSteps(r)) return@launch
+            if (!c.model.status.value.available) {
+                steps.value = StepsState.Failed("L'assistant n'est pas installé : installe-le dans les Réglages.")
+                return@launch
+            }
+            steps.value = StepsState.Writing
+            val done = runCatching { c.chef.keepAwake("Le chef écrit « ${r.title} »…") { writer.complete(r) } }
+            val completed = done.getOrNull()
+            if (completed != null) {
+                // Relit la recette : l'utilisateur a pu la modifier entre-temps.
+                val current = c.recipes.get(id) ?: return@launch
+                c.recipes.save(current.copy(steps = completed.steps, prepMinutes = completed.prepMinutes, cookMinutes = completed.cookMinutes, notes = completed.notes, tags = completed.tags))
+                steps.value = StepsState.Idle
+            } else {
+                steps.value = StepsState.Failed(done.exceptionOrNull()?.message ?: "Le chef n'a pas réussi à écrire les étapes.")
+            }
+        }
+    }
 
     fun addToList(r: Recipe) = viewModelScope.launch {
         val p = portions.value
