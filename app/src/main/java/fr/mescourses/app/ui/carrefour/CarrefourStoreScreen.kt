@@ -102,7 +102,13 @@ fun CarrefourStoreScreen(onBack: () -> Unit, onOpenSite: () -> Unit) {
             items(stores, key = { it.id }) { store ->
                 val selected = store.id == settings.storeId
                 Card(
-                    onClick = { scope.launch { c.settings.update { it.copy(storeId = store.id, storeName = store.name) } } },
+                    onClick = {
+                        scope.launch {
+                            // Nouveau drive : l'ancien identifiant de panier ne vaut plus, il sera relu (panier ou recherche).
+                            c.carrefour.forgetContext()
+                            c.settings.update { it.copy(storeId = store.id, storeName = store.name, basketServiceId = "", facilityServiceId = "") }
+                        }
+                    },
                     shape = MaterialTheme.shapes.medium,
                     colors = CardDefaults.cardColors(
                         containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLowest,

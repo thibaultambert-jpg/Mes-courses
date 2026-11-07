@@ -84,7 +84,10 @@ content-type: application/json        (requêtes avec corps)
 | Réponse aux écritures | totaux et résumé du panier mis à jour | — | DMCP (description) | ⚠️ champs |
 
 - `counter` est la quantité **totale** voulue, pas un incrément (« desired quantity » dans DMCP).
-- `basketServiceId` (ex. `0678-150-7052`) et `subBasketType` (ex. `drive_clcv`) identifient le drive. Ils se lisent dans `GET /api/cart`. C'est ce que fait déjà `ContextFinder` dans `core/.../cart/RetailerSession.kt`.
+- `basketServiceId` (ex. `0678-150-7052`) et `subBasketType` (ex. `drive_clcv`) identifient le drive.
+  - Ils se lisent dans `GET /api/cart`, **mais seulement si le panier contient déjà un article**.
+  - Panier vide : `basketServiceId` est la clé du 2ᵉ niveau des offres d'une recherche, `offers.{ean}.{offerServiceId}` (forme `\d+-\d+-\d+`). C'est `CarrefourClient.context()` qui fait cette lecture.
+  - Le contexte trouvé est enregistré dans les Réglages.
 
 ## 6. Créneaux — ✅ `GET /api/timeslots?facilityServiceId=<id>` (connexion requise)
 

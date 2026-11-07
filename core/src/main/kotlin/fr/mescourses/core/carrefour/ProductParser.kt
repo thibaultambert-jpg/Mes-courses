@@ -25,6 +25,11 @@ data class Product(
     val imageUrl: String? = null,
     /** Tous les identifiants trouvés (id, ean, sku…). */
     val identifiers: Map<String, String> = emptyMap(),
+    /**
+     * Service du drive qui propose l'offre (ex. « 0678-150-7052 ») : c'est le `basketServiceId` exigé pour
+     * ajouter au panier. Lu dans `offers.{ean}.{offerServiceId}` des résultats de recherche.
+     */
+    val offerServiceId: String? = null,
 ) {
     val ean: String get() = identifiers["ean"] ?: identifiers["gtin13"] ?: identifiers["gtin"] ?: id
     val organic: Boolean get() = Regex("""\bbio\b""", RegexOption.IGNORE_CASE).containsMatchIn(name + " " + (brand ?: ""))
@@ -138,6 +143,27 @@ object ProductParser {
                 (img as? JsonObject)?.let { (it["medium"] ?: it["large"] ?: it["url"]).text() } ?: (img as? JsonPrimitive).text()
             } ?: (obj["image"] as? JsonPrimitive).text(),
             identifiers = ids,
+            offerServiceId = offerServiceId(offers),
         )
+    }
+
+    private val serviceIdPattern = Regex("""^\d+-\d+-\d+$""")
+
+    fun isServiceId(value: String?) = value != null && serviceIdPattern.matches(value)
+
+    /** `offers.{ean}.{offerServiceId}.attributes` : la clé du 2ᵉ niveau, ou un champ explicite de l'offre. */
+    private fun offerServiceId(offers: JsonElement?): String? {
+        val byEan = offers as? JsonObject ?: return null
+        for (perEan in byEan.values) {
+            val offersOfProduct = perEan as? JsonObject ?: continue
+            for ((key, offer) in offersOfProduct) {
+                val attrs = (offer as? JsonObject)?.let { (it["attributes"] as? JsonObject) ?: it }
+                listOf("basketServiceId", "offerServiceId", "serviceId").firstNotNullOfOrNull { k ->
+                    (attrs?.get(k) as? JsonPrimitive)?.contentOrNull?.takeIf(::isServiceId)
+                }?.let { return it }
+                if (isServiceId(key)) return key
+            }
+        }
+        return null
     }
 }

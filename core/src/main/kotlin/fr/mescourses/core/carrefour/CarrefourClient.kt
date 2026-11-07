@@ -20,6 +20,8 @@ class CarrefourClient(
     private val transport: HttpTransport,
     /** Drive choisi dans l'app, utilisé si le panier ne révèle pas encore son contexte. */
     private val savedContext: () -> DriveContext? = { null },
+    /** Appelé quand un contexte de drive est découvert (pour l'enregistrer dans les Réglages). */
+    private val onContext: (DriveContext, String) -> Unit = { _, _ -> },
     private val now: () -> Long = System::currentTimeMillis,
     private val rateLimitWaitMs: Long = 3_000,
 ) : RetailerBackend {
@@ -34,6 +36,22 @@ class CarrefourClient(
 
     @Volatile var lastContext: DriveContext? = null
         private set
+
+    /** D'où vient le contexte courant : « panier », « recherche », « enregistré » (pour le debug). */
+    @Volatile var contextSource: String? = null
+        private set
+
+    /** Dernier service de drive vu dans une recherche (offres des produits). */
+    @Volatile private var searchServiceId: String? = null
+
+    private fun remember(ctx: DriveContext, source: String) {
+        val previous = lastContext
+        // Le panier connaît aussi facilityServiceId : on le garde si la nouvelle source ne l'a pas.
+        val merged = if (ctx.facilityServiceId == null && previous?.basketServiceId == ctx.basketServiceId) ctx.copy(facilityServiceId = previous.facilityServiceId) else ctx
+        lastContext = merged
+        contextSource = source
+        if (merged != previous) onContext(merged, source)
+    }
 
     /** Requête avec traduction des erreurs ; un 429 est réessayé une fois après une pause. */
     suspend fun call(method: String, path: String, body: String? = null, json: Boolean = true): HttpResponse {
@@ -75,7 +93,7 @@ class CarrefourClient(
      */
     suspend fun sessionProbe(): Cart? {
         val body = call("GET", CarrefourRoutes.CART).body
-        return runCatching { CarrefourParsers.parseCart(body) }.getOrNull()?.also { c -> c.context?.let { lastContext = it } }
+        return runCatching { CarrefourParsers.parseCart(body) }.getOrNull()?.also { c -> c.context?.let { remember(it, "panier") } }
     }
 
     // ---------- Recherche ----------
@@ -83,7 +101,9 @@ class CarrefourClient(
     override suspend fun search(query: String, limit: Int): List<Product> {
         val key = query.trim().lowercase()
         cacheLock.withLock { searchCache[key]?.takeIf { now() - it.at < cacheTtlMs }?.let { return it.value.take(limit) } }
-        val products = CarrefourParsers.parseSearch(call("GET", CarrefourRoutes.search(query)).body).filter { it.available }
+        val all = CarrefourParsers.parseSearch(call("GET", CarrefourRoutes.search(query)).body)
+        all.firstNotNullOfOrNull { it.offerServiceId }?.let { searchServiceId = it }
+        val products = all.filter { it.available }
         cacheLock.withLock { searchCache[key] = Cached(now(), products) }
         return products.take(limit)
     }
@@ -108,16 +128,39 @@ class CarrefourClient(
 
     override suspend fun cart(): Cart {
         val cart = CarrefourParsers.parseCart(call("GET", CarrefourRoutes.CART).body)
-        cart.context?.let { lastContext = it }
+        cart.context?.let { remember(it, "panier") }
         return cart
     }
 
-    private suspend fun context(): DriveContext =
-        lastContext ?: cart().context ?: savedContext() ?: throw CarrefourException.NoDrive()
+    /**
+     * Contexte du drive, dans l'ordre : déjà connu, panier, enregistré, offres vues en recherche, puis
+     * recherche du produit par EAN. Un panier VIDE ne contient pas `basketServiceId` : c'est la recherche
+     * (faite avec le drive choisi) qui le donne.
+     */
+    private suspend fun context(ean: String? = null): DriveContext {
+        lastContext?.let { return it }
+        runCatching { cart() }.getOrElse { if (it is CarrefourException.SessionExpired || it is CarrefourException.ChallengeRequired) throw it }
+        lastContext?.let { return it }
+        savedContext()?.let { remember(it, "enregistré"); return it }
+        val fromSearch = searchServiceId ?: ean?.let {
+            runCatching { search(it, 5) }.getOrElse { e -> if (e is CarrefourException.SessionExpired || e is CarrefourException.ChallengeRequired) throw e }
+            searchServiceId
+        }
+        fromSearch?.let { id ->
+            val ctx = DriveContext(id, CarrefourRoutes.DEFAULT_SUB_BASKET, null)
+            remember(ctx, "recherche")
+            return ctx
+        }
+        throw CarrefourException.NoDrive()
+    }
+
+    /** Pour l'écran de debug : cherche le contexte sans rien écrire. */
+    suspend fun discoverContext(): DriveContext? = runCatching { context(null) }.getOrNull()
+        ?: runCatching { search("lait", 3); context(null) }.getOrNull()
 
     override suspend fun setQuantity(ean: String, quantity: Int): Cart {
         require(quantity in 0..50) { "Quantité invalide : $quantity" }
-        val ctx = context()
+        val ctx = context(ean)
         val body = buildJsonObject {
             putJsonObject("trackingRequest") { put("pageType", "search"); put("pageId", "search") }
             put("items", JsonArray(listOf(buildJsonObject {
@@ -130,10 +173,19 @@ class CarrefourClient(
         val response = call("PATCH", CarrefourRoutes.CART, Json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), body))
         // La réponse contient le panier mis à jour ; à défaut on le relit.
         val parsed = CarrefourParsers.parseCart(response.body)
-        return if (parsed.lines.isNotEmpty() || parsed.total != null) parsed.also { c -> c.context?.let { lastContext = it } } else cart()
+        return if (parsed.lines.isNotEmpty() || parsed.total != null) parsed.also { c -> c.context?.let { remember(it, "panier") } } else cart()
+    }
+
+    /** Oublie le drive connu (après un changement de drive). */
+    fun forgetContext() {
+        lastContext = null
+        contextSource = null
+        searchServiceId = null
     }
 
     override suspend fun addToCart(product: Product, quantity: Int): Cart {
+        // Le produit vient d'une recherche : son offre indique le drive, utile quand le panier est vide.
+        if (searchServiceId == null) product.offerServiceId?.let { searchServiceId = it }
         val current = cart().quantityOf(product.ean)
         return setQuantity(product.ean, current + quantity)
     }

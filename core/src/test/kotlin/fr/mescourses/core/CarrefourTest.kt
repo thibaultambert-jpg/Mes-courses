@@ -65,6 +65,43 @@ class CarrefourTest {
         assertEquals("Lait d'avoine bio 1L", p.name)
         assertEquals("Bjorg", p.brand)
         assertEquals(2.49, p.price)
+        assertEquals("0042-150-7777", p.offerServiceId)
+    }
+
+    @Test fun service_du_drive_lu_dans_les_offres() {
+        val p = CarrefourParsers.parseSearch(fixture("search.json"))
+        assertEquals("0001-150-1", p.first().offerServiceId)
+        // Clé d'offre qui n'a pas la forme d'un identifiant de drive : ignorée.
+        val bad = CarrefourParsers.parseSearch(fixture("search.json").replace("0001-150-1", "offre-1"))
+        assertEquals(null, bad.first().offerServiceId)
+    }
+
+    @Test fun panier_vide_le_drive_vient_de_la_recherche() = runTest {
+        val t = FakeTransport { m, path, _ ->
+            when {
+                m == "GET" && path.startsWith("/s?") -> ok(fixture("search.json"))
+                m == "GET" -> ok("{\"cart\":{}}") // panier vide : pas de basketServiceId
+                else -> ok("{}")
+            }
+        }
+        val found = mutableListOf<Pair<DriveContext, String>>()
+        val client = CarrefourClient(t, onContext = { ctx, src -> found += ctx to src })
+        client.setQuantity("3560070000011", 2)
+        // Sans contexte, le client a cherché le produit par son EAN pour lire son offre.
+        assertTrue(t.calls.any { it.second.startsWith("/s?") && "3560070000011" in it.second })
+        val patch = t.calls.single { it.first == "PATCH" }.third!!
+        assertTrue("0001-150-1" in patch && "drive_clcv" in patch, patch)
+        assertEquals("recherche", found.single().second)
+        assertEquals("0001-150-1", found.single().first.basketServiceId)
+        // La fois suivante, plus de recherche : le contexte est connu.
+        val searches = t.calls.count { it.second.startsWith("/s?") }
+        client.setQuantity("3560070000028", 1)
+        assertEquals(searches, t.calls.count { it.second.startsWith("/s?") })
+    }
+
+    @Test fun drive_introuvable() = runTest {
+        val t = FakeTransport { _, _, _ -> ok("{\"cart\":{}}") }
+        assertFailsWith<CarrefourException.NoDrive> { CarrefourClient(t).setQuantity("3560070000011", 1) }
     }
 
     @Test fun panier() {
