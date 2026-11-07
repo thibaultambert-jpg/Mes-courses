@@ -54,7 +54,7 @@ data class MenuDraftEntity(
     val children: Int,
     val recipeId: Long?,
     /** List<String> en JSON */
-    val mainIngredients: String,
+    @androidx.room.ColumnInfo(defaultValue = "[]") val mainIngredients: String,
 )
 
 @Entity(tableName = "shopping_items")
@@ -196,8 +196,7 @@ val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
         db.execSQL(
             """CREATE TABLE menu_draft (
                 position INTEGER PRIMARY KEY NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL,
-                adults INTEGER NOT NULL, children INTEGER NOT NULL, recipeId INTEGER,
-                mainIngredients TEXT NOT NULL DEFAULT '[]')""",
+                adults INTEGER NOT NULL, children INTEGER NOT NULL, recipeId INTEGER)""",
         )
     }
 }
