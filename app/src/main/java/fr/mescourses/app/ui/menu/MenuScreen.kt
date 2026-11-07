@@ -2,6 +2,14 @@
 
 package fr.mescourses.app.ui.menu
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -76,6 +84,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import fr.mescourses.app.llm.ModelStatus
+import fr.mescourses.app.ui.components.ChefCard
+import fr.mescourses.app.ui.components.ModelLoadingCard
+import fr.mescourses.app.work.Validation
 import fr.mescourses.app.ui.common.ScreenScaffold
 import fr.mescourses.app.ui.common.containerViewModel
 import fr.mescourses.app.ui.components.BalanceDots
@@ -116,6 +127,7 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit, onOpenS
     val snackbar = remember { SnackbarHostState() }
     var chatOpen by remember { mutableStateOf(false) }
     val ready = state.model.available
+    val askNotifications = rememberNotificationPermission()
 
     LaunchedEffect(state.message) { state.message?.let { snackbar.showSnackbar(it); vm.consumeMessage() } }
 
@@ -131,7 +143,7 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit, onOpenS
                         Spacer(Modifier.size(6.dp))
                         Text("Ajuster")
                     }
-                    Button(onClick = vm::validate, enabled = !state.busy, modifier = Modifier.weight(1f)) {
+                    Button(onClick = { askNotifications(); vm.validate() }, enabled = !state.busy, modifier = Modifier.weight(1f)) {
                         Icon(Icons.Filled.Check, null, Modifier.size(18.dp))
                         Spacer(Modifier.size(6.dp))
                         Text("Valider le menu")
@@ -161,8 +173,8 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit, onOpenS
                 modifier = Modifier.weight(1f),
             ) { target ->
                 when (target) {
-                    null -> state.validation?.let { ValidationProgress(it, dishes) }
-                    MenuStep.REGLAGES -> SettingsStep(vm, state, onOpenSettings)
+                    null -> state.validation?.let { ValidationProgress(it, dishes, state.model == ModelStatus.Loading) }
+                    MenuStep.REGLAGES -> SettingsStep(vm, state, onOpenSettings) { askNotifications(); vm.propose() }
                     MenuStep.PROPOSITION -> ProposalStep(
                         dishes = dishes, favorites = favorites, overlap = overlap, state = state, ready = ready,
                         onPortions = vm::changePortions, onAnother = vm::anotherIdea, onRemove = vm::removeDish,
@@ -179,17 +191,36 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit, onOpenS
 
     if (chatOpen) {
         ChatSheet(
-            chat = state.chat, busy = state.busy, ready = ready,
+            chat = state.chat, busy = state.busy, ready = ready, modelLoading = state.model == ModelStatus.Loading,
             onSend = vm::send, onStop = vm::stop, onImprove = vm::improveSharing,
             onDismiss = { chatOpen = false },
         )
     }
 }
 
+/**
+ * Android 13+ : demande (une fois) le droit d'afficher la notification « le chef travaille », qui permet
+ * de continuer quand on quitte l'app. Sans ce droit, le travail continue quand même, sans notification visible.
+ */
+@Composable
+private fun rememberNotificationPermission(): () -> Unit {
+    val context = LocalContext.current
+    var asked by rememberSaveable { mutableStateOf(false) }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    return {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !asked &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            asked = true
+            launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+}
+
 // ---------- Étape 1 : réglages ----------
 
 @Composable
-private fun SettingsStep(vm: MenuViewModel, state: MenuUiState, onOpenSettings: () -> Unit) {
+private fun SettingsStep(vm: MenuViewModel, state: MenuUiState, onOpenSettings: () -> Unit, onPropose: () -> Unit) {
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -243,7 +274,7 @@ private fun SettingsStep(vm: MenuViewModel, state: MenuUiState, onOpenSettings: 
         }
         item {
             Button(
-                onClick = vm::propose,
+                onClick = onPropose,
                 enabled = state.model.available && !state.busy,
                 modifier = Modifier.fillMaxWidth().height(56.dp),
             ) {
@@ -264,10 +295,7 @@ private fun ModelStatusCard(model: ModelStatus, onOpenSettings: () -> Unit, onRe
         is ModelStatus.Sleeping -> Row(verticalAlignment = Alignment.CenterVertically) {
             StatChip("🤖 ${model.modelName} · en veille")
         }
-        ModelStatus.Loading -> Row(verticalAlignment = Alignment.CenterVertically) {
-            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-            Text("Réveil de l'assistant…", Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodyMedium)
-        }
+        ModelStatus.Loading -> ModelLoadingCard()
         ModelStatus.Absent -> SectionCard {
             Text("👋 Bienvenue !", style = MaterialTheme.typography.titleLarge)
             Text("Pour composer tes menus, l'app utilise un assistant qui tourne entièrement sur ton téléphone. Il faut le télécharger une fois (2 à 4 Go, en Wi-Fi).")
@@ -298,16 +326,21 @@ private fun ProposalStep(
 ) {
     val sharedNames = remember(overlap) { overlap.shared.map { ShoppingListMerger.key(it.name) }.toSet() }
     val listState = rememberLazyListState()
+    Column(Modifier.fillMaxSize()) {
+    // Toujours visible en haut, même quand on fait défiler les plats.
+    ChefStatus(
+        modelLoading = state.model == ModelStatus.Loading,
+        busy = state.busy,
+        lastText = state.chat.lastOrNull { !it.fromUser && !it.tool }?.text,
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
+    )
     LazyColumn(
         state = listState,
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.weight(1f),
     ) {
-        if (dishes.isEmpty() && state.busy) {
-            item { ThinkingCard(state.chat.lastOrNull { !it.fromUser && !it.tool }?.text) }
-            return@LazyColumn
-        }
+        if (dishes.isEmpty() && state.busy) return@LazyColumn
         item {
             val balanced = dishes.count { PlateBalance.missing(dishBalanceTexts(it)).isEmpty() }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
@@ -331,33 +364,28 @@ private fun ProposalStep(
             )
         }
         if (overlap.hasData) item { SharingCard(overlap, enabled = ready && !state.busy, onImprove = onImprove) }
-        if (state.busy) item { ThinkingCard(null) }
         item {
             TextButton(onClick = onClear, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) { Text("Tout effacer et recommencer") }
         }
+    }
     }
 }
 
 private fun dishBalanceTexts(d: MenuDish) = listOf(d.title, d.description) + d.mainIngredients
 
 @Composable
-private fun ThinkingCard(lastText: String?) {
-    Card(
-        Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-    ) {
-        Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.secondary)
-            Column(Modifier.padding(start = 14.dp)) {
-                Text("Le chef réfléchit…", style = MaterialTheme.typography.titleSmall)
-                Text(
-                    lastText?.takeLast(140)?.trim() ?: "Saison, équilibre, ingrédients partagés : il compose ton menu.",
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 3,
-                )
-            }
-        }
+private fun ThinkingCard(lastText: String?, modifier: Modifier = Modifier) = ChefCard(
+    "Le chef réfléchit…",
+    lastText?.takeLast(140)?.trim()?.ifBlank { null } ?: "Saison, équilibre, ingrédients partagés : il compose ton menu.",
+    modifier,
+)
+
+/** Carte épinglée en haut tant que le chef travaille : chargement du modèle, sinon réflexion. */
+@Composable
+private fun ChefStatus(modelLoading: Boolean, busy: Boolean, lastText: String?, modifier: Modifier = Modifier) {
+    when {
+        modelLoading -> ModelLoadingCard(modifier)
+        busy -> ThinkingCard(lastText, modifier)
     }
 }
 
@@ -461,7 +489,7 @@ private fun SharingCard(report: IngredientOverlap.Report, enabled: Boolean, onIm
 }
 
 @Composable
-private fun ValidationProgress(v: Validation, dishes: List<MenuDish>) {
+private fun ValidationProgress(v: Validation, dishes: List<MenuDish>, modelLoading: Boolean) {
     val progress by animateFloatAsState(v.done.toFloat() / v.total.coerceAtLeast(1), label = "progress")
     val current = dishes.firstOrNull { it.title == v.current }
     Column(
@@ -469,12 +497,13 @@ private fun ValidationProgress(v: Validation, dishes: List<MenuDish>) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        if (modelLoading) ModelLoadingCard(Modifier.padding(bottom = 24.dp))
         DishArt(
             v.current.ifBlank { "Menu" }, current?.mainIngredients.orEmpty(),
             modifier = Modifier.size(160.dp).clip(RoundedCornerShape(40.dp)), emojiSize = 72,
         )
         Text(
-            if (v.current.isNotBlank()) "J'écris la recette" else "Je prépare ta liste…",
+            if (v.current.isNotBlank()) "Le chef liste les ingrédients de" else "Le chef prépare ta liste…",
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(top = 24.dp),
         )
@@ -486,12 +515,12 @@ private fun ValidationProgress(v: Validation, dishes: List<MenuDish>) {
             modifier = Modifier.fillMaxWidth().padding(top = 24.dp).height(8.dp).clip(RoundedCornerShape(50)),
         )
         Text(
-            "Recette ${(v.done + 1).coerceAtMost(v.total)} / ${v.total}",
+            "Plat ${(v.done + 1).coerceAtMost(v.total)} / ${v.total}",
             style = MaterialTheme.typography.labelLarge,
             modifier = Modifier.padding(top = 8.dp),
         )
         Text(
-            "Les recettes sont écrites par l'assistant sur ton téléphone : compte environ une minute par plat.",
+            "Seuls les ingrédients sont préparés maintenant : ta liste de courses sera vite prête. Les étapes s'écrivent quand tu ouvres une recette. Tu peux quitter l'app, le chef continue.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -565,6 +594,7 @@ private fun ChatSheet(
     chat: List<ChatLine>,
     busy: Boolean,
     ready: Boolean,
+    modelLoading: Boolean,
     onSend: (String) -> Unit,
     onStop: () -> Unit,
     onImprove: () -> Unit,
@@ -583,6 +613,11 @@ private fun ChatSheet(
                 "Demande en français : invités sur un plat, remplacer une recette, plus rapide…",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            ChefStatus(
+                modelLoading = modelLoading, busy = busy,
+                lastText = null, // la réponse s'écrit déjà dans les bulles
+                modifier = Modifier.padding(top = 8.dp),
             )
             LazyColumn(
                 state = listState,

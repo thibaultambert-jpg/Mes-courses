@@ -7,6 +7,7 @@ import fr.mescourses.core.model.ShoppingItem
 import fr.mescourses.core.shopping.ShoppingListMerger
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class ShoppingListMergerTest {
 
@@ -33,12 +34,12 @@ class ShoppingListMergerTest {
         val farine = merged.first { it.name == "Farine" }
         assertEquals(1.25, farine.quantity); assertEquals("kg", farine.unit)
         val oeufs = merged.first { ShoppingListMerger.key(it.name) == "oeuf" }
-        assertEquals(7.0, oeufs.quantity)
-        val lait = merged.first { it.name == "Lait" }
-        assertEquals(1.0, lait.quantity); assertEquals("l", lait.unit)
+        assertEquals(12.0, oeufs.quantity) // 7 œufs nécessaires => une boîte de 12
+        // Le lait est un produit de placard : jamais dans la liste.
+        assertTrue(merged.none { it.name == "Lait" })
         assertEquals("Crêpes, Gâteau", farine.origin)
         assertEquals(ItemSource.MANUEL, merged.first { it.name == "Lessive" }.source)
-        assertEquals(5, merged.size) // farine, œufs, lait, sel, lessive
+        assertEquals(3, merged.size) // farine, œufs, lessive (lait et sel restent au placard)
     }
 
     @Test fun unites_incompatibles_restent_separees() {

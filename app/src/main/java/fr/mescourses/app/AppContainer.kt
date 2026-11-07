@@ -27,7 +27,9 @@ import fr.mescourses.core.menu.MenuConfig
 import fr.mescourses.core.menu.MenuPrompt
 import fr.mescourses.core.menu.MenuTools
 import fr.mescourses.core.menu.MenuValidator
+import fr.mescourses.core.menu.RecipeStepsWriter
 import fr.mescourses.core.menu.TextGenerator
+import fr.mescourses.app.work.ChefWork
 import fr.mescourses.core.model.Portions
 import fr.mescourses.core.model.ShoppingItem
 import fr.mescourses.core.recipes.RecipeImporter
@@ -72,6 +74,8 @@ class AppContainer(context: Context) {
     private val llm: LlmEngine = LiteRtLmEngine(context)
     val models = ModelManager(context, appScope)
     val model = ModelController(llm, settings)
+    /** Travaux longs du chef (proposition, validation), qui continuent quand on quitte l'app. */
+    val chef = ChefWork(context, appScope, model)
 
     // --- Carrefour (natif, via une WebView connectée) ---
     val bridge = CarrefourWebViewBridge(context) { settings.current.uaWithoutWv }
@@ -90,6 +94,8 @@ class AppContainer(context: Context) {
     fun shoppingSystemPrompt(): String = ShoppingPrompt.system(settings.current.preferOrganic, settings.current.preferences)
 
     fun shoppingTools(): List<AgentTool> = CarrefourTools(carrefour, confirmations).all()
+
+    fun stepsWriter() = RecipeStepsWriter(TextGenerator { system, prompt -> model.generateOnce(system, prompt) })
 
     fun menuValidator() = MenuValidator(
         generator = TextGenerator { system, prompt -> model.generateOnce(system, prompt) },

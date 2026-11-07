@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import fr.mescourses.app.AppContainer
 import fr.mescourses.app.llm.ChatEvent
 import fr.mescourses.app.llm.ModelStatus
+import fr.mescourses.app.work.Validation
 import fr.mescourses.core.menu.IngredientOverlap
 import fr.mescourses.core.menu.MenuConfig
 import fr.mescourses.core.menu.MenuPrompt
@@ -24,8 +25,6 @@ import kotlinx.coroutines.launch
 
 /** Ligne du fil de discussion : message de l'utilisateur, réponse du LLM, ou trace d'outil. */
 data class ChatLine(val fromUser: Boolean, val text: String, val tool: Boolean = false, val ok: Boolean = true)
-
-data class Validation(val done: Int, val total: Int, val current: String)
 
 enum class MenuStep(val label: String) { REGLAGES("Réglages"), PROPOSITION("Menu"), SEMAINE("Semaine") }
 
@@ -69,6 +68,8 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
 
     private var job: Job? = null
+    /** Une discussion avec le chef est en cours (proposition ou ajustement). */
+    @Volatile private var exchanging = false
     /** Tant que l'utilisateur n'a pas touché aux compteurs, ils suivent les valeurs par défaut des Réglages. */
     private var configTouched = false
 
@@ -87,6 +88,27 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
             }
         }
         viewModelScope.launch { c.model.status.collect { m -> _state.update { it.copy(model = m) } } }
+        // La validation tourne au niveau de l'application : l'écran ne fait que l'observer.
+        viewModelScope.launch {
+            c.chef.validation.collect { v -> _state.update { it.copy(validation = v, busy = v != null || exchanging) } }
+        }
+        viewModelScope.launch {
+            c.chef.result.collect { res ->
+                if (res == null) return@collect
+                c.chef.consumeResult()
+                res.onSuccess { r ->
+                    val msg = buildString {
+                        append("${r.newRecipes + r.reused} plat(s) ajouté(s) au livre, ${r.shoppingItems} article(s) dans la liste.")
+                        if (r.newRecipes > 0) append(" Les étapes s'écriront à l'ouverture de chaque recette.")
+                        if (r.failures.isNotEmpty()) append(" Échec pour : ${r.failures.joinToString()} (reste dans le brouillon).")
+                    }
+                    _state.update { it.copy(message = msg, chat = emptyList()) }
+                    if (r.failures.isEmpty()) step.value = MenuStep.SEMAINE
+                }.onFailure { e ->
+                    _state.update { it.copy(message = "Validation interrompue : ${e.message}") }
+                }
+            }
+        }
     }
 
     private fun config() = _state.value.let { MenuConfig(it.meals, Portions(it.adults, it.children), it.wishes) }
@@ -127,9 +149,20 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
         job = viewModelScope.launch {
             c.draft.set(emptyList())
             step.value = MenuStep.PROPOSITION
-            _state.update { it.copy(chat = emptyList()) }
-            startConversation()
-            val answer = exchange(MenuPrompt.firstRequest(config()), shownAs = null)
+            _state.update { it.copy(chat = emptyList(), busy = true) }
+            exchanging = true
+            val answer = try {
+                c.chef.keepAwake("Le chef compose ton menu…") {
+                    startConversation()
+                    exchange(MenuPrompt.firstRequest(config()), shownAs = null)
+                }
+            } catch (e: Exception) {
+                _state.update { it.copy(chat = it.chat + ChatLine(false, "⚠️ ${e.message}", tool = true, ok = false)) }
+                ""
+            } finally {
+                exchanging = false
+                _state.update { it.copy(busy = false) }
+            }
             // Plan B : le modèle a répondu en texte sans appeler propose_menu.
             if (c.draft.get().isEmpty()) {
                 val parsed = MenuTextParser.parse(answer)
@@ -152,8 +185,19 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
         val t = text.trim()
         if (t.isEmpty() || !_state.value.model.available || _state.value.busy) return
         job = viewModelScope.launch {
-            if (!c.model.owns(OWNER)) startConversation()
-            exchange(MenuPrompt.context(c.draft.get()) + "\n" + t, shownAs = t)
+            exchanging = true
+            _state.update { it.copy(busy = true) }
+            try {
+                c.chef.keepAwake("Le chef ajuste ton menu…") {
+                    if (!c.model.owns(OWNER)) startConversation()
+                    exchange(MenuPrompt.context(c.draft.get()) + "\n" + t, shownAs = t)
+                }
+            } catch (e: Exception) {
+                _state.update { it.copy(chat = it.chat + ChatLine(false, "⚠️ ${e.message}", tool = true, ok = false)) }
+            } finally {
+                exchanging = false
+                _state.update { it.copy(busy = false) }
+            }
         }
     }
 
@@ -187,15 +231,14 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
             } }
         } catch (e: Exception) {
             _state.update { it.copy(chat = it.chat + ChatLine(false, "⚠️ ${e.message}", tool = true, ok = false)) }
-        } finally {
-            _state.update { it.copy(busy = false) }
         }
         return answer.toString()
     }
 
     fun stop() {
         job?.cancel()
-        _state.update { it.copy(busy = false) }
+        exchanging = false
+        _state.update { it.copy(busy = c.chef.validating) }
     }
 
     // --- Modifications manuelles du brouillon ---
@@ -225,24 +268,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
             _state.update { it.copy(message = "Le modèle doit être chargé pour écrire les recettes.") }
             return
         }
-        job = viewModelScope.launch {
-            _state.update { it.copy(busy = true, validation = Validation(0, dishes.value.size, "")) }
-            try {
-                val r = c.menuValidator().validate { done, total, current ->
-                    _state.update { it.copy(validation = Validation(done, total, current)) }
-                }
-                val msg = buildString {
-                    append("${r.newRecipes + r.reused} plat(s) ajouté(s) au livre, ${r.shoppingItems} article(s) dans la liste.")
-                    if (r.failures.isNotEmpty()) append(" Échec pour : ${r.failures.joinToString()} (reste dans le brouillon).")
-                }
-                _state.update { it.copy(message = msg, chat = emptyList()) }
-                if (r.failures.isEmpty()) step.value = MenuStep.SEMAINE
-            } catch (e: Exception) {
-                _state.update { it.copy(message = "Validation interrompue : ${e.message}") }
-            } finally {
-                _state.update { it.copy(busy = false, validation = null) }
-            }
-        }
+        c.chef.validate(c.menuValidator(), dishes.value.size)
     }
 
     // --- Menu de la semaine validé ---

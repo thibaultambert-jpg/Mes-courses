@@ -64,9 +64,18 @@ class CarrefourClient(
             (r.status == 403 || r.status == 503) && (r.body.contains("challenge-platform") || r.body.contains("cf-chl") || r.body.contains("Just a moment"))
 
     suspend fun isLoggedIn(): Boolean = try {
-        cart(); true
+        sessionProbe(); true
     } catch (e: CarrefourException.SessionExpired) {
         false
+    }
+
+    /**
+     * Vérifie la session : seul le code HTTP compte (200 = connecté). La lecture du panier est « au mieux » :
+     * renvoie null si son format n'est pas reconnu, sans faire croire à une déconnexion.
+     */
+    suspend fun sessionProbe(): Cart? {
+        val body = call("GET", CarrefourRoutes.CART).body
+        return runCatching { CarrefourParsers.parseCart(body) }.getOrNull()?.also { c -> c.context?.let { lastContext = it } }
     }
 
     // ---------- Recherche ----------

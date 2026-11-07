@@ -2,6 +2,11 @@
 
 package fr.mescourses.app.ui.cookbook
 
+import androidx.compose.runtime.saveable.rememberSaveable
+import fr.mescourses.app.llm.ModelStatus
+import fr.mescourses.app.ui.components.ChefCard
+import fr.mescourses.app.ui.components.ModelLoadingCard
+import fr.mescourses.core.menu.MenuValidator
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -104,6 +109,7 @@ private val RecipeStatus.emoji get() = when (this) {
 fun CookbookScreen(
     importUrl: String?,
     onImportConsumed: () -> Unit,
+    onImported: (Long) -> Unit,
     onOpenRecipe: (Long) -> Unit,
     onNewRecipe: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -119,10 +125,13 @@ fun CookbookScreen(
     var showImport by remember { mutableStateOf(false) }
     var addMenu by remember { mutableStateOf(false) }
 
+    // Un lien partagé n'est importé qu'une fois, même si l'écran est recréé (retour, rotation).
+    var importedUrl by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(importUrl) {
-        if (importUrl != null) {
-            vm.import(importUrl) { onOpenRecipe(it) }
+        if (importUrl != null && importedUrl != importUrl) {
+            importedUrl = importUrl
             onImportConsumed()
+            vm.import(importUrl) { onImported(it) }
         }
     }
     LaunchedEffect(message) { message?.let { snackbar.showSnackbar(it); vm.messages.value = null } }
@@ -296,6 +305,8 @@ fun RecipeDetailScreen(recipeId: Long, onBack: () -> Unit, onEdit: () -> Unit, o
     val recipe by vm.recipe.collectAsStateWithLifecycle()
     val portions by vm.portions.collectAsStateWithLifecycle()
     val message by vm.messages.collectAsStateWithLifecycle()
+    val stepsState by vm.steps.collectAsStateWithLifecycle()
+    val modelStatus by vm.model.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
     var confirmDelete by remember { mutableStateOf(false) }
@@ -380,6 +391,22 @@ fun RecipeDetailScreen(recipeId: Long, onBack: () -> Unit, onEdit: () -> Unit, o
                     }
                 }
                 SectionHeader("Préparation", emoji = "👩‍🍳")
+                if (r.steps.isEmpty()) {
+                    when (val st = stepsState) {
+                        RecipeDetailViewModel.StepsState.Writing ->
+                            if (modelStatus == ModelStatus.Loading) ModelLoadingCard()
+                            else ChefCard("Le chef écrit la recette…", "Étapes et temps de cuisson, à partir des ingrédients ci-dessus.")
+                        is RecipeDetailViewModel.StepsState.Failed -> Column {
+                            Text(st.message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                            TextButton(onClick = vm::writeSteps) { Text("Réessayer") }
+                        }
+                        RecipeDetailViewModel.StepsState.Idle -> if (MenuValidator.STEPS_PENDING in r.tags) {
+                            TextButton(onClick = vm::writeSteps) { Text("✍️ Demander les étapes au chef") }
+                        } else {
+                            Text("Pas d'étapes pour cette recette.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
                 r.steps.forEachIndexed { i, step ->
                     Row(verticalAlignment = Alignment.Top) {
                         Box(

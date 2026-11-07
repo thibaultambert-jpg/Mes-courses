@@ -65,8 +65,13 @@ class CarrefourWebViewBridge(
     /** Configuration commune aux WebViews Carrefour (invisible et visible). */
     @SuppressLint("SetJavaScriptEnabled")
     fun configure(view: WebView) {
+        // Inspection possible depuis chrome://inspect (usage personnel, pour capturer les routes).
+        WebView.setWebContentsDebuggingEnabled(true)
         view.settings.javaScriptEnabled = true
         view.settings.domStorageEnabled = true
+        // Les liens « nouvelle fenêtre » du site s'ouvrent dans la même vue au lieu d'être ignorés.
+        view.settings.setSupportMultipleWindows(false)
+        view.settings.javaScriptCanOpenWindowsAutomatically = true
         if (uaWithoutWv()) view.settings.userAgentString = view.settings.userAgentString.replace("; wv", "")
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(view, true)
@@ -102,6 +107,16 @@ class CarrefourWebViewBridge(
 
     /** Recharge la page de stationnement (après une connexion faite dans la WebView visible). */
     suspend fun reload() = withContext(Dispatchers.Main) { webView?.loadUrl(CarrefourRoutes.PARKING) }
+
+    /** Recharge et attend la fin du chargement (au plus 20 s), pour que la vérification suivante voie les nouveaux cookies. */
+    suspend fun reloadAndWait() {
+        if (webView == null) return
+        coroutineScope {
+            val done = async { withTimeoutOrNull(20_000) { pageFinished.first { it.startsWith(CarrefourRoutes.ORIGIN) } } }
+            reload()
+            done.await()
+        }
+    }
 
     private suspend fun awaitReady(): WebView {
         val ok = withTimeoutOrNull(20_000) { ready.first { it } }
