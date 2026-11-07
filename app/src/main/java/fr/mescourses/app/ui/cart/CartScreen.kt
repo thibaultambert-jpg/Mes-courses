@@ -2,11 +2,9 @@
 
 package fr.mescourses.app.ui.cart
 
-import android.content.Intent
-import android.net.Uri
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,35 +13,44 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,46 +59,41 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import fr.mescourses.app.carrefour.SessionState
 import fr.mescourses.app.ui.common.ScreenScaffold
 import fr.mescourses.app.ui.common.containerViewModel
 import fr.mescourses.app.ui.components.BottomActionBar
-import fr.mescourses.app.ui.components.EmptyState
 import fr.mescourses.app.ui.components.MiniStepper
 import fr.mescourses.app.ui.components.SectionCard
+import fr.mescourses.app.ui.components.StatChip
 import fr.mescourses.app.ui.components.StepIndicator
 import fr.mescourses.core.cart.CartLine
 import fr.mescourses.core.cart.LineStatus
-import fr.mescourses.core.mcp.Product
-import fr.mescourses.core.mcp.Retailer
+import fr.mescourses.core.carrefour.Product
 import fr.mescourses.core.shopping.ShoppingListMerger
 
-private val Retailer.color get() = when (this) {
-    Retailer.CARREFOUR -> Color(0xFF1E5BC6)
-    Retailer.LECLERC -> Color(0xFF0066B3)
-    Retailer.AUCHAN -> Color(0xFFD6232A)
-}
-private val Retailer.initials get() = when (this) {
-    Retailer.CARREFOUR -> "C"
-    Retailer.LECLERC -> "E.L"
-    Retailer.AUCHAN -> "A"
-}
-
-private fun Product.isOrganic() = Regex("""\bbio\b""", RegexOption.IGNORE_CASE).containsMatchIn(name + " " + (brand ?: ""))
+private val CarrefourBlue = Color(0xFF1E5BC6)
 private fun euros(v: Double) = String.format(java.util.Locale.FRANCE, "%.2f €", v)
 
 @Composable
-fun CartScreen(onOpenSettings: () -> Unit) {
+fun CartScreen(
+    onOpenSettings: () -> Unit,
+    onLogin: () -> Unit,
+    onOpenSite: (String) -> Unit,
+    onChooseStore: () -> Unit,
+) {
     val vm = containerViewModel { CartViewModel(it) }
     val state by vm.state.collectAsStateWithLifecycle()
-    val context = LocalContext.current
+    val session by vm.session.collectAsStateWithLifecycle()
+    val settings by vm.settings.collectAsStateWithLifecycle()
     var alternativesFor by remember { mutableStateOf<Int?>(null) }
+    var chatOpen by remember { mutableStateOf(false) }
     val stepIndex = when (state.phase) {
-        Phase.IDLE, Phase.CONNEXION, Phase.RECHERCHE -> 0
+        Phase.IDLE, Phase.RECHERCHE -> 0
         Phase.VALIDATION -> 1
         Phase.ENVOI, Phase.TERMINE -> 2
     }
@@ -99,7 +101,7 @@ fun CartScreen(onOpenSettings: () -> Unit) {
     val total = state.lines.filter { it.included && it.product != null }.sumOf { (it.product?.price ?: 0.0) * it.quantity }
 
     ScreenScaffold(
-        title = "Panier drive",
+        title = "Panier Carrefour",
         onOpenSettings = onOpenSettings,
         bottomBar = {
             when (state.phase) {
@@ -108,14 +110,13 @@ fun CartScreen(onOpenSettings: () -> Unit) {
                         Text("Total estimé", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(euros(total), style = MaterialTheme.typography.titleLarge)
                     }
-                    Button(onClick = vm::send, enabled = selected.isNotEmpty()) { Text("Envoyer ${selected.size} produits") }
+                    Button(onClick = vm::send, enabled = selected.isNotEmpty()) { Text("Ajouter ${selected.size} produits") }
                 }
                 Phase.TERMINE -> BottomActionBar {
                     OutlinedButton(onClick = vm::markSentAsBought) { Text("Cocher dans la liste") }
-                    Button(
-                        onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(state.retailer.cartUrl))) },
-                        modifier = Modifier.weight(1f),
-                    ) { Text("Finaliser chez ${state.retailer.label}") }
+                    Button(onClick = { onOpenSite(fr.mescourses.core.carrefour.CarrefourRoutes.WEB_CART) }, modifier = Modifier.weight(1f)) {
+                        Text("Finaliser sur Carrefour")
+                    }
                 }
                 else -> Unit
             }
@@ -127,56 +128,41 @@ fun CartScreen(onOpenSettings: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Retailer.entries.forEach { r ->
-                        RetailerCard(r, selected = state.retailer == r, configured = vm.isConfigured(r), modifier = Modifier.weight(1f)) {
-                            vm.selectRetailer(r)
-                        }
-                    }
-                }
+                AccountCard(session, settings.storeName, onLogin = onLogin, onChooseStore = onChooseStore)
             }
-            if (!vm.isConfigured(state.retailer)) {
-                item {
-                    EmptyState(
-                        "🔌", "${state.retailer.label} n'est pas encore relié",
-                        "Indique l'adresse de ton serveur MCP dans les Réglages (voir server/README.md).",
-                        actionLabel = "Ouvrir les réglages", onAction = onOpenSettings,
-                    )
+            if (session != SessionState.CONNECTE) {
+                if (session == SessionState.VERIFICATION) item {
+                    SectionCard {
+                        Text("Carrefour demande une vérification anti-robot.", style = MaterialTheme.typography.bodyMedium)
+                        Button(onClick = { onOpenSite(fr.mescourses.core.carrefour.CarrefourRoutes.PARKING) }) { Text("Ouvrir carrefour.fr") }
+                    }
                 }
                 return@LazyColumn
             }
             item {
-                StepIndicator(
-                    steps = listOf("Préparer", "Vérifier", "Envoyer"),
-                    current = stepIndex,
-                    onStep = {},
-                    enabled = { false },
-                )
+                StepIndicator(steps = listOf("Préparer", "Vérifier", "Envoyer"), current = stepIndex, onStep = {}, enabled = { false })
             }
-            state.error?.let { err ->
-                item { Text("⚠ $err", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
-            }
+            state.error?.let { err -> item { Text("⚠ $err", color = MaterialTheme.colorScheme.error) } }
             when (state.phase) {
                 Phase.IDLE -> item {
                     SectionCard {
                         Text("🛒 Remplir mon panier", style = MaterialTheme.typography.titleLarge)
                         Text(
-                            "Je cherche chaque article de ta liste chez ${state.retailer.label} (en bio quand c'est possible), " +
-                                "tu vérifies, puis je l'ajoute au panier. La commande et le paiement restent chez l'enseigne.",
+                            "Je propose un produit par article de ta liste (bio quand c'est possible, et tes choix précédents en priorité). " +
+                                "Tu vérifies, puis j'ajoute tout au panier. La commande et le paiement se font ensuite sur carrefour.fr.",
                             style = MaterialTheme.typography.bodyMedium,
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = vm::prepare) { Text("Préparer le panier") }
-                            OutlinedButton(onClick = { vm.readCart() }) { Text("Voir le panier") }
+                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { vm.prepare() }) { Text("Depuis ma liste") }
+                            OutlinedButton(onClick = { chatOpen = true }) { Text("💬 Avec l'assistant") }
+                            TextButton(onClick = { vm.loadInfo() }) { Text("Voir mon panier") }
                         }
                     }
                 }
-                Phase.CONNEXION -> item { Busy("Connexion à ${state.retailer.label}…") }
                 Phase.TERMINE -> item {
                     SectionCard {
                         Text("🎉 Panier rempli !", style = MaterialTheme.typography.titleLarge)
-                        val added = state.lines.count { it.status == LineStatus.AJOUTE }
-                        Text("$added produit(s) ajoutés. Il ne reste qu'à choisir le créneau et payer sur ${state.retailer.label}.")
+                        Text("${state.lines.count { it.status == LineStatus.AJOUTE }} produit(s) ajoutés. Choisis ton créneau et paie sur carrefour.fr.")
                     }
                 }
                 else -> Unit
@@ -185,7 +171,7 @@ fun CartScreen(onOpenSettings: () -> Unit) {
                 item {
                     val done = state.lines.count { it.status != LineStatus.A_CHERCHER }
                     Column {
-                        Text("Recherche des produits… $done / ${state.lines.size}", style = MaterialTheme.typography.bodyMedium)
+                        Text("${state.source} : recherche des produits… $done / ${state.lines.size}", style = MaterialTheme.typography.bodyMedium)
                         LinearProgressIndicator(
                             progress = { done.toFloat() / state.lines.size.coerceAtLeast(1) },
                             modifier = Modifier.fillMaxWidth().padding(top = 6.dp).clip(RoundedCornerShape(50)),
@@ -194,16 +180,18 @@ fun CartScreen(onOpenSettings: () -> Unit) {
                 }
             }
             if (state.phase == Phase.ENVOI) item { Busy("Ajout au panier, à rythme humain…") }
-            if (state.phase != Phase.IDLE && state.phase != Phase.CONNEXION) {
+            if (state.phase != Phase.IDLE) {
                 itemsIndexed(state.lines) { index, line ->
                     CartLineCard(
                         line = line,
                         editable = state.phase == Phase.VALIDATION,
                         onChange = { t -> vm.updateLine(index, t) },
-                        onAlternatives = { alternativesFor = index },
+                        onAlternatives = { if (line.remembered) vm.moreChoices(index) else alternativesFor = index },
                     )
                 }
             }
+            if (state.loadingInfo) item { Busy("Lecture du panier…") }
+            state.cart?.let { cart -> item { CartSummary(cart, state.slots) } }
         }
     }
 
@@ -219,9 +207,9 @@ fun CartScreen(onOpenSettings: () -> Unit) {
                 line.candidates.forEachIndexed { i, p ->
                     ListItem(
                         headlineContent = { Text(p.name) },
-                        supportingContent = { Text(listOfNotNull(p.brand, p.packaging, p.unitPrice).joinToString(" · ")) },
+                        supportingContent = { Text(listOfNotNull(p.brand, p.unitPrice, p.nutriscore?.let { "Nutri-Score $it" }, p.promo).joinToString(" · ")) },
                         trailingContent = { p.price?.let { Text(euros(it), style = MaterialTheme.typography.titleSmall) } },
-                        leadingContent = { if (p.isOrganic()) BioBadge() else if (i == line.selected) Icon(Icons.Filled.CheckCircle, null) },
+                        leadingContent = { if (p.organic) BioBadge() else if (i == line.selected) Icon(Icons.Filled.CheckCircle, null) },
                         modifier = Modifier.clickable { vm.updateLine(index) { it.copy(selected = i) }; alternativesFor = null },
                     )
                 }
@@ -230,43 +218,106 @@ fun CartScreen(onOpenSettings: () -> Unit) {
         }
     }
 
-    state.cartText?.let { text ->
-        AlertDialog(
-            onDismissRequest = vm::dismissCart,
-            title = { Text("Panier ${state.retailer.label}") },
-            text = { Box(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState())) { Text(text, style = MaterialTheme.typography.bodySmall) } },
-            confirmButton = { TextButton(onClick = vm::dismissCart) { Text("Fermer") } },
-        )
+    if (chatOpen) ShoppingChatSheet(onDismiss = { chatOpen = false })
+}
+
+@Composable
+private fun AccountCard(session: SessionState, storeName: String, onLogin: () -> Unit, onChooseStore: () -> Unit) {
+    SectionCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(44.dp).clip(CircleShape).background(CarrefourBlue), contentAlignment = Alignment.Center) {
+                Text("C", color = Color.White, style = MaterialTheme.typography.titleMedium)
+            }
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                Text("Carrefour Drive", style = MaterialTheme.typography.titleMedium)
+                Text(storeName.ifBlank { "Aucun drive choisi" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            StatChip(session.label, emphasized = session != SessionState.CONNECTE)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (session == SessionState.CONNEXION_REQUISE || session == SessionState.INCONNU) Button(onClick = onLogin) { Text("Se connecter") }
+            OutlinedButton(onClick = onChooseStore) { Text(if (storeName.isBlank()) "Choisir mon drive" else "Changer de drive") }
+        }
     }
 }
 
 @Composable
-private fun RetailerCard(r: Retailer, selected: Boolean, configured: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Card(
-        onClick = onClick,
-        modifier = modifier,
-        shape = MaterialTheme.shapes.large,
-        border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
-        colors = CardDefaults.cardColors(
-            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLowest,
-        ),
-    ) {
-        Column(Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.size(40.dp).clip(CircleShape).background(r.color), contentAlignment = Alignment.Center) {
-                Text(r.initials, color = Color.White, style = MaterialTheme.typography.labelLarge)
+private fun CartSummary(cart: fr.mescourses.core.carrefour.Cart, slots: List<fr.mescourses.core.carrefour.TimeSlot>?) {
+    SectionCard {
+        Text("Mon panier Carrefour", style = MaterialTheme.typography.titleMedium)
+        if (cart.lines.isEmpty()) Text("Panier vide.", style = MaterialTheme.typography.bodyMedium)
+        cart.lines.take(30).forEach { l ->
+            Row {
+                Text("${l.quantity} × ${l.name}", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                l.subtotal?.let { Text(euros(it), style = MaterialTheme.typography.bodyMedium) }
             }
-            Text(r.label.removeSuffix(" Drive"), style = MaterialTheme.typography.labelLarge, maxLines = 1, modifier = Modifier.padding(top = 6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier.size(8.dp).clip(CircleShape)
-                        .background(if (configured) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
+        }
+        cart.total?.let { Text("Total : ${euros(it)}", style = MaterialTheme.typography.titleSmall) }
+        if (!slots.isNullOrEmpty()) {
+            Text("Prochains créneaux (à réserver sur le site)", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+            slots.forEach { s ->
+                Text("• ${s.date} ${s.start}–${s.end}" + (s.price?.let { " · ${euros(it)}" } ?: ""), style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+/** Feuille « Courses avec l'assistant » : Gemma cherche, propose au plus 3 produits, et chaque ajout est confirmé. */
+@Composable
+private fun ShoppingChatSheet(onDismiss: () -> Unit) {
+    val vm = containerViewModel { ShoppingChatViewModel(it) }
+    val lines by vm.lines.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
+    val model by vm.model.collectAsStateWithLifecycle()
+    var input by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
+    LaunchedEffect(lines.size, lines.lastOrNull()?.text?.length) { if (lines.isNotEmpty()) listState.animateScrollToItem(lines.lastIndex) }
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 16.dp)) {
+            Text("Courses avec l'assistant", style = MaterialTheme.typography.titleLarge)
+            Text(
+                if (model.available) "Demande en français ; tu confirmes chaque ajout." else "Installe l'assistant dans les Réglages pour utiliser ce mode.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().height(320.dp).padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(lines) { l ->
+                    if (l.tool) {
+                        Text(l.text, style = MaterialTheme.typography.labelMedium, color = if (l.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+                    } else {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = if (l.fromUser) Arrangement.End else Arrangement.Start) {
+                            Text(
+                                l.text.trim(),
+                                color = if (l.fromUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(18.dp))
+                                    .background(if (l.fromUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh)
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                            )
+                        }
+                    }
+                }
+            }
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("De quoi faire une pâte à crêpes pour 4", "Qu'y a-t-il dans mon panier ?", "Prochains créneaux ?").forEach { s ->
+                    SuggestionChip(onClick = { input = s }, enabled = !busy, label = { Text(s) })
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("« ajoute du lait bio »") },
+                    shape = RoundedCornerShape(28.dp),
+                    maxLines = 3,
+                    enabled = model.available && !busy,
                 )
-                Text(
-                    if (configured) "relié" else "à configurer",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 4.dp),
-                )
+                Spacer(Modifier.size(8.dp))
+                if (busy) FilledIconButton(onClick = vm::stop) { Icon(Icons.Filled.Stop, "Arrêter") }
+                else FilledIconButton(onClick = { vm.send(input); input = "" }, enabled = model.available && input.isNotBlank()) {
+                    Icon(Icons.AutoMirrored.Filled.Send, "Envoyer")
+                }
             }
         }
     }
@@ -316,7 +367,7 @@ private fun CartLineCard(line: CartLine, editable: Boolean, onChange: ((CartLine
                     LineStatus.ERREUR -> Text(line.message ?: "Erreur", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 2)
                     else -> product?.let { p ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (p.isOrganic()) { BioBadge(); Spacer(Modifier.size(6.dp)) }
+                            if (p.organic) { BioBadge(); Spacer(Modifier.size(6.dp)) }
                             Text(p.name, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
                         Text(
@@ -324,10 +375,13 @@ private fun CartLineCard(line: CartLine, editable: Boolean, onChange: ((CartLine
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        if (editable && line.candidates.size > 1) {
+                        if (editable && (line.candidates.size > 1 || line.remembered)) {
                             TextButton(onClick = onAlternatives, contentPadding = PaddingValues(0.dp)) {
                                 Icon(Icons.Filled.SwapHoriz, null, Modifier.size(16.dp))
-                                Text(" ${line.candidates.size - 1} autre(s) choix", style = MaterialTheme.typography.labelMedium)
+                                Text(
+                                    if (line.remembered) " Ton choix habituel · autres choix" else " ${line.candidates.size - 1} autre(s) choix",
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
                             }
                         }
                     }

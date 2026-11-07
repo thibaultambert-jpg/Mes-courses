@@ -4,6 +4,7 @@ package fr.mescourses.app.ui.settings
 
 import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -59,7 +60,6 @@ import fr.mescourses.app.llm.ModelCatalog
 import fr.mescourses.app.llm.ModelInfo
 import fr.mescourses.app.ui.common.ScreenScaffold
 import fr.mescourses.app.ui.common.containerViewModel
-import fr.mescourses.core.mcp.Retailer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
@@ -89,37 +89,20 @@ class SettingsViewModel(val c: AppContainer) : ViewModel() {
         if (settings.value.modelPath == file.absolutePath) update { it.copy(modelPath = "") }
     }
 
-    /** Teste la connexion MCP et affiche les outils détectés. */
-    fun test(retailer: Retailer) = viewModelScope.launch {
-        testResult.value = "Connexion à ${retailer.label}…"
-        testResult.value = try {
-            c.retailers.reset(retailer)
-            val m = c.retailers.session(retailer).mapping
-            "✅ ${retailer.label} connecté\nRecherche : ${m.searchTool}(${m.searchQueryArg})\n" +
-                "Ajout : ${m.addTool ?: "—"}(${m.addProductArg ?: "?"}, ${m.addQuantityArg ?: "quantité par défaut"})\n" +
-                "Panier : ${m.cartTool ?: "—"}" + if (m.fixedArgs.isNotEmpty()) "\nParamètres fixes : ${m.fixedArgs}" else ""
-        } catch (e: Exception) {
-            "❌ ${retailer.label} : ${e.message}"
-        }
-    }
+    val session = c.session.state
 
-    fun testSearxng() = viewModelScope.launch {
-        testResult.value = try {
-            val r = c.webSearch.search("quiche lorraine recette", 3)
-            "✅ SearXNG : ${r.size} résultat(s)\n" + r.joinToString("\n") { "• ${it.title}" }
-        } catch (e: Exception) {
-            "❌ SearXNG : ${e.message}"
-        }
-    }
+    fun logout() = c.session.logout()
 }
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onLogin: () -> Unit, onChooseStore: () -> Unit, onDebug: () -> Unit) {
     val vm = containerViewModel { SettingsViewModel(it) }
     val s by vm.settings.collectAsStateWithLifecycle()
     val download by vm.download.collectAsStateWithLifecycle()
     val installed by vm.installed.collectAsStateWithLifecycle()
     val testResult by vm.testResult.collectAsStateWithLifecycle()
+    val session by vm.session.collectAsStateWithLifecycle()
+    var versionTaps by remember { mutableStateOf(0) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::import) }
 
     ScreenScaffold(title = "Réglages", onBack = onBack) { padding ->
@@ -204,47 +187,44 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
 
             SectionCard {
-                SectionHeader("Drive & serveur maison", emoji = "🛒")
+                SectionHeader("Carrefour Drive", emoji = "🛒")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Compte", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                    StatChip(session.label, emphasized = session != fr.mescourses.app.carrefour.SessionState.CONNECTE)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (session == fr.mescourses.app.carrefour.SessionState.CONNECTE) {
+                        OutlinedButton(onClick = vm::logout) { Text("Se déconnecter") }
+                    } else {
+                        Button(onClick = onLogin) { Text("Se connecter") }
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Drive", style = MaterialTheme.typography.bodyLarge)
+                        Text(s.storeName.ifBlank { "Aucun drive choisi" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    TextButton(onClick = onChooseStore) { Text(if (s.storeName.isBlank()) "Choisir" else "Changer") }
+                }
                 SwitchRow("Privilégier le bio", "Cherche d'abord la version bio de chaque produit", s.preferOrganic) { v ->
                     vm.update { it.copy(preferOrganic = v) }
                 }
                 Text(
-                    "Adresses exposées par server/ et joignables via Tailscale (ex. http://100.x.y.z:8811/carrefour/mcp).",
+                    "Intégration non officielle, pour un usage personnel. La commande, le créneau et le paiement se font toujours sur carrefour.fr.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Field("Jeton d'accès MCP", s.mcpToken, secret = true) { v -> vm.update { it.copy(mcpToken = v) } }
-                Retailer.entries.forEach { r ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.weight(1f)) {
-                            Field("MCP ${r.label}", s.mcpUrl(r)) { v ->
-                                vm.update {
-                                    when (r) {
-                                        Retailer.CARREFOUR -> it.copy(carrefourUrl = v)
-                                        Retailer.LECLERC -> it.copy(leclercUrl = v)
-                                        Retailer.AUCHAN -> it.copy(auchanUrl = v)
-                                    }
-                                }
-                            }
-                        }
-                        TextButton(onClick = { vm.test(r) }, enabled = s.mcpUrl(r).isNotBlank()) { Text("Tester") }
-                    }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.weight(1f)) {
-                        Field("SearXNG (recettes sur internet)", s.searxngUrl) { v -> vm.update { it.copy(searxngUrl = v) } }
-                    }
-                    TextButton(onClick = vm::testSearxng, enabled = s.searxngUrl.isNotBlank()) { Text("Tester") }
-                }
-                testResult?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium)
-                            .background(MaterialTheme.colorScheme.surfaceContainerHighest).padding(12.dp),
-                    )
-                }
             }
+            testResult?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+            Text(
+                "Mes courses · version 0.3",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().clickable {
+                    versionTaps++
+                    if (versionTaps >= 7) { versionTaps = 0; onDebug() }
+                }.padding(8.dp),
+            )
         }
     }
 }

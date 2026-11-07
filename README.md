@@ -2,7 +2,7 @@
 
 Application Android **personnelle** (testée pour un Honor Magic 5 Pro) pour planifier ses repas en
 discutant avec un **LLM 100 % local**, tenir un **livre de recettes**, une **liste de courses** libre,
-puis **remplir son panier drive** (Carrefour, Leclerc ; Auchan en phase 2) via des serveurs **MCP**.
+puis **remplir son panier Carrefour Drive** directement depuis le téléphone (sans serveur).
 
 | Onglet | Rôle |
 |---|---|
@@ -26,18 +26,30 @@ Modèles proposés dans l'app : **Gemma 4 E4B** (qualité, ~10-14 tok/s estimés
 Le moteur est derrière l'interface `LlmEngine` : on pourra brancher xybrid (quand il gérera le GPU Android)
 ou llama.cpp (Qwen3.5, Ministral 3) pour comparer.
 
-### Drives : MCP communautaires sur un hôte maison
+### Carrefour Drive : intégration native (sans serveur)
 
-Aucune enseigne ne publie de MCP ouvert (l'app ChatGPT de Carrefour utilise un MCP privé). L'application
-se connecte en **client MCP (Streamable HTTP)** à des serveurs communautaires qui tournent sur une machine
-de la maison, joignable via Tailscale — voir **[server/README.md](server/README.md)** :
+Les requêtes vers carrefour.fr partent **d'une WebView connectée** à ton compte (cookies + vrai navigateur :
+c'est ce qui passe la protection Cloudflare, qu'un client HTTP classique ne passe pas).
 
-- Carrefour : [CarrefourDriveMCP](https://github.com/maximeallanic/CarrefourDriveMCP)
-- Leclerc (et Super U) : [fr-grocery-mcp](https://github.com/maxime-desmarchelier/fr-grocery-mcp)
-- Auchan : aucun MCP existant → phase 2
+- **Connexion** : une fois, dans l'app (e-mail + mot de passe + code reçu par e-mail ; la connexion « via Google » ne marche pas
+  dans une WebView). L'app ne voit ni ne stocke ton mot de passe ; seuls les cookies sont gardés par Android.
+  La session Carrefour expire après ~1 h d'inactivité : l'app la renouvelle seule tant que possible, sinon elle te redemande de te connecter.
+- **Panier** : un produit proposé par article (bio d'abord, tes choix précédents en priorité), tu vérifies, l'app ajoute.
+- **Assistant (mode Courses)** : Gemma cherche, propose au plus 3 produits ; **chaque ajout est confirmé** par une carte.
+- **Jamais** de paiement, de validation de commande ni de réservation de créneau : bouton « Finaliser sur Carrefour ».
+- Routes utilisées et sources : [`docs/carrefour/ROUTES_CARREFOUR.md`](docs/carrefour/ROUTES_CARREFOUR.md) ;
+  toutes sont dans un seul fichier (`core/.../carrefour/CarrefourRoutes.kt`).
+- **Écran de debug** : Réglages → appuyer 7 fois sur « version » (requête de test, export anonymisé d'une réponse,
+  option « se présenter comme Chrome » si Cloudflare bloque la WebView).
 
-L'application détecte automatiquement les outils de chaque serveur (noms et paramètres différents),
-lit les paramètres de contexte nécessaires dans le panier, et **refuse tout outil de commande ou de paiement**.
+Intégration **non officielle**, pour un usage personnel : elle peut casser si Carrefour modifie son site.
+Leclerc et Auchan pourront être ajoutés plus tard sur le même modèle (interface `RetailerBackend`).
+
+### Honor / MagicOS
+
+MagicOS ferme les applications en arrière-plan. Pour garder la session et le modèle chargé plus longtemps :
+**Paramètres › Batterie › Lancement des applications › Mes courses › Gérer manuellement** (activer les trois options).
+L'app libère d'elle-même le modèle (plusieurs Go) quand le système manque de mémoire, et le recharge à la demande.
 
 ## Structure
 
@@ -45,7 +57,7 @@ lit les paramètres de contexte nécessaires dans le panier, et **refuse tout ou
 core/    Logique métier Kotlin/JVM pur, testée (ingrédients, fusion de liste, extraction de recettes
          schema.org, outils du LLM, client MCP, préparation du panier)
 app/     Application Android (Jetpack Compose, Room, DataStore, LiteRT-LM)
-server/  Hôte maison : passerelle MCP (supergateway), SearXNG, scripts de démarrage
+docs/    Routes Carrefour documentées
 ```
 
 ## Installer l'application
@@ -56,7 +68,7 @@ server/  Hôte maison : passerelle MCP (supergateway), SearXNG, scripts de déma
    autorisation, accepte la licence Gemma sur la page du modèle et colle ton jeton HF ; ou télécharge le
    fichier `.litertlm` sur un PC depuis [litert-community](https://huggingface.co/litert-community) et utilise
    « Importer un fichier ».
-4. (Optionnel) Configure l'hôte maison pour la recherche web et les drives.
+4. Onglet **Panier** → « Se connecter », puis choisis ton drive.
 
 ## Développement
 

@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
@@ -113,6 +114,11 @@ class ShoppingViewModel(private val c: AppContainer) : ViewModel() {
 
     fun delete(line: ShoppingLine) = viewModelScope.launch { line.sources.forEach { c.shopping.delete(it.id) } }
 
+    /** Envoie les articles restants à l'écran Panier Carrefour. */
+    fun sendToCart() = viewModelScope.launch {
+        c.pendingCart.value = fr.mescourses.app.PendingCart("Liste de courses", c.shopping.all().filterNot { it.checked })
+    }
+
     fun restore(items: List<ShoppingItem>) = viewModelScope.launch { c.shopping.add(items) }
 
     /** Supprime les articles pris et renvoie ce qui a été supprimé (pour « Annuler »). */
@@ -124,7 +130,7 @@ class ShoppingViewModel(private val c: AppContainer) : ViewModel() {
 }
 
 @Composable
-fun ShoppingListScreen(onOpenSettings: () -> Unit) {
+fun ShoppingListScreen(onOpenSettings: () -> Unit, onSendToCart: () -> Unit) {
     val vm = containerViewModel { ShoppingViewModel(it) }
     val lines by vm.lines.collectAsStateWithLifecycle()
     var input by remember { mutableStateOf("") }
@@ -143,6 +149,9 @@ fun ShoppingListScreen(onOpenSettings: () -> Unit) {
         onOpenSettings = onOpenSettings,
         snackbar = snackbar,
         actions = {
+            if (lines.any { !it.checked }) IconButton(onClick = { vm.sendToCart(); onSendToCart() }) {
+                Icon(Icons.Filled.ShoppingCart, "Envoyer au panier Carrefour")
+            }
             if (done > 0) IconButton(onClick = { scope.launch { undoable("$done article(s) retiré(s)", vm.clearChecked()) } }) {
                 Icon(Icons.Filled.DeleteSweep, "Retirer les articles pris")
             }

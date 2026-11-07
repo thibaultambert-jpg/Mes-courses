@@ -75,6 +75,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import fr.mescourses.app.llm.ModelStatus
 import fr.mescourses.app.ui.common.ScreenScaffold
 import fr.mescourses.app.ui.common.containerViewModel
 import fr.mescourses.app.ui.components.BalanceDots
@@ -114,7 +115,7 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit, onOpenS
     val overlap by vm.overlap.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var chatOpen by remember { mutableStateOf(false) }
-    val ready = state.model is ModelStatus.Ready
+    val ready = state.model.available
 
     LaunchedEffect(state.message) { state.message?.let { snackbar.showSnackbar(it); vm.consumeMessage() } }
 
@@ -243,7 +244,7 @@ private fun SettingsStep(vm: MenuViewModel, state: MenuUiState, onOpenSettings: 
         item {
             Button(
                 onClick = vm::propose,
-                enabled = state.model is ModelStatus.Ready && !state.busy,
+                enabled = state.model.available && !state.busy,
                 modifier = Modifier.fillMaxWidth().height(56.dp),
             ) {
                 Icon(Icons.Filled.AutoAwesome, null)
@@ -259,6 +260,9 @@ private fun ModelStatusCard(model: ModelStatus, onOpenSettings: () -> Unit, onRe
     when (model) {
         is ModelStatus.Ready -> Row(verticalAlignment = Alignment.CenterVertically) {
             StatChip("🤖 ${model.modelName} · ${model.backend}")
+        }
+        is ModelStatus.Sleeping -> Row(verticalAlignment = Alignment.CenterVertically) {
+            StatChip("🤖 ${model.modelName} · en veille")
         }
         ModelStatus.Loading -> Row(verticalAlignment = Alignment.CenterVertically) {
             CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)

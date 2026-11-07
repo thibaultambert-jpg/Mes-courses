@@ -85,6 +85,14 @@ class RecipeDetailViewModel(private val c: AppContainer, private val id: Long) :
         messages.value = "Déplacée vers « ${status.label} »"
     }
 
+    /** Envoie les ingrédients (mis à l'échelle) à l'écran Panier Carrefour. */
+    fun sendToCart(r: Recipe) {
+        c.pendingCart.value = fr.mescourses.app.PendingCart(
+            label = r.title,
+            items = ShoppingListMerger.fromRecipe(r, portions.value.equivalent(childFactor())),
+        )
+    }
+
     fun delete(onDone: () -> Unit) = viewModelScope.launch { c.recipes.delete(id); onDone() }
 }
 

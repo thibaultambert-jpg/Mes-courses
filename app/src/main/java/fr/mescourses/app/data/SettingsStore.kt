@@ -7,7 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import fr.mescourses.core.mcp.Retailer
+import fr.mescourses.core.carrefour.DriveContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -28,17 +28,18 @@ data class Settings(
     val childFactor: Double = 0.5,
     val preferOrganic: Boolean = true,
     val preferences: String = "",
-    val searxngUrl: String = "",
-    val mcpToken: String = "",
-    val retailer: Retailer = Retailer.CARREFOUR,
-    val carrefourUrl: String = "",
-    val leclercUrl: String = "",
-    val auchanUrl: String = "",
+    /** Drive Carrefour choisi dans l'app. */
+    val storeId: String = "",
+    val storeName: String = "",
+    /** Contexte du drive lu dans le panier Carrefour (mémorisé pour les fois suivantes). */
+    val basketServiceId: String = "",
+    val subBasketType: String = "",
+    val facilityServiceId: String = "",
+    /** Debug : WebView présentée comme un Chrome normal (sans « ; wv » dans le User-Agent). */
+    val uaWithoutWv: Boolean = false,
 ) {
-    fun mcpUrl(r: Retailer): String = when (r) {
-        Retailer.CARREFOUR -> carrefourUrl
-        Retailer.LECLERC -> leclercUrl
-        Retailer.AUCHAN -> auchanUrl
+    fun driveContext(): DriveContext? = basketServiceId.takeIf { it.isNotBlank() }?.let {
+        DriveContext(it, subBasketType.ifBlank { fr.mescourses.core.carrefour.CarrefourRoutes.DEFAULT_SUB_BASKET }, facilityServiceId.ifBlank { null })
     }
 }
 
@@ -53,12 +54,12 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
         val childFactor = androidx.datastore.preferences.core.doublePreferencesKey("child_factor")
         val organic = booleanPreferencesKey("prefer_organic")
         val preferences = stringPreferencesKey("preferences")
-        val searxng = stringPreferencesKey("searxng_url")
-        val mcpToken = stringPreferencesKey("mcp_token")
-        val retailer = stringPreferencesKey("retailer")
-        val carrefour = stringPreferencesKey("mcp_carrefour")
-        val leclerc = stringPreferencesKey("mcp_leclerc")
-        val auchan = stringPreferencesKey("mcp_auchan")
+        val storeId = stringPreferencesKey("cf_store_id")
+        val storeName = stringPreferencesKey("cf_store_name")
+        val basket = stringPreferencesKey("cf_basket_service")
+        val subBasket = stringPreferencesKey("cf_sub_basket")
+        val facility = stringPreferencesKey("cf_facility_service")
+        val uaWithoutWv = booleanPreferencesKey("cf_ua_without_wv")
     }
 
     private fun Preferences.toSettings() = Settings(
@@ -71,12 +72,12 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
         childFactor = this[K.childFactor] ?: 0.5,
         preferOrganic = this[K.organic] ?: true,
         preferences = this[K.preferences].orEmpty(),
-        searxngUrl = this[K.searxng].orEmpty(),
-        mcpToken = this[K.mcpToken].orEmpty(),
-        retailer = this[K.retailer]?.let { runCatching { Retailer.valueOf(it) }.getOrNull() } ?: Retailer.CARREFOUR,
-        carrefourUrl = this[K.carrefour].orEmpty(),
-        leclercUrl = this[K.leclerc].orEmpty(),
-        auchanUrl = this[K.auchan].orEmpty(),
+        storeId = this[K.storeId].orEmpty(),
+        storeName = this[K.storeName].orEmpty(),
+        basketServiceId = this[K.basket].orEmpty(),
+        subBasketType = this[K.subBasket].orEmpty(),
+        facilityServiceId = this[K.facility].orEmpty(),
+        uaWithoutWv = this[K.uaWithoutWv] ?: false,
     )
 
     val state: StateFlow<Settings> = context.dataStore.data
@@ -97,12 +98,12 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
             prefs[K.childFactor] = s.childFactor
             prefs[K.organic] = s.preferOrganic
             prefs[K.preferences] = s.preferences
-            prefs[K.searxng] = s.searxngUrl.trim()
-            prefs[K.mcpToken] = s.mcpToken.trim()
-            prefs[K.retailer] = s.retailer.name
-            prefs[K.carrefour] = s.carrefourUrl.trim()
-            prefs[K.leclerc] = s.leclercUrl.trim()
-            prefs[K.auchan] = s.auchanUrl.trim()
+            prefs[K.storeId] = s.storeId
+            prefs[K.storeName] = s.storeName
+            prefs[K.basket] = s.basketServiceId
+            prefs[K.subBasket] = s.subBasketType
+            prefs[K.facility] = s.facilityServiceId
+            prefs[K.uaWithoutWv] = s.uaWithoutWv
         }
     }
 }

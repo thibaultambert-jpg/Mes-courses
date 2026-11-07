@@ -138,3 +138,15 @@ class RoomShoppingRepository(private val dao: ShoppingDao) : ShoppingRepository 
     override suspend fun delete(id: Long) = dao.delete(id)
     override suspend fun clearChecked() = dao.clearChecked()
 }
+
+/** Mémoire des choix produit (présélection lors des envois suivants au panier). */
+class RoomProductMemory(private val dao: IngredientProductDao) : fr.mescourses.core.cart.ProductMemory {
+    override suspend fun get(key: String): fr.mescourses.core.carrefour.Product? = dao.get(key)?.let {
+        fr.mescourses.core.carrefour.Product(
+            id = it.ean, name = it.name, brand = it.brand, price = it.price, identifiers = mapOf("ean" to it.ean),
+        )
+    }
+
+    override suspend fun remember(key: String, product: fr.mescourses.core.carrefour.Product) =
+        dao.upsert(IngredientProductEntity(key, product.ean, product.name, product.brand, product.price))
+}

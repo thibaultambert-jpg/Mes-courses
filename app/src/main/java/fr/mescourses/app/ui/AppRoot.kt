@@ -31,7 +31,17 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import fr.mescourses.app.ui.carrefour.CarrefourDebugScreen
+import fr.mescourses.app.ui.carrefour.CarrefourStoreScreen
+import fr.mescourses.app.ui.carrefour.CarrefourWebScreen
+import fr.mescourses.app.ui.carrefour.WebMode
+import fr.mescourses.app.ui.carrefour.WriteConfirmationDialog
 import fr.mescourses.app.ui.cart.CartScreen
+import fr.mescourses.core.carrefour.CarrefourRoutes
 import fr.mescourses.app.ui.cookbook.CookbookScreen
 import fr.mescourses.app.ui.cookbook.RecipeDetailScreen
 import fr.mescourses.app.ui.cookbook.RecipeEditScreen
@@ -97,6 +107,13 @@ fun AppRoot(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
             }
         },
     ) { padding ->
+        // WebView invisible (1 px) qui exécute les requêtes Carrefour ; recréée avec l'activité.
+        AndroidView(
+            factory = { ctx -> container.bridge.createWebView(ctx) },
+            onRelease = { container.bridge.detach(it) },
+            modifier = Modifier.size(1.dp).alpha(0.01f),
+        )
+        WriteConfirmationDialog(container.confirmations)
         NavHost(nav, startDestination = "menu", modifier = Modifier.padding(bottom = padding.calculateBottomPadding())) {
             composable("menu") {
                 MenuScreen(
@@ -117,15 +134,51 @@ fun AppRoot(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
                     onOpenSettings = { nav.navigate("settings") },
                 )
             }
-            composable("shopping") { ShoppingListScreen(onOpenSettings = { nav.navigate("settings") }) }
-            composable("cart") { CartScreen(onOpenSettings = { nav.navigate("settings") }) }
-            composable("settings") { SettingsScreen(onBack = { nav.popBackStack() }) }
+            composable("shopping") {
+                ShoppingListScreen(onOpenSettings = { nav.navigate("settings") }, onSendToCart = { goTab("cart") })
+            }
+            composable("cart") {
+                CartScreen(
+                    onOpenSettings = { nav.navigate("settings") },
+                    onLogin = { nav.navigate(webRoute(CarrefourRoutes.AUTHORIZE_URL, WebMode.LOGIN)) },
+                    onOpenSite = { url -> nav.navigate(webRoute(url, WebMode.SITE)) },
+                    onChooseStore = { nav.navigate("carrefour/store") },
+                )
+            }
+            composable("settings") {
+                SettingsScreen(
+                    onBack = { nav.popBackStack() },
+                    onLogin = { nav.navigate(webRoute(CarrefourRoutes.AUTHORIZE_URL, WebMode.LOGIN)) },
+                    onChooseStore = { nav.navigate("carrefour/store") },
+                    onDebug = { nav.navigate("carrefour/debug") },
+                )
+            }
+            composable(
+                "carrefour/web?url={url}&mode={mode}",
+                arguments = listOf(
+                    navArgument("url") { type = NavType.StringType; defaultValue = CarrefourRoutes.PARKING },
+                    navArgument("mode") { type = NavType.StringType; defaultValue = WebMode.SITE.name },
+                ),
+            ) { entry ->
+                CarrefourWebScreen(
+                    startUrl = entry.arguments?.getString("url") ?: CarrefourRoutes.PARKING,
+                    mode = WebMode.valueOf(entry.arguments?.getString("mode") ?: WebMode.SITE.name),
+                    onClose = { nav.popBackStack() },
+                )
+            }
+            composable("carrefour/store") {
+                CarrefourStoreScreen(onBack = { nav.popBackStack() }, onOpenSite = { nav.navigate(webRoute(CarrefourRoutes.PARKING, WebMode.SITE)) })
+            }
+            composable("carrefour/debug") {
+                CarrefourDebugScreen(onBack = { nav.popBackStack() }, onOpenSite = { nav.navigate(webRoute(CarrefourRoutes.PARKING, WebMode.SITE)) })
+            }
             composable("recipe/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
                 val id = entry.arguments!!.getLong("id")
                 RecipeDetailScreen(
                     recipeId = id,
                     onBack = { nav.popBackStack() },
                     onEdit = { nav.navigate("recipe/edit/$id") },
+                    onSendToCart = { goTab("cart") },
                 )
             }
             composable("recipe/edit/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
@@ -137,3 +190,5 @@ fun AppRoot(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
         }
     }
 }
+
+private fun webRoute(url: String, mode: WebMode) = "carrefour/web?url=${android.net.Uri.encode(url)}&mode=${mode.name}"

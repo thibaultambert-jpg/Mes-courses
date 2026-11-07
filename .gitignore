@@ -10,5 +10,3 @@ captures/
 *.apk
 *.aab
 *.litertlm
-server/.env
-server/data/

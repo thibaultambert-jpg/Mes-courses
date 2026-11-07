@@ -132,6 +132,26 @@ interface ShoppingDao {
     suspend fun clearChecked()
 }
 
+/** Mémoire des choix : produit Carrefour retenu pour un ingrédient (clé normalisée). */
+@Entity(tableName = "ingredient_product")
+data class IngredientProductEntity(
+    @PrimaryKey val ingredientKey: String,
+    val ean: String,
+    val name: String,
+    val brand: String?,
+    val price: Double?,
+    val updatedAt: Long = System.currentTimeMillis(),
+)
+
+@Dao
+interface IngredientProductDao {
+    @Query("SELECT * FROM ingredient_product WHERE ingredientKey = :key")
+    suspend fun get(key: String): IngredientProductEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(entity: IngredientProductEntity)
+}
+
 @Dao
 interface MenuDraftDao {
     @Query("SELECT * FROM menu_draft ORDER BY position")
@@ -154,8 +174,8 @@ interface MenuDraftDao {
 }
 
 @Database(
-    entities = [RecipeEntity::class, PlannedMealEntity::class, ShoppingItemEntity::class, MenuDraftEntity::class],
-    version = 3,
+    entities = [RecipeEntity::class, PlannedMealEntity::class, ShoppingItemEntity::class, MenuDraftEntity::class, IngredientProductEntity::class],
+    version = 4,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -163,6 +183,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun mealDao(): MealDao
     abstract fun shoppingDao(): ShoppingDao
     abstract fun menuDraftDao(): MenuDraftDao
+    abstract fun ingredientProductDao(): IngredientProductDao
 }
 
 /**
@@ -205,5 +226,16 @@ val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
 val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
     override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE menu_draft ADD COLUMN mainIngredients TEXT NOT NULL DEFAULT '[]'")
+    }
+}
+
+/** v3 → v4 : mémoire des produits choisis par ingrédient (panier Carrefour). */
+val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS ingredient_product (
+                ingredientKey TEXT PRIMARY KEY NOT NULL, ean TEXT NOT NULL, name TEXT NOT NULL,
+                brand TEXT, price REAL, updatedAt INTEGER NOT NULL)""",
+        )
     }
 }

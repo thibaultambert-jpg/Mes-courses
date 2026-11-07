@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -290,7 +291,7 @@ fun MoveMenu(expanded: Boolean, current: RecipeStatus, onDismiss: () -> Unit, on
 }
 
 @Composable
-fun RecipeDetailScreen(recipeId: Long, onBack: () -> Unit, onEdit: () -> Unit) {
+fun RecipeDetailScreen(recipeId: Long, onBack: () -> Unit, onEdit: () -> Unit, onSendToCart: () -> Unit) {
     val vm = containerViewModel(key = "recipe-$recipeId") { RecipeDetailViewModel(it, recipeId) }
     val recipe by vm.recipe.collectAsStateWithLifecycle()
     val portions by vm.portions.collectAsStateWithLifecycle()
@@ -308,6 +309,7 @@ fun RecipeDetailScreen(recipeId: Long, onBack: () -> Unit, onEdit: () -> Unit) {
         snackbar = snackbar,
         actions = {
             if (r != null) {
+                IconButton(onClick = { vm.sendToCart(r); onSendToCart() }) { Icon(Icons.Filled.ShoppingCart, "Envoyer au panier Carrefour") }
                 IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, "Modifier") }
                 IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Filled.DeleteOutline, "Supprimer") }
             }

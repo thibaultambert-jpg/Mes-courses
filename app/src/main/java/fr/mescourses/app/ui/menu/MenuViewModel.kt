@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import fr.mescourses.app.AppContainer
 import fr.mescourses.app.llm.ChatEvent
+import fr.mescourses.app.llm.ModelStatus
 import fr.mescourses.core.menu.IngredientOverlap
 import fr.mescourses.core.menu.MenuConfig
 import fr.mescourses.core.menu.MenuPrompt
@@ -19,14 +20,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.io.File
 
-sealed interface ModelStatus {
-    data object Absent : ModelStatus
-    data object Loading : ModelStatus
-    data class Ready(val backend: String, val modelName: String) : ModelStatus
-    data class Failed(val message: String) : ModelStatus
-}
 
 /** Ligne du fil de discussion : message de l'utilisateur, réponse du LLM, ou trace d'outil. */
 data class ChatLine(val fromUser: Boolean, val text: String, val tool: Boolean = false, val ok: Boolean = true)
@@ -52,6 +46,10 @@ data class MenuUiState(
 
 class MenuViewModel(private val c: AppContainer) : ViewModel() {
 
+    private companion object {
+        const val OWNER = "menu"
+    }
+
     private val _state = MutableStateFlow(MenuUiState())
     val state: StateFlow<MenuUiState> = _state
 
@@ -71,7 +69,6 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
 
     private var job: Job? = null
-    private var loadedPath: String? = null
     /** Tant que l'utilisateur n'a pas touché aux compteurs, ils suivent les valeurs par défaut des Réglages. */
     private var configTouched = false
 
@@ -86,28 +83,17 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
         viewModelScope.launch {
             c.settings.state.collect { st ->
                 if (!configTouched) _state.update { it.copy(meals = st.meals, adults = st.householdSize, children = st.children) }
-                if (st.modelPath.isNotBlank() && st.modelPath != loadedPath && File(st.modelPath).exists()) loadModel(st.modelPath)
+                c.model.refreshAvailability()
             }
         }
+        viewModelScope.launch { c.model.status.collect { m -> _state.update { it.copy(model = m) } } }
     }
 
     private fun config() = _state.value.let { MenuConfig(it.meals, Portions(it.adults, it.children), it.wishes) }
 
-    fun loadModel(path: String = c.settings.current.modelPath) {
-        if (path.isBlank() || !File(path).exists()) {
-            _state.update { it.copy(model = ModelStatus.Absent) }
-            return
-        }
-        viewModelScope.launch {
-            _state.update { it.copy(model = ModelStatus.Loading) }
-            try {
-                val backend = c.llm.load(path, c.settings.current.preferGpu)
-                loadedPath = path
-                _state.update { it.copy(model = ModelStatus.Ready(backend, File(path).nameWithoutExtension)) }
-            } catch (e: Exception) {
-                _state.update { it.copy(model = ModelStatus.Failed(e.message ?: e.toString())) }
-            }
-        }
+    /** Charge (ou recharge après mise en veille) le modèle local. */
+    fun loadModel() {
+        viewModelScope.launch { c.model.ensureLoaded() }
     }
 
     fun setMeals(n: Int) { configTouched = true; _state.update { it.copy(meals = n.coerceIn(1, 21)) } }
@@ -132,12 +118,12 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     fun consumeMessage() = _state.update { it.copy(message = null) }
 
     private suspend fun startConversation() {
-        c.llm.newConversation(c.menuSystemPrompt(config()), c.menuTools())
+        c.model.startConversation(OWNER, c.menuSystemPrompt(config()), c.menuTools())
     }
 
     /** Lance la proposition d'un menu complet. */
     fun propose() {
-        if (_state.value.model !is ModelStatus.Ready || _state.value.busy) return
+        if (!_state.value.model.available || _state.value.busy) return
         job = viewModelScope.launch {
             c.draft.set(emptyList())
             step.value = MenuStep.PROPOSITION
@@ -164,9 +150,9 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     /** Message libre pour ajuster le menu. */
     fun send(text: String) {
         val t = text.trim()
-        if (t.isEmpty() || _state.value.model !is ModelStatus.Ready || _state.value.busy) return
+        if (t.isEmpty() || !_state.value.model.available || _state.value.busy) return
         job = viewModelScope.launch {
-            if (!c.llm.hasConversation()) startConversation()
+            if (!c.model.owns(OWNER)) startConversation()
             exchange(MenuPrompt.context(c.draft.get()) + "\n" + t, shownAs = t)
         }
     }
@@ -181,7 +167,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
         _state.update { s -> s.copy(busy = true, chat = if (shownAs != null) s.chat + ChatLine(true, shownAs) else s.chat) }
         val answer = StringBuilder()
         try {
-            c.llm.send(prompt).collect { ev ->
+            c.model.use { c.model.send(prompt).collect { ev ->
                 when (ev) {
                     is ChatEvent.Token -> {
                         answer.append(ev.text)
@@ -198,7 +184,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                         s.copy(chat = s.chat + ChatLine(false, (if (ev.ok) "✅ " else "⚠️ ") + ev.summary, tool = true, ok = ev.ok))
                     }
                 }
-            }
+            } }
         } catch (e: Exception) {
             _state.update { it.copy(chat = it.chat + ChatLine(false, "⚠️ ${e.message}", tool = true, ok = false)) }
         } finally {
@@ -235,7 +221,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     fun validate() {
         if (_state.value.busy || dishes.value.isEmpty()) return
         val needsModel = dishes.value.any { it.recipeId == null }
-        if (needsModel && _state.value.model !is ModelStatus.Ready) {
+        if (needsModel && !_state.value.model.available) {
             _state.update { it.copy(message = "Le modèle doit être chargé pour écrire les recettes.") }
             return
         }
