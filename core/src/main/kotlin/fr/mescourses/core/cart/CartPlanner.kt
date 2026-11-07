@@ -36,6 +36,7 @@ object CartPlanner {
         val base = item.name
             .replace(Regex("""(?i)\b(frais|fraîche|fraiches|fraîches|bio|émincé|émincée|haché|hachée|en dés|râpé|râpée)\b"""), " ")
             .replace(Regex("\\s+"), " ").trim().ifEmpty { item.name }
+            .let { if (ShoppingListMerger.isEgg(it)) "oeufs x12" else it }
         return if (preferOrganic) "$base bio" else base
     }
 

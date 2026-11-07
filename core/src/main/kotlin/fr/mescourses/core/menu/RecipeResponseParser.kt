@@ -6,7 +6,11 @@ import fr.mescourses.core.agent.strList
 import fr.mescourses.core.ingredients.IngredientParser
 import fr.mescourses.core.model.Recipe
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 
 /** Lit la recette générée par le LLM : JSON (même entouré de texte ou de ```), sinon texte à sections. */
 object RecipeResponseParser {
@@ -20,7 +24,7 @@ object RecipeResponseParser {
         val end = text.lastIndexOf('}')
         if (start < 0 || end <= start) return null
         val obj = runCatching { json.parseToJsonElement(text.substring(start, end + 1)) as JsonObject }.getOrNull() ?: return null
-        val ingredients = obj.strList("ingredients").ifEmpty { obj.strList("ingrédients") }
+        val ingredients = ingredientLines(obj["ingredients"] ?: obj["ingrédients"])
         if (ingredients.isEmpty()) return null
         return Recipe(
             title = title,
@@ -31,6 +35,48 @@ object RecipeResponseParser {
             cookMinutes = obj.int("cuisson_min"),
             notes = obj.str("conseil"),
         )
+    }
+
+    /** Ingrédients en chaînes (« 200 g de farine ») ou en objets ({"aliment","quantite","unite"}). */
+    private fun ingredientLines(element: JsonElement?): List<String> = when (element) {
+        is JsonArray -> element.mapNotNull { e ->
+            when (e) {
+                is JsonPrimitive -> e.contentOrNull?.trim()
+                is JsonObject -> {
+                    val food = e.str("aliment") ?: e.str("nom") ?: e.str("name") ?: e.str("produit")
+                    val qty = e.str("quantite") ?: e.str("quantité") ?: e.str("quantity")
+                    val unit = (e.str("unite") ?: e.str("unité") ?: e.str("unit"))?.takeUnless { it in setOf("pièce", "pièces", "piece", "pieces", "unité", "u") }
+                    food?.let { f ->
+                        val q = qty?.takeUnless { it == "0" }
+                        when {
+                            q == null -> f
+                            unit == null -> "$q $f"
+                            else -> "$q $unit de $f"
+                        }
+                    }
+                }
+                else -> null
+            }?.takeIf { it.isNotEmpty() }
+        }
+        is JsonPrimitive -> element.contentOrNull.orEmpty().split('\n', ';', ',').map { it.trim() }.filter { it.isNotEmpty() }
+        else -> emptyList()
+    }
+
+    /** Étapes, temps et conseil écrits après coup pour une recette existante. */
+    data class Steps(val steps: List<String>, val prepMinutes: Int?, val cookMinutes: Int?, val tip: String?)
+
+    fun parseSteps(text: String): Steps? {
+        val start = text.indexOf('{')
+        val end = text.lastIndexOf('}')
+        val obj = if (start >= 0 && end > start) runCatching { json.parseToJsonElement(text.substring(start, end + 1)) as JsonObject }.getOrNull() else null
+        if (obj != null) {
+            val steps = obj.strList("etapes").ifEmpty { obj.strList("étapes") }.ifEmpty { obj.strList("steps") }
+            if (steps.isNotEmpty()) return Steps(steps, obj.int("preparation_min"), obj.int("cuisson_min"), obj.str("conseil"))
+        }
+        // Repli : liste numérotée en texte.
+        val steps = text.lines().map { it.trim() }.filter { it.matches(Regex("""^(\d+[.)]|[-•*])\s*.+""")) }
+            .map { it.replace(Regex("""^(\d+[.)]|[-•*])\s*"""), "") }
+        return if (steps.size >= 2) Steps(steps, null, null, null) else null
     }
 
     /** « Ingrédients : - … / Étapes : 1. … » */

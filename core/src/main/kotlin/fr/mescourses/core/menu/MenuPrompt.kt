@@ -77,18 +77,32 @@ object MenuPrompt {
             "Garde les plats qui le font déjà et remplace ceux dont les ingrédients ne servent qu'une fois."
 
     /** Demande de recette détaillée, envoyée à la validation (sans outils). */
+    /**
+     * Validation rapide : on ne demande que les ingrédients (la liste de courses peut partir tout de suite).
+     * Les étapes sont écrites plus tard, à l'ouverture de la recette ([stepsRequest]).
+     */
     fun recipeRequest(
         dish: MenuDish,
         servings: Int,
         alreadyBought: List<String> = emptyList(),
         missing: List<PlateBalance.Component> = emptyList(),
     ): String = """
-Donne la recette de « ${dish.title} »${if (dish.description.isNotBlank()) " (${dish.description})" else ""} pour $servings personnes.
+Liste les ingrédients de « ${dish.title} »${if (dish.description.isNotBlank()) " (${dish.description})" else ""} pour $servings personnes.
 Recette saine, ingrédients bio et de saison, assiette équilibrée : une protéine, des légumes (la moitié de l'assiette) et un féculent.${if (dish.mainIngredients.isNotEmpty()) " Ingrédients principaux prévus : ${dish.mainIngredients.joinToString(", ")}." else ""}
-${if (missing.isNotEmpty()) "IMPORTANT : ta version précédente n'avait pas ${missing.joinToString(" ni ") { it.missingLabel }}. Ajoute-le en accompagnement.\n" else ""}${if (alreadyBought.isNotEmpty()) "Déjà achetés pour les autres plats du menu, à réutiliser en priorité plutôt que d'en acheter d'autres : ${alreadyBought.joinToString(", ")}.\n" else ""}Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
-{"titre": "...", "personnes": $servings, "preparation_min": 15, "cuisson_min": 30,
- "ingredients": ["200 g de ...", "2 ..."], "etapes": ["...", "..."]}
-Quantités précises en g, ml, cl ou nombre de pièces.
+${if (missing.isNotEmpty()) "IMPORTANT : ta version précédente n'avait pas ${missing.joinToString(" ni ") { it.missingLabel }}. Ajoute-le en accompagnement.\n" else ""}${if (alreadyBought.isNotEmpty()) "Déjà achetés pour les autres plats du menu, à réutiliser en priorité plutôt que d'en acheter d'autres : ${alreadyBought.joinToString(", ")}.\n" else ""}Pour chaque ingrédient, "aliment" est le nom simple du produit tel qu'on l'achète : "poulet" (pas "morceaux de poulet"), "persil" (pas "quelques brins de persil frais").
+Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
+{"titre": "...", "personnes": $servings,
+ "ingredients": [{"aliment": "poulet", "quantite": 600, "unite": "g"}, {"aliment": "oignon", "quantite": 2, "unite": ""}]}
+Unités : g, ml ou vide pour un nombre de pièces.
+""".trimIndent()
+
+    /** Étapes d'une recette dont les ingrédients sont déjà fixés (écrites à l'ouverture de la fiche). */
+    fun stepsRequest(title: String, servings: Int, ingredients: List<String>, description: String?): String = """
+Écris la recette de « $title »${if (!description.isNullOrBlank()) " ($description)" else ""} pour $servings personnes, avec ces ingrédients :
+${ingredients.joinToString("\n") { "- $it" }}
+Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
+{"preparation_min": 15, "cuisson_min": 30, "etapes": ["...", "..."], "conseil": "..."}
+Étapes claires et numérotables, de 4 à 8 étapes.
 """.trimIndent()
 
     const val RECIPE_SYSTEM =

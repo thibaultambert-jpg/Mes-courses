@@ -70,6 +70,11 @@ class MenuValidator(
         return ValidationResult(created, reused, items, failures)
     }
 
+    companion object {
+        /** Tag des recettes dont seuls les ingrédients ont été générés : les étapes viennent à l'ouverture. */
+        const val STEPS_PENDING = "etapes-a-generer"
+    }
+
     /**
      * Recette pour un nombre « rond » de personnes, mise à l'échelle ensuite. Si l'assiette n'est pas
      * complète (protéine, légumes, féculent), on redemande une fois en précisant ce qui manque.
@@ -82,7 +87,8 @@ class MenuValidator(
             val text = runCatching {
                 generator.generate(MenuPrompt.RECIPE_SYSTEM, MenuPrompt.recipeRequest(dish, servings, alreadyBought.take(25), missing))
             }.getOrNull() ?: continue
-            val recipe = RecipeResponseParser.parse(text, dish.title, servings)?.copy(tags = listOf("menu")) ?: continue
+            val recipe = RecipeResponseParser.parse(text, dish.title, servings)
+                ?.let { r -> r.copy(tags = if (r.steps.isEmpty()) listOf("menu", STEPS_PENDING) else listOf("menu")) } ?: continue
             val nowMissing = PlateBalance.missing(listOf(recipe.title) + recipe.ingredients.map { it.name })
             if (nowMissing.isEmpty()) return recipe
             if (best == null || nowMissing.size < missing.size || missing.isEmpty()) best = recipe
@@ -93,5 +99,28 @@ class MenuValidator(
             notes = listOfNotNull(best.notes, "Assiette à compléter : il manque ${missing.joinToString(" et ") { it.missingLabel }}.")
                 .joinToString("\n"),
         )
+    }
+}
+
+/** Écrit les étapes d'une recette validée dont on n'a généré que les ingrédients. */
+class RecipeStepsWriter(private val generator: TextGenerator) {
+
+    fun needsSteps(recipe: Recipe) = recipe.steps.isEmpty() && MenuValidator.STEPS_PENDING in recipe.tags
+
+    /** Renvoie la recette complétée, ou null si le modèle n'a pas répondu correctement (2 essais). */
+    suspend fun complete(recipe: Recipe): Recipe? {
+        val prompt = MenuPrompt.stepsRequest(recipe.title, recipe.servings, recipe.ingredients.map { it.raw }, recipe.description)
+        repeat(2) {
+            val text = runCatching { generator.generate(MenuPrompt.RECIPE_SYSTEM, prompt) }.getOrNull() ?: return@repeat
+            val steps = RecipeResponseParser.parseSteps(text) ?: return@repeat
+            return recipe.copy(
+                steps = steps.steps,
+                prepMinutes = steps.prepMinutes ?: recipe.prepMinutes,
+                cookMinutes = steps.cookMinutes ?: recipe.cookMinutes,
+                notes = listOfNotNull(recipe.notes, steps.tip).joinToString("\n").ifBlank { null },
+                tags = recipe.tags - MenuValidator.STEPS_PENDING,
+            )
+        }
+        return null
     }
 }
