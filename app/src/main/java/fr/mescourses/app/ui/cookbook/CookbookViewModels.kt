@@ -9,6 +9,7 @@ import fr.mescourses.core.model.Portions
 import fr.mescourses.core.model.Recipe
 import fr.mescourses.core.model.RecipeStatus
 import fr.mescourses.core.model.stripAccents
+import fr.mescourses.core.recipes.RecipeSites
 import fr.mescourses.core.shopping.ShoppingListMerger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
@@ -22,6 +23,9 @@ import kotlinx.coroutines.launch
 class CookbookViewModel(private val c: AppContainer) : ViewModel() {
     val query = MutableStateFlow("")
     val tab = MutableStateFlow(RecipeStatus.HISTORIQUE)
+    /** Onglet « Découvrir » (recherche sur les sites de recettes) affiché à la place d'une liste du livre. */
+    val discover = MutableStateFlow(false)
+    private val favorites = fr.mescourses.app.ui.discover.Favorites(c, viewModelScope)
     val importing = MutableStateFlow(false)
     val messages = MutableStateFlow<String?>(null)
 
@@ -50,15 +54,19 @@ class CookbookViewModel(private val c: AppContainer) : ViewModel() {
             importing.value = true
             try {
                 // Déjà dans le livre : on l'ouvre au lieu d'en créer un doublon.
-                c.recipes.all().firstOrNull { it.sourceUrl == url.trim() }?.let { existing ->
+                (
+                    favorites.find(url) ?: c.recipes.all().firstOrNull {
+                        it.sourceUrl != null && RecipeSites.normalize(it.sourceUrl!!) == RecipeSites.normalize(url)
+                    }
+                )?.let { existing ->
                     messages.value = "« ${existing.title} » est déjà dans ton livre"
                     onDone(existing.id)
                     return@launch
                 }
-                val recipe = c.importer.import(url.trim()).copy(status = RecipeStatus.FAVORI)
-                val id = c.recipes.save(recipe)
+                val (id, title) = favorites.addFromUrl(url.trim())
                 tab.value = RecipeStatus.FAVORI
-                messages.value = "« ${recipe.title} » ajoutée aux favoris"
+                discover.value = false
+                messages.value = "« $title » ajoutée aux favoris"
                 onDone(id)
             } catch (e: Exception) {
                 messages.value = "Import impossible : ${e.message}"

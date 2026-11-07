@@ -7,7 +7,7 @@ puis **remplir son panier Carrefour Drive** directement depuis le téléphone (s
 | Onglet | Rôle |
 |---|---|
 | **Menu** | Tu choisis le nombre de repas, les adultes et les enfants, tes envies, puis « Proposer un menu ». Le LLM local propose des plats **sains, bio et de saison**. Tu ajustes en discutant (« ajoute 3 adultes et 2 enfants au plat 2 », « remplace le plat 4 ») ou avec les boutons. « Valider » écrit les recettes, les range dans le livre (Historique) et remplit la liste de courses. |
-| **Recettes** | Livre de recettes vide au départ, en 3 listes : **Historique** (plats validés), **Favoris** (que le LLM peut reproposer ; les recettes partagées depuis un site ou écrites à la main y arrivent), **Ne plus proposer** (jamais reproposées). Un bouton déplace un plat d'une liste à l'autre. |
+| **Recettes** | Livre de recettes vide au départ, en 3 listes : **Historique** (plats validés), **Favoris** (que le LLM peut reproposer ; les recettes partagées depuis un site ou écrites à la main y arrivent), **Ne plus proposer** (jamais reproposées). Un bouton déplace un plat d'une liste à l'autre. **Découvrir** : recherche sur Marmiton, 750g, Cuisine AZ et Journal des Femmes, aperçu, étoile pour ajouter aux favoris ; navigateur intégré qui détecte la recette de la page affichée ; ajout par lien. |
 | **Liste** | Liste de courses libre + ingrédients des menus ; vue « fusionnée » (doublons regroupés, unités converties). Les quantités tiennent compte des enfants (demi-portion par défaut). |
 | **Panier** | Pour chaque article, recherche du produit au drive (bio en priorité), **validation par toi**, puis ajout au panier. La commande et le paiement se font ensuite chez l'enseigne. |
 
@@ -44,6 +44,17 @@ c'est ce qui passe la protection Cloudflare, qu'un client HTTP classique ne pass
 
 Intégration **non officielle**, pour un usage personnel : elle peut casser si Carrefour modifie son site.
 Leclerc et Auchan pourront être ajoutés plus tard sur le même modèle (interface `RetailerBackend`).
+
+### Sites de recettes
+
+L'import lit la fiche `schema.org/Recipe` que les sites publient pour Google ; il marche donc sur la plupart des sites
+(Marmiton, 750g, Cuisine AZ, Journal des Femmes, Cuisine Actuelle, Ptitchef, Ricardo, Chef Simon, Elle à table,
+HelloFresh, blogs WordPress…). La **recherche intégrée** (onglet Découvrir) couvre Marmiton, 750g, Cuisine AZ et
+Journal des Femmes : elle lit les pages de résultats sans dépendre de leur mise en page exacte (liens dont l'adresse a
+la forme d'une recette). Les pages sont d'abord demandées en HTTP, puis, si le site bloque, chargées dans un navigateur
+invisible. Si un site ne répond pas, l'app propose d'ouvrir sa recherche dans le navigateur intégré, où le bandeau
+« Recette détectée » permet quand même l'ajout. Adresses et formes d'URL : `core/.../recipes/RecipeSites.kt`.
+Recettes non accessibles : Cookidoo (abonnés), Jow (à tester).
 
 ### Honor / MagicOS
 

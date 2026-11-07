@@ -32,7 +32,10 @@ import fr.mescourses.core.menu.TextGenerator
 import fr.mescourses.app.work.ChefWork
 import fr.mescourses.core.model.Portions
 import fr.mescourses.core.model.ShoppingItem
+import fr.mescourses.core.recipes.HttpPageFetcher
 import fr.mescourses.core.recipes.RecipeImporter
+import fr.mescourses.core.recipes.RecipeSearcher
+import fr.mescourses.app.recipes.WebViewPageFetcher
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
@@ -60,7 +63,7 @@ class AppContainer(context: Context) {
 
     val settings = SettingsStore(context, appScope)
 
-    /** Client HTTP classique : seulement pour importer des recettes depuis un lien. */
+    /** Client HTTP classique : pour les sites de recettes (import et recherche). */
     private val http = HttpClient(CIO) {
         install(HttpTimeout) {
             requestTimeoutMillis = 60_000
@@ -68,7 +71,11 @@ class AppContainer(context: Context) {
         }
         followRedirects = true
     }
-    val importer = RecipeImporter(http)
+    /** Navigateur invisible : second recours quand un site refuse le client HTTP. */
+    private val webFetcher = WebViewPageFetcher(context.applicationContext)
+    private val fetchers = listOf(HttpPageFetcher(http), webFetcher)
+    val importer = RecipeImporter(fetchers)
+    val recipeSearch = RecipeSearcher(fetchers)
 
     // --- LLM local ---
     private val llm: LlmEngine = LiteRtLmEngine(context)

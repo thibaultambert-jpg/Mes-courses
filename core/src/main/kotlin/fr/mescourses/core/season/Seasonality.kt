@@ -72,6 +72,14 @@ object Seasonality {
         "rhubarbe" to (4..6).toSet(),
     )
 
+    /** Légumes et fruits vraiment « de saison » ce mois-ci (pas ceux qu'on trouve toute l'année), pour des idées de recherche. */
+    fun highlights(month: Month): List<String> {
+        val m = month.value
+        return (vegetables + fruits).filter { (_, months) -> m in months && months.size <= 8 }.keys
+            .map { it.substringBefore(" (").trim() }
+            .distinct()
+    }
+
     fun forMonth(month: Month): Season {
         val m = month.value
         return Season(
