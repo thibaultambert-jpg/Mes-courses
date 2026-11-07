@@ -55,7 +55,7 @@ L'app libère d'elle-même le modèle (plusieurs Go) quand le système manque de
 
 ```
 core/    Logique métier Kotlin/JVM pur, testée (ingrédients, fusion de liste, extraction de recettes
-         schema.org, outils du LLM, client MCP, préparation du panier)
+         schema.org, outils du LLM, client Carrefour, préparation du panier)
 app/     Application Android (Jetpack Compose, Room, DataStore, LiteRT-LM)
 docs/    Routes Carrefour documentées
 ```
