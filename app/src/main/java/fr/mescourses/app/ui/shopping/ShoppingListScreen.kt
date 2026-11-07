@@ -105,7 +105,9 @@ fun ShoppingListScreen(onOpenSettings: () -> Unit) {
                     items(ShoppingListMerger.merge(items)) { item ->
                         ListItem(
                             headlineContent = { Text(ShoppingListMerger.format(item)) },
-                            supportingContent = item.origin?.let { { Text(it, style = MaterialTheme.typography.bodySmall) } },
+                            supportingContent = {
+                                item.origin?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                            },
                         )
                         HorizontalDivider()
                     }
