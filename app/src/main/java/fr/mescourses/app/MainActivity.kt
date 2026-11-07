@@ -7,7 +7,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.mutableStateOf
 import fr.mescourses.app.ui.AppRoot
-import fr.mescourses.app.ui.common.MesCoursesTheme
+import fr.mescourses.app.ui.theme.MesCoursesTheme
 
 class MainActivity : ComponentActivity() {
 

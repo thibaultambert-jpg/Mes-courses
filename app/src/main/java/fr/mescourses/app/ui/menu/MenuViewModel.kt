@@ -33,6 +33,11 @@ data class ChatLine(val fromUser: Boolean, val text: String, val tool: Boolean =
 
 data class Validation(val done: Int, val total: Int, val current: String)
 
+enum class MenuStep(val label: String) { REGLAGES("Réglages"), PROPOSITION("Menu"), SEMAINE("Semaine") }
+
+/** Envies proposées en un toucher. */
+val QUICK_WISHES = listOf("Rapide en semaine", "Poisson", "Végétarien", "Petit budget", "Batch cooking", "Les enfants aiment")
+
 data class MenuUiState(
     val meals: Int = 5,
     val adults: Int = 2,
@@ -49,6 +54,9 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
 
     private val _state = MutableStateFlow(MenuUiState())
     val state: StateFlow<MenuUiState> = _state
+
+    val step = MutableStateFlow(MenuStep.REGLAGES)
+    val season = fr.mescourses.core.season.Seasonality.forMonth(java.time.LocalDate.now().month)
 
     val dishes: StateFlow<List<MenuDish>> = c.draft.observe().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val week: StateFlow<List<PlannedMeal>> = c.plan.observeAll().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -68,6 +76,13 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     private var configTouched = false
 
     init {
+        viewModelScope.launch {
+            step.value = when {
+                c.draft.get().isNotEmpty() -> MenuStep.PROPOSITION
+                c.plan.all().isNotEmpty() -> MenuStep.SEMAINE
+                else -> MenuStep.REGLAGES
+            }
+        }
         viewModelScope.launch {
             c.settings.state.collect { st ->
                 if (!configTouched) _state.update { it.copy(meals = st.meals, adults = st.householdSize, children = st.children) }
@@ -99,6 +114,21 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     fun setAdults(n: Int) { configTouched = true; _state.update { it.copy(adults = n.coerceIn(0, 20)) } }
     fun setChildren(n: Int) { configTouched = true; _state.update { it.copy(children = n.coerceIn(0, 20)) } }
     fun setWishes(text: String) = _state.update { it.copy(wishes = text) }
+
+    fun toggleWish(wish: String) = _state.update { s ->
+        val parts = s.wishes.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toMutableList()
+        if (parts.any { it.equals(wish, true) }) parts.removeAll { it.equals(wish, true) } else parts += wish
+        s.copy(wishes = parts.joinToString(", "))
+    }
+
+    fun goTo(target: MenuStep) {
+        val allowed = when (target) {
+            MenuStep.REGLAGES -> true
+            MenuStep.PROPOSITION -> dishes.value.isNotEmpty() || _state.value.busy
+            MenuStep.SEMAINE -> week.value.isNotEmpty()
+        }
+        if (allowed) step.value = target
+    }
     fun consumeMessage() = _state.update { it.copy(message = null) }
 
     private suspend fun startConversation() {
@@ -110,6 +140,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
         if (_state.value.model !is ModelStatus.Ready || _state.value.busy) return
         job = viewModelScope.launch {
             c.draft.set(emptyList())
+            step.value = MenuStep.PROPOSITION
             _state.update { it.copy(chat = emptyList()) }
             startConversation()
             val answer = exchange(MenuPrompt.firstRequest(config()), shownAs = null)
@@ -123,6 +154,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                         },
                     )
                 } else {
+                    step.value = MenuStep.REGLAGES
                     _state.update { it.copy(message = "Le modèle n'a pas proposé de menu, réessaie.") }
                 }
             }
@@ -196,6 +228,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     fun clearDraft() = viewModelScope.launch {
         c.draft.set(emptyList())
         _state.update { it.copy(chat = emptyList()) }
+        step.value = if (week.value.isNotEmpty()) MenuStep.SEMAINE else MenuStep.REGLAGES
     }
 
     /** Génère les recettes, remplit le livre (Historique) et la liste de courses. */
@@ -217,6 +250,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                     if (r.failures.isNotEmpty()) append(" Échec pour : ${r.failures.joinToString()} (reste dans le brouillon).")
                 }
                 _state.update { it.copy(message = msg, chat = emptyList()) }
+                if (r.failures.isEmpty()) step.value = MenuStep.SEMAINE
             } catch (e: Exception) {
                 _state.update { it.copy(message = "Validation interrompue : ${e.message}") }
             } finally {
@@ -228,5 +262,10 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     // --- Menu de la semaine validé ---
 
     fun toggleCooked(meal: PlannedMeal) = viewModelScope.launch { c.plan.update(meal.copy(cooked = !meal.cooked)) }
-    fun clearWeek() = viewModelScope.launch { c.plan.clear() }
+    fun clearWeek() = viewModelScope.launch {
+        c.plan.clear()
+        step.value = MenuStep.REGLAGES
+    }
+
+    fun newMenu() { step.value = MenuStep.REGLAGES }
 }

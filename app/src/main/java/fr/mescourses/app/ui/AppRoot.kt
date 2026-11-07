@@ -6,7 +6,15 @@ import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.RestaurantMenu
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.ShoppingCart
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.runtime.remember
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import fr.mescourses.core.shopping.ShoppingListMerger
+import kotlinx.coroutines.flow.map
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -56,16 +64,33 @@ fun AppRoot(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
         restoreState = true
     }
 
+    val container = fr.mescourses.app.ui.common.appContainer()
+    val draftCount by remember { container.draft.observe().map { it.size } }.collectAsStateWithLifecycle(0)
+    val remaining by remember {
+        container.shopping.observeAll().map { l -> l.filterNot { it.checked }.map { ShoppingListMerger.key(it.name) }.distinct().size }
+    }.collectAsStateWithLifecycle(0)
+
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
             if (tabs.any { current?.startsWith(it.route) == true }) {
-                NavigationBar {
+                NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
                     tabs.forEach { tab ->
+                        val badge = when (tab.route) {
+                            "menu" -> draftCount
+                            "shopping" -> remaining
+                            else -> 0
+                        }
                         NavigationBarItem(
                             selected = current?.startsWith(tab.route) == true,
                             onClick = { goTab(tab.route) },
-                            icon = { Icon(tab.icon, contentDescription = tab.label) },
+                            icon = {
+                                BadgedBox(badge = { if (badge > 0) Badge { Text("$badge") } }) {
+                                    Icon(tab.icon, contentDescription = tab.label)
+                                }
+                            },
                             label = { Text(tab.label) },
+                            colors = NavigationBarItemDefaults.colors(indicatorColor = MaterialTheme.colorScheme.primaryContainer),
                         )
                     }
                 }
@@ -74,7 +99,11 @@ fun AppRoot(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
     ) { padding ->
         NavHost(nav, startDestination = "menu", modifier = Modifier.padding(bottom = padding.calculateBottomPadding())) {
             composable("menu") {
-                MenuScreen(onOpenSettings = { nav.navigate("settings") }, onOpenRecipe = { nav.navigate("recipe/$it") })
+                MenuScreen(
+                    onOpenSettings = { nav.navigate("settings") },
+                    onOpenRecipe = { nav.navigate("recipe/$it") },
+                    onOpenShopping = { goTab("shopping") },
+                )
             }
             composable(
                 "cookbook?import={import}",

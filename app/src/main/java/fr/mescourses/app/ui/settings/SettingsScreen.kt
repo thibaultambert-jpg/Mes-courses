@@ -3,6 +3,16 @@
 package fr.mescourses.app.ui.settings
 
 import android.net.Uri
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CardDefaults
+import androidx.compose.ui.draw.clip
+import fr.mescourses.app.ui.components.PillStepper
+import fr.mescourses.app.ui.components.SectionCard
+import fr.mescourses.app.ui.components.SectionHeader
+import fr.mescourses.app.ui.components.StatChip
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -115,99 +125,141 @@ fun SettingsScreen(onBack: () -> Unit) {
     ScreenScaffold(title = "Réglages", onBack = onBack) { padding ->
         Column(
             Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp).navigationBarsPadding(),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Section("Modèle de langage local")
-            Text(
-                "Le modèle tourne entièrement sur le téléphone (LiteRT-LM, GPU Adreno). Espace libre : %.1f Go.".format(vm.c.models.freeSpaceGb()),
-                style = MaterialTheme.typography.bodySmall,
-            )
-            installed.forEach { file ->
+            SectionCard {
+                SectionHeader("Assistant local", emoji = "🤖")
+                Text(
+                    "Il tourne entièrement sur ton téléphone (LiteRT-LM, GPU Adreno). Espace libre : %.1f Go.".format(vm.c.models.freeSpaceGb()),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                installed.forEach { file ->
+                    val active = s.modelPath == file.absolutePath
+                    Card(
+                        onClick = { vm.update { it.copy(modelPath = file.absolutePath) } },
+                        shape = MaterialTheme.shapes.medium,
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLowest,
+                        ),
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = active, onClick = { vm.update { it.copy(modelPath = file.absolutePath) } })
+                            Column(Modifier.weight(1f)) {
+                                Text(file.nameWithoutExtension, style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "%.1f Go".format(file.length() / 1e9) + if (active) " · utilisé" else "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            TextButton(onClick = { vm.delete(file) }) { Text("Supprimer") }
+                        }
+                    }
+                }
+                ModelCatalog.models.filter { m -> installed.none { it.name == m.fileName } }.forEach { m ->
+                    Card(
+                        shape = MaterialTheme.shapes.medium,
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
+                    ) {
+                        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(m.label, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                                StatChip("≈ ${m.approxSizeGb} Go")
+                            }
+                            Text(m.description, style = MaterialTheme.typography.bodySmall)
+                            Button(onClick = { vm.download(m) }, enabled = download !is DownloadState.Running) { Text("Télécharger") }
+                        }
+                    }
+                }
+                when (val d = download) {
+                    is DownloadState.Running -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("${d.label} : %.2f / %.2f Go".format(d.downloaded / 1e9, d.total / 1e9), style = MaterialTheme.typography.bodyMedium)
+                        LinearProgressIndicator(
+                            progress = { d.progress },
+                            modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(50)),
+                        )
+                        TextButton(onClick = { vm.c.models.cancel() }) { Text("Annuler") }
+                    }
+                    is DownloadState.Failed -> Text(d.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    else -> Unit
+                }
+                OutlinedButton(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Importer un fichier .litertlm") }
+                SwitchRow("Utiliser le GPU", "Recommandé : bien plus rapide", s.preferGpu) { v -> vm.update { it.copy(preferGpu = v) } }
+                Field("Jeton Hugging Face (si le modèle l'exige)", s.hfToken, secret = true) { v -> vm.update { it.copy(hfToken = v) } }
+            }
+
+            SectionCard {
+                SectionHeader("Mon foyer", emoji = "👨‍👩‍👧")
+                PillStepper("🧑", "Adultes par repas", s.householdSize, { n -> vm.update { it.copy(householdSize = n.coerceIn(0, 20)) } })
+                PillStepper("🧒", "Enfants par repas", s.children, { n -> vm.update { it.copy(children = n.coerceIn(0, 20)) } })
+                PillStepper("🍽", "Repas par menu", s.meals, { n -> vm.update { it.copy(meals = n.coerceIn(1, 21)) } }, min = 1, max = 21)
+                Text("Portion d'un enfant : ${(s.childFactor * 100).toInt()} % d'une portion adulte", style = MaterialTheme.typography.bodyMedium)
+                Slider(
+                    value = s.childFactor.toFloat(),
+                    onValueChange = { v -> vm.update { it.copy(childFactor = (Math.round(v * 20) / 20.0)) } },
+                    valueRange = 0.25f..1f,
+                    steps = 14,
+                )
+                Field("Régime, allergies, goûts, budget…", s.preferences, lines = 3) { v -> vm.update { it.copy(preferences = v) } }
+            }
+
+            SectionCard {
+                SectionHeader("Drive & serveur maison", emoji = "🛒")
+                SwitchRow("Privilégier le bio", "Cherche d'abord la version bio de chaque produit", s.preferOrganic) { v ->
+                    vm.update { it.copy(preferOrganic = v) }
+                }
+                Text(
+                    "Adresses exposées par server/ et joignables via Tailscale (ex. http://100.x.y.z:8811/carrefour/mcp).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Field("Jeton d'accès MCP", s.mcpToken, secret = true) { v -> vm.update { it.copy(mcpToken = v) } }
+                Retailer.entries.forEach { r ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.weight(1f)) {
+                            Field("MCP ${r.label}", s.mcpUrl(r)) { v ->
+                                vm.update {
+                                    when (r) {
+                                        Retailer.CARREFOUR -> it.copy(carrefourUrl = v)
+                                        Retailer.LECLERC -> it.copy(leclercUrl = v)
+                                        Retailer.AUCHAN -> it.copy(auchanUrl = v)
+                                    }
+                                }
+                            }
+                        }
+                        TextButton(onClick = { vm.test(r) }, enabled = s.mcpUrl(r).isNotBlank()) { Text("Tester") }
+                    }
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected = s.modelPath == file.absolutePath, onClick = { vm.update { it.copy(modelPath = file.absolutePath) } })
-                    Text("${file.nameWithoutExtension} (%.1f Go)".format(file.length() / 1e9), Modifier.weight(1f))
-                    TextButton(onClick = { vm.delete(file) }) { Text("Supprimer") }
-                }
-            }
-            ModelCatalog.models.filter { m -> installed.none { it.name == m.fileName } }.forEach { m ->
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text(m.label, style = MaterialTheme.typography.titleSmall)
-                        Text("${m.description} (≈ ${m.approxSizeGb} Go)", style = MaterialTheme.typography.bodySmall)
-                        Button(onClick = { vm.download(m) }, enabled = download !is DownloadState.Running, modifier = Modifier.padding(top = 6.dp)) {
-                            Text("Télécharger")
-                        }
+                    Box(Modifier.weight(1f)) {
+                        Field("SearXNG (recettes sur internet)", s.searxngUrl) { v -> vm.update { it.copy(searxngUrl = v) } }
                     }
+                    TextButton(onClick = vm::testSearxng, enabled = s.searxngUrl.isNotBlank()) { Text("Tester") }
+                }
+                testResult?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium)
+                            .background(MaterialTheme.colorScheme.surfaceContainerHighest).padding(12.dp),
+                    )
                 }
             }
-            when (val d = download) {
-                is DownloadState.Running -> Column {
-                    Text("${d.label} : %.2f / %.2f Go".format(d.downloaded / 1e9, d.total / 1e9))
-                    LinearProgressIndicator(progress = { d.progress }, modifier = Modifier.fillMaxWidth())
-                    TextButton(onClick = { vm.c.models.cancel() }) { Text("Annuler") }
-                }
-                is DownloadState.Failed -> Text(d.message, color = MaterialTheme.colorScheme.error)
-                else -> Unit
-            }
-            OutlinedButton(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Importer un fichier .litertlm") }
-            Field("Jeton Hugging Face (si le modèle l'exige)", s.hfToken, secret = true) { v -> vm.update { it.copy(hfToken = v) } }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Utiliser le GPU (recommandé)", Modifier.weight(1f))
-                Switch(checked = s.preferGpu, onCheckedChange = { v -> vm.update { it.copy(preferGpu = v) } })
-            }
-
-            HorizontalDivider()
-            Section("Foyer et goûts")
-            Field("Adultes par repas (par défaut)", s.householdSize.toString(), number = true) { v ->
-                v.toIntOrNull()?.let { n -> vm.update { it.copy(householdSize = n.coerceIn(0, 20)) } }
-            }
-            Field("Enfants par repas (par défaut)", s.children.toString(), number = true) { v ->
-                v.toIntOrNull()?.let { n -> vm.update { it.copy(children = n.coerceIn(0, 20)) } }
-            }
-            Field("Nombre de repas par menu (par défaut)", s.meals.toString(), number = true) { v ->
-                v.toIntOrNull()?.let { n -> vm.update { it.copy(meals = n.coerceIn(1, 21)) } }
-            }
-            Text("Portion d'un enfant : ${(s.childFactor * 100).toInt()} % d'une portion adulte", style = MaterialTheme.typography.bodyMedium)
-            Slider(
-                value = s.childFactor.toFloat(),
-                onValueChange = { v -> vm.update { it.copy(childFactor = (Math.round(v * 20) / 20.0)) } },
-                valueRange = 0.25f..1f,
-                steps = 14,
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Privilégier les produits bio au drive", Modifier.weight(1f))
-                Switch(checked = s.preferOrganic, onCheckedChange = { v -> vm.update { it.copy(preferOrganic = v) } })
-            }
-            Field("Préférences (régime, allergies, budget…)", s.preferences, lines = 3) { v -> vm.update { it.copy(preferences = v) } }
-
-            HorizontalDivider()
-            Section("Hôte maison (MCP drive + recherche web)")
-            Text(
-                "Adresses exposées par le docker-compose de server/, joignables via Tailscale (ex. http://100.x.y.z:8811/carrefour/mcp).",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            Field("SearXNG (recherche de recettes)", s.searxngUrl) { v -> vm.update { it.copy(searxngUrl = v) } }
-            TextButton(onClick = vm::testSearxng, enabled = s.searxngUrl.isNotBlank()) { Text("Tester SearXNG") }
-            Field("Jeton d'accès MCP", s.mcpToken, secret = true) { v -> vm.update { it.copy(mcpToken = v) } }
-            Retailer.entries.forEach { r ->
-                Field("MCP ${r.label}", s.mcpUrl(r)) { v ->
-                    vm.update {
-                        when (r) {
-                            Retailer.CARREFOUR -> it.copy(carrefourUrl = v)
-                            Retailer.LECLERC -> it.copy(leclercUrl = v)
-                            Retailer.AUCHAN -> it.copy(auchanUrl = v)
-                        }
-                    }
-                }
-                TextButton(onClick = { vm.test(r) }, enabled = s.mcpUrl(r).isNotBlank()) { Text("Tester ${r.label}") }
-            }
-            testResult?.let { Card(Modifier.fillMaxWidth()) { Text(it, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall) } }
         }
     }
 }
 
 @Composable
-private fun Section(title: String) = Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
 
 /** Champ texte qui n'enregistre qu'à la perte de focus / validation pour éviter d'écrire à chaque frappe. */
 @Composable
@@ -226,6 +278,7 @@ private fun Field(label: String, value: String, secret: Boolean = false, number:
         minLines = lines,
         visualTransformation = if (secret) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
         keyboardOptions = if (number) KeyboardOptions(keyboardType = KeyboardType.Number) else KeyboardOptions.Default,
+        shape = RoundedCornerShape(16.dp),
         modifier = Modifier.fillMaxWidth(),
     )
 }
