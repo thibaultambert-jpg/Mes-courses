@@ -1,0 +1,16 @@
+{
+  "cart": {
+    "basketServiceId": "0678-150-7052",
+    "facilityServiceId": "0678-150-149",
+    "totals": {"totalAmount": 3.73},
+    "subBaskets": [
+      {"subBasketType": "drive_clcv",
+       "items": [
+         {"counter": 2, "totalItemPrice": 2.58,
+          "product": {"type": "product", "id": "3560070000011", "attributes": {"ean": "3560070000011", "title": "Lait demi-écrémé bio 1L"}}},
+         {"counter": 1, "totalItemPrice": 1.15,
+          "product": {"type": "product", "id": "3560070000028", "attributes": {"ean": "3560070000028", "title": "Lait entier 1L"}}}
+       ]}
+    ]
+  }
+}

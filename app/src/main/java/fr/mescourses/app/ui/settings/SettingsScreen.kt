@@ -1,0 +1,264 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
+package fr.mescourses.app.ui.settings
+
+import android.net.Uri
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CardDefaults
+import androidx.compose.ui.draw.clip
+import fr.mescourses.app.ui.components.PillStepper
+import fr.mescourses.app.ui.components.SectionCard
+import fr.mescourses.app.ui.components.SectionHeader
+import fr.mescourses.app.ui.components.StatChip
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewModelScope
+import fr.mescourses.app.AppContainer
+import fr.mescourses.app.data.Settings
+import fr.mescourses.app.llm.DownloadState
+import fr.mescourses.app.llm.ModelCatalog
+import fr.mescourses.app.llm.ModelInfo
+import fr.mescourses.app.ui.common.ScreenScaffold
+import fr.mescourses.app.ui.common.containerViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
+import java.io.File
+
+class SettingsViewModel(val c: AppContainer) : ViewModel() {
+    val settings = c.settings.state
+    val download = c.models.state
+    val installed = MutableStateFlow(c.models.installed())
+    val testResult = MutableStateFlow<String?>(null)
+
+    fun update(transform: (Settings) -> Settings) = viewModelScope.launch { c.settings.update(transform) }
+
+    fun download(model: ModelInfo) = c.models.download(model, hfToken = settings.value.hfToken) { path ->
+        installed.value = c.models.installed()
+        update { it.copy(modelPath = path) }
+    }
+
+    fun import(uri: Uri) = viewModelScope.launch {
+        runCatching { c.models.import(uri) }
+            .onSuccess { path -> installed.value = c.models.installed(); update { it.copy(modelPath = path) } }
+            .onFailure { testResult.value = "Import impossible : ${it.message}" }
+    }
+
+    fun delete(file: File) {
+        c.models.delete(file)
+        installed.value = c.models.installed()
+        if (settings.value.modelPath == file.absolutePath) update { it.copy(modelPath = "") }
+    }
+
+    val session = c.session.state
+
+    fun logout() = c.session.logout()
+}
+
+@Composable
+fun SettingsScreen(onBack: () -> Unit, onLogin: () -> Unit, onChooseStore: () -> Unit, onDebug: () -> Unit) {
+    val vm = containerViewModel { SettingsViewModel(it) }
+    val s by vm.settings.collectAsStateWithLifecycle()
+    val download by vm.download.collectAsStateWithLifecycle()
+    val installed by vm.installed.collectAsStateWithLifecycle()
+    val testResult by vm.testResult.collectAsStateWithLifecycle()
+    val session by vm.session.collectAsStateWithLifecycle()
+    var versionTaps by remember { mutableStateOf(0) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::import) }
+
+    ScreenScaffold(title = "Réglages", onBack = onBack) { padding ->
+        Column(
+            Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp).navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            SectionCard {
+                SectionHeader("Assistant local", emoji = "🤖")
+                Text(
+                    "Il tourne entièrement sur ton téléphone (LiteRT-LM, GPU Adreno). Espace libre : %.1f Go.".format(vm.c.models.freeSpaceGb()),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                installed.forEach { file ->
+                    val active = s.modelPath == file.absolutePath
+                    Card(
+                        onClick = { vm.update { it.copy(modelPath = file.absolutePath) } },
+                        shape = MaterialTheme.shapes.medium,
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLowest,
+                        ),
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = active, onClick = { vm.update { it.copy(modelPath = file.absolutePath) } })
+                            Column(Modifier.weight(1f)) {
+                                Text(file.nameWithoutExtension, style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "%.1f Go".format(file.length() / 1e9) + if (active) " · utilisé" else "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            TextButton(onClick = { vm.delete(file) }) { Text("Supprimer") }
+                        }
+                    }
+                }
+                ModelCatalog.models.filter { m -> installed.none { it.name == m.fileName } }.forEach { m ->
+                    Card(
+                        shape = MaterialTheme.shapes.medium,
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
+                    ) {
+                        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(m.label, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                                StatChip("≈ ${m.approxSizeGb} Go")
+                            }
+                            Text(m.description, style = MaterialTheme.typography.bodySmall)
+                            Button(onClick = { vm.download(m) }, enabled = download !is DownloadState.Running) { Text("Télécharger") }
+                        }
+                    }
+                }
+                when (val d = download) {
+                    is DownloadState.Running -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("${d.label} : %.2f / %.2f Go".format(d.downloaded / 1e9, d.total / 1e9), style = MaterialTheme.typography.bodyMedium)
+                        LinearProgressIndicator(
+                            progress = { d.progress },
+                            modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(50)),
+                        )
+                        TextButton(onClick = { vm.c.models.cancel() }) { Text("Annuler") }
+                    }
+                    is DownloadState.Failed -> Text(d.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    else -> Unit
+                }
+                OutlinedButton(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Importer un fichier .litertlm") }
+                SwitchRow("Utiliser le GPU", "Recommandé : bien plus rapide", s.preferGpu) { v -> vm.update { it.copy(preferGpu = v) } }
+                Field("Jeton Hugging Face (si le modèle l'exige)", s.hfToken, secret = true) { v -> vm.update { it.copy(hfToken = v) } }
+            }
+
+            SectionCard {
+                SectionHeader("Mon foyer", emoji = "👨‍👩‍👧")
+                PillStepper("🧑", "Adultes par repas", s.householdSize, { n -> vm.update { it.copy(householdSize = n.coerceIn(0, 20)) } })
+                PillStepper("🧒", "Enfants par repas", s.children, { n -> vm.update { it.copy(children = n.coerceIn(0, 20)) } })
+                PillStepper("🍽", "Repas par menu", s.meals, { n -> vm.update { it.copy(meals = n.coerceIn(1, 21)) } }, min = 1, max = 21)
+                Text("Portion d'un enfant : ${(s.childFactor * 100).toInt()} % d'une portion adulte", style = MaterialTheme.typography.bodyMedium)
+                Slider(
+                    value = s.childFactor.toFloat(),
+                    onValueChange = { v -> vm.update { it.copy(childFactor = (Math.round(v * 20) / 20.0)) } },
+                    valueRange = 0.25f..1f,
+                    steps = 14,
+                )
+                Field("Régime, allergies, goûts, budget…", s.preferences, lines = 3) { v -> vm.update { it.copy(preferences = v) } }
+            }
+
+            SectionCard {
+                SectionHeader("Carrefour Drive", emoji = "🛒")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Compte", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                    StatChip(session.label, emphasized = session != fr.mescourses.app.carrefour.SessionState.CONNECTE)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (session == fr.mescourses.app.carrefour.SessionState.CONNECTE) {
+                        OutlinedButton(onClick = vm::logout) { Text("Se déconnecter") }
+                    } else {
+                        Button(onClick = onLogin) { Text("Se connecter") }
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Drive", style = MaterialTheme.typography.bodyLarge)
+                        Text(s.storeName.ifBlank { "Aucun drive choisi" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    TextButton(onClick = onChooseStore) { Text(if (s.storeName.isBlank()) "Choisir" else "Changer") }
+                }
+                SwitchRow("Privilégier le bio", "Cherche d'abord la version bio de chaque produit", s.preferOrganic) { v ->
+                    vm.update { it.copy(preferOrganic = v) }
+                }
+                Text(
+                    "Intégration non officielle, pour un usage personnel. La commande, le créneau et le paiement se font toujours sur carrefour.fr.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            testResult?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+            Text(
+                "Mes courses · version 0.3",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().clickable {
+                    versionTaps++
+                    if (versionTaps >= 7) { versionTaps = 0; onDebug() }
+                }.padding(8.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+
+/** Champ texte qui n'enregistre qu'à la perte de focus / validation pour éviter d'écrire à chaque frappe. */
+@Composable
+private fun Field(label: String, value: String, secret: Boolean = false, number: Boolean = false, lines: Int = 1, onSave: (String) -> Unit) {
+    var text by remember { mutableStateOf(value) }
+    LaunchedEffect(value) { if (value != text) text = value }
+    LaunchedEffect(text) {
+        kotlinx.coroutines.delay(600)
+        if (text != value) onSave(text)
+    }
+    OutlinedTextField(
+        value = text,
+        onValueChange = { text = it },
+        label = { Text(label) },
+        singleLine = lines == 1,
+        minLines = lines,
+        visualTransformation = if (secret) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+        keyboardOptions = if (number) KeyboardOptions(keyboardType = KeyboardType.Number) else KeyboardOptions.Default,
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth(),
+    )
+}

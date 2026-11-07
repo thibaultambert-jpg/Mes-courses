@@ -1,0 +1,14 @@
+{
+  "data": [
+    {"type": "product", "id": "3560070000011",
+     "attributes": {"ean": "3560070000011", "title": "Lait demi-écrémé bio 1L", "brand": "Carrefour Bio", "slug": "lait-demi-ecreme-bio",
+       "nutriscore": {"value": "B"}, "promotion": {"label": "2e à -50%"},
+       "images": [{"medium": "https://exemple.invalid/lait.jpg"}],
+       "offers": {"3560070000011": {"0001-150-1": {"attributes": {"price": {"price": 1.29, "perUnitLabel": "1,29 €/L"}, "availability": {"purchasable": true}}}}}}},
+    {"type": "product", "id": "3560070000028",
+     "attributes": {"ean": "3560070000028", "title": "Lait entier 1L", "brand": "Lactel",
+       "offers": {"3560070000028": {"0001-150-1": {"attributes": {"price": {"price": 1.15, "perUnitLabel": "1,15 €/L"}}}}}}},
+    {"type": "category", "id": "cat-1", "attributes": {"title": "Crèmerie"}}
+  ],
+  "meta": {"total": 2}
+}

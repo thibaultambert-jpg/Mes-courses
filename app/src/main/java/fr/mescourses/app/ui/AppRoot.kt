@@ -1,0 +1,194 @@
+package fr.mescourses.app.ui
+
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.filled.RestaurantMenu
+import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.ShoppingCart
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.runtime.remember
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import fr.mescourses.core.shopping.ShoppingListMerger
+import kotlinx.coroutines.flow.map
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import fr.mescourses.app.ui.carrefour.CarrefourDebugScreen
+import fr.mescourses.app.ui.carrefour.CarrefourStoreScreen
+import fr.mescourses.app.ui.carrefour.CarrefourWebScreen
+import fr.mescourses.app.ui.carrefour.WebMode
+import fr.mescourses.app.ui.carrefour.WriteConfirmationDialog
+import fr.mescourses.app.ui.cart.CartScreen
+import fr.mescourses.core.carrefour.CarrefourRoutes
+import fr.mescourses.app.ui.cookbook.CookbookScreen
+import fr.mescourses.app.ui.cookbook.RecipeDetailScreen
+import fr.mescourses.app.ui.cookbook.RecipeEditScreen
+import fr.mescourses.app.ui.menu.MenuScreen
+import fr.mescourses.app.ui.settings.SettingsScreen
+import fr.mescourses.app.ui.shopping.ShoppingListScreen
+
+private data class Tab(val route: String, val label: String, val icon: ImageVector)
+
+private val tabs = listOf(
+    Tab("menu", "Menu", Icons.Filled.RestaurantMenu),
+    Tab("cookbook", "Recettes", Icons.AutoMirrored.Filled.MenuBook),
+    Tab("shopping", "Liste", Icons.Filled.Checklist),
+    Tab("cart", "Panier", Icons.Filled.ShoppingCart),
+)
+
+@Composable
+fun AppRoot(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
+    val nav = rememberNavController()
+    val backStack by nav.currentBackStackEntryAsState()
+    val current = backStack?.destination?.route
+
+    LaunchedEffect(sharedUrl) {
+        if (sharedUrl != null) nav.navigate("cookbook?import=${android.net.Uri.encode(sharedUrl)}")
+    }
+
+    fun goTab(route: String) = nav.navigate(route) {
+        popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+        launchSingleTop = true
+        restoreState = true
+    }
+
+    val container = fr.mescourses.app.ui.common.appContainer()
+    val draftCount by remember { container.draft.observe().map { it.size } }.collectAsStateWithLifecycle(0)
+    val remaining by remember {
+        container.shopping.observeAll().map { l -> l.filterNot { it.checked }.map { ShoppingListMerger.key(it.name) }.distinct().size }
+    }.collectAsStateWithLifecycle(0)
+
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        bottomBar = {
+            if (tabs.any { current?.startsWith(it.route) == true }) {
+                NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
+                    tabs.forEach { tab ->
+                        val badge = when (tab.route) {
+                            "menu" -> draftCount
+                            "shopping" -> remaining
+                            else -> 0
+                        }
+                        NavigationBarItem(
+                            selected = current?.startsWith(tab.route) == true,
+                            onClick = { goTab(tab.route) },
+                            icon = {
+                                BadgedBox(badge = { if (badge > 0) Badge { Text("$badge") } }) {
+                                    Icon(tab.icon, contentDescription = tab.label)
+                                }
+                            },
+                            label = { Text(tab.label) },
+                            colors = NavigationBarItemDefaults.colors(indicatorColor = MaterialTheme.colorScheme.primaryContainer),
+                        )
+                    }
+                }
+            }
+        },
+    ) { padding ->
+        // WebView invisible (1 px) qui exécute les requêtes Carrefour ; recréée avec l'activité.
+        AndroidView(
+            factory = { ctx -> container.bridge.createWebView(ctx) },
+            onRelease = { container.bridge.detach(it) },
+            modifier = Modifier.size(1.dp).alpha(0.01f),
+        )
+        WriteConfirmationDialog(container.confirmations)
+        NavHost(nav, startDestination = "menu", modifier = Modifier.padding(bottom = padding.calculateBottomPadding())) {
+            composable("menu") {
+                MenuScreen(
+                    onOpenSettings = { nav.navigate("settings") },
+                    onOpenRecipe = { nav.navigate("recipe/$it") },
+                    onOpenShopping = { goTab("shopping") },
+                )
+            }
+            composable(
+                "cookbook?import={import}",
+                arguments = listOf(navArgument("import") { type = NavType.StringType; nullable = true; defaultValue = null }),
+            ) { entry ->
+                CookbookScreen(
+                    importUrl = entry.arguments?.getString("import"),
+                    onImportConsumed = onSharedUrlConsumed,
+                    onOpenRecipe = { nav.navigate("recipe/$it") },
+                    onNewRecipe = { nav.navigate("recipe/edit/0") },
+                    onOpenSettings = { nav.navigate("settings") },
+                )
+            }
+            composable("shopping") {
+                ShoppingListScreen(onOpenSettings = { nav.navigate("settings") }, onSendToCart = { goTab("cart") })
+            }
+            composable("cart") {
+                CartScreen(
+                    onOpenSettings = { nav.navigate("settings") },
+                    onLogin = { nav.navigate(webRoute(CarrefourRoutes.AUTHORIZE_URL, WebMode.LOGIN)) },
+                    onOpenSite = { url -> nav.navigate(webRoute(url, WebMode.SITE)) },
+                    onChooseStore = { nav.navigate("carrefour/store") },
+                )
+            }
+            composable("settings") {
+                SettingsScreen(
+                    onBack = { nav.popBackStack() },
+                    onLogin = { nav.navigate(webRoute(CarrefourRoutes.AUTHORIZE_URL, WebMode.LOGIN)) },
+                    onChooseStore = { nav.navigate("carrefour/store") },
+                    onDebug = { nav.navigate("carrefour/debug") },
+                )
+            }
+            composable(
+                "carrefour/web?url={url}&mode={mode}",
+                arguments = listOf(
+                    navArgument("url") { type = NavType.StringType; defaultValue = CarrefourRoutes.PARKING },
+                    navArgument("mode") { type = NavType.StringType; defaultValue = WebMode.SITE.name },
+                ),
+            ) { entry ->
+                CarrefourWebScreen(
+                    startUrl = entry.arguments?.getString("url") ?: CarrefourRoutes.PARKING,
+                    mode = WebMode.valueOf(entry.arguments?.getString("mode") ?: WebMode.SITE.name),
+                    onClose = { nav.popBackStack() },
+                )
+            }
+            composable("carrefour/store") {
+                CarrefourStoreScreen(onBack = { nav.popBackStack() }, onOpenSite = { nav.navigate(webRoute(CarrefourRoutes.PARKING, WebMode.SITE)) })
+            }
+            composable("carrefour/debug") {
+                CarrefourDebugScreen(onBack = { nav.popBackStack() }, onOpenSite = { nav.navigate(webRoute(CarrefourRoutes.PARKING, WebMode.SITE)) })
+            }
+            composable("recipe/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
+                val id = entry.arguments!!.getLong("id")
+                RecipeDetailScreen(
+                    recipeId = id,
+                    onBack = { nav.popBackStack() },
+                    onEdit = { nav.navigate("recipe/edit/$id") },
+                    onSendToCart = { goTab("cart") },
+                )
+            }
+            composable("recipe/edit/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
+                RecipeEditScreen(
+                    recipeId = entry.arguments!!.getLong("id"),
+                    onDone = { nav.popBackStack() },
+                )
+            }
+        }
+    }
+}
+
+private fun webRoute(url: String, mode: WebMode) = "carrefour/web?url=${android.net.Uri.encode(url)}&mode=${mode.name}"
