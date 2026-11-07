@@ -317,3 +317,31 @@ fun InfoBanner(emoji: String, text: String, modifier: Modifier = Modifier, color
 @Composable
 fun LinkButton(text: String, onClick: () -> Unit) = TextButton(onClick = onClick, contentPadding = PaddingValues(horizontal = 8.dp)) { Text(text) }
 
+
+/** Carte « le chef travaille » : chargement du modèle, réflexion, écriture d'une recette. */
+@Composable
+fun ChefCard(title: String, text: String, modifier: Modifier = Modifier, emoji: String = "👨‍🍳") {
+    Card(
+        modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+    ) {
+        Row(Modifier.padding(horizontal = 18.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(contentAlignment = Alignment.Center) {
+                androidx.compose.material3.CircularProgressIndicator(
+                    Modifier.size(34.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.secondary,
+                )
+                Text(emoji, fontSize = 16.sp)
+            }
+            Column(Modifier.padding(start = 14.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                Text(text, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSecondaryContainer)
+            }
+        }
+    }
+}
+
+/** Le modèle se charge en mémoire. */
+@Composable
+fun ModelLoadingCard(modifier: Modifier = Modifier) =
+    ChefCard("Le chef enfile son tablier…", "L'assistant se prépare sur ton téléphone, quelques secondes.", modifier)

@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 
 package fr.mescourses.app.ui.shopping
 
@@ -8,6 +8,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,7 +27,12 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.ShoppingCart
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
@@ -35,11 +42,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +54,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -62,6 +67,7 @@ import fr.mescourses.app.ui.common.containerViewModel
 import fr.mescourses.app.ui.components.BottomActionBar
 import fr.mescourses.app.ui.components.EmptyState
 import fr.mescourses.app.ui.components.SectionCard
+import fr.mescourses.core.model.ItemSource
 import fr.mescourses.core.model.ShoppingItem
 import fr.mescourses.core.shopping.Aisle
 import fr.mescourses.core.shopping.ShoppingListMerger
@@ -80,24 +86,32 @@ data class ShoppingLine(
     val checked: Boolean,
     val aisle: Aisle,
     val sources: List<ShoppingItem>,
+    /** Quantité unique proposée dans la feuille d'édition (null si plusieurs unités incompatibles). */
+    val editQuantity: Double? = null,
+    val editUnit: String? = null,
 )
+
+/** Unités proposées en un toucher dans la feuille d'édition (null = pièce). */
+private val EDIT_UNITS = listOf<String?>(null, "g", "kg", "ml", "l")
 
 class ShoppingViewModel(private val c: AppContainer) : ViewModel() {
 
     val lines: StateFlow<List<ShoppingLine>> = c.shopping.observeAll().map { items ->
-        items.groupBy { ShoppingListMerger.key(it.name) }.map { (key, group) ->
+        items.groupBy { if (ShoppingListMerger.isEgg(it.name)) "oeuf" else ShoppingListMerger.key(it.name) }.map { (key, group) ->
             val merged = ShoppingListMerger.merge(group.map { it.copy(checked = false) })
             val first = merged.first()
             ShoppingLine(
                 key = key,
                 label = first.name,
-                quantity = merged.joinToString(" + ") { m ->
+                quantity = merged.map { m ->
                     listOfNotNull(m.quantity?.let { ShoppingListMerger.formatNumber(it) }, m.unit).joinToString(" ")
-                }.trim(' ', '+'),
+                }.filter { it.isNotBlank() }.joinToString(" + "),
                 origin = group.mapNotNull { it.origin }.distinct().joinToString(", ").ifEmpty { null },
                 checked = group.all { it.checked },
                 aisle = Aisle.of(first.name),
                 sources = group,
+                editQuantity = merged.singleOrNull()?.quantity,
+                editUnit = merged.singleOrNull()?.unit,
             )
         }.sortedWith(compareBy({ it.checked }, { it.aisle.ordinal }, { it.label.lowercase() }))
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -113,6 +127,28 @@ class ShoppingViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     fun delete(line: ShoppingLine) = viewModelScope.launch { line.sources.forEach { c.shopping.delete(it.id) } }
+
+    /**
+     * Modifie un article : un seul article d'origine est mis à jour ; une ligne fusionnée (plusieurs recettes)
+     * est remplacée par un seul article, qui garde l'origine affichée.
+     */
+    fun edit(line: ShoppingLine, name: String, quantity: Double?, unit: String?) = viewModelScope.launch {
+        val clean = name.trim().ifEmpty { return@launch }
+        val single = line.sources.singleOrNull()
+        if (single != null) {
+            c.shopping.update(single.copy(name = clean, quantity = quantity, unit = unit))
+        } else {
+            line.sources.forEach { c.shopping.delete(it.id) }
+            c.shopping.add(
+                listOf(
+                    ShoppingItem(
+                        name = clean, quantity = quantity, unit = unit, origin = line.origin, checked = line.checked,
+                        source = if (line.sources.any { it.source == ItemSource.RECETTE }) ItemSource.RECETTE else ItemSource.MANUEL,
+                    ),
+                ),
+            )
+        }
+    }
 
     /** Envoie les articles restants à l'écran Panier Carrefour. */
     fun sendToCart() = viewModelScope.launch {
@@ -134,6 +170,7 @@ fun ShoppingListScreen(onOpenSettings: () -> Unit, onSendToCart: () -> Unit) {
     val vm = containerViewModel { ShoppingViewModel(it) }
     val lines by vm.lines.collectAsStateWithLifecycle()
     var input by remember { mutableStateOf("") }
+    var editing by remember { mutableStateOf<ShoppingLine?>(null) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val done = lines.count { it.checked }
@@ -207,9 +244,7 @@ fun ShoppingListScreen(onOpenSettings: () -> Unit, onSendToCart: () -> Unit) {
                     )
                 }
                 items(group, key = { it.key }) { line ->
-                    SwipeLine(line, onToggle = { vm.toggle(line) }, onDelete = {
-                        vm.delete(line); undoable("« ${line.label} » retiré", line.sources)
-                    }, modifier = Modifier.animateItem())
+                    ShoppingRow(line, onToggle = { vm.toggle(line) }, onEdit = { editing = line }, modifier = Modifier.animateItem())
                 }
             }
             val taken = lines.filter { it.checked }
@@ -223,38 +258,91 @@ fun ShoppingListScreen(onOpenSettings: () -> Unit, onSendToCart: () -> Unit) {
                     )
                 }
                 items(taken, key = { "d-" + it.key }) { line ->
-                    SwipeLine(line, onToggle = { vm.toggle(line) }, onDelete = {
-                        vm.delete(line); undoable("« ${line.label} » retiré", line.sources)
-                    }, modifier = Modifier.animateItem())
+                    ShoppingRow(line, onToggle = { vm.toggle(line) }, onEdit = { editing = line }, modifier = Modifier.animateItem())
                 }
+            }
+        }
+    }
+
+    editing?.let { line ->
+        EditItemSheet(
+            line = line,
+            onDismiss = { editing = null },
+            onSave = { name, q, u -> vm.edit(line, name, q, u); editing = null },
+            onDelete = {
+                vm.delete(line); editing = null
+                undoable("« ${line.label} » supprimé", line.sources)
+            },
+        )
+    }
+}
+
+/** Feuille « Modifier l'article » : nom, quantité, unité ; Supprimer / Enregistrer. */
+@Composable
+private fun EditItemSheet(line: ShoppingLine, onDismiss: () -> Unit, onSave: (String, Double?, String?) -> Unit, onDelete: () -> Unit) {
+    var name by remember(line.key) { mutableStateOf(line.label) }
+    var quantity by remember(line.key) { mutableStateOf(line.editQuantity?.let { ShoppingListMerger.formatNumber(it) } ?: "") }
+    var unit by remember(line.key) { mutableStateOf(line.editUnit) }
+    val units = remember(line.key) { (EDIT_UNITS + line.editUnit).distinct() }
+    val parsed = quantity.trim().replace(',', '.').toDoubleOrNull()
+    val quantityOk = quantity.isBlank() || (parsed != null && parsed > 0)
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp).imePadding(),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Modifier l'article", style = MaterialTheme.typography.titleLarge)
+            if (line.sources.size > 1) {
+                Text(
+                    "Cette ligne regroupe ${line.sources.size} articles (${line.origin ?: "liste"}) : ils seront remplacés par un seul.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else if (line.quantity.isNotBlank() && line.editQuantity == null) {
+                Text("Quantité actuelle : ${line.quantity}", style = MaterialTheme.typography.bodySmall)
+            }
+            OutlinedTextField(
+                value = name, onValueChange = { name = it },
+                label = { Text("Produit") }, singleLine = true,
+                shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = quantity, onValueChange = { quantity = it },
+                label = { Text("Quantité") }, singleLine = true, isError = !quantityOk,
+                placeholder = { Text("vide = sans quantité") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth(),
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                units.forEach { u ->
+                    FilterChip(selected = unit == u, onClick = { unit = u }, label = { Text(u ?: "pièce") })
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = onDelete,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                ) {
+                    Icon(Icons.Filled.DeleteOutline, null)
+                    Text("Supprimer", Modifier.padding(start = 6.dp))
+                }
+                Button(
+                    onClick = { onSave(name, parsed, if (parsed == null) null else unit) },
+                    enabled = name.isNotBlank() && quantityOk,
+                    modifier = Modifier.weight(1f),
+                ) { Text("Enregistrer") }
             }
         }
     }
 }
 
+
 @Composable
-private fun SwipeLine(line: ShoppingLine, onToggle: () -> Unit, onDelete: () -> Unit, modifier: Modifier = Modifier) {
-    val state = rememberSwipeToDismissBoxState(
-        confirmValueChange = { value ->
-            if (value != SwipeToDismissBoxValue.Settled) onDelete()
-            value != SwipeToDismissBoxValue.Settled
-        },
-    )
-    SwipeToDismissBox(
-        state = state,
-        modifier = modifier,
-        backgroundContent = {
-            Row(
-                Modifier.fillMaxSize().clip(MaterialTheme.shapes.medium).background(MaterialTheme.colorScheme.errorContainer).padding(horizontal = 20.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.End,
-            ) { Icon(Icons.Filled.DeleteOutline, "Supprimer", tint = MaterialTheme.colorScheme.onErrorContainer) }
-        },
-    ) {
+private fun ShoppingRow(line: ShoppingLine, onToggle: () -> Unit, onEdit: () -> Unit, modifier: Modifier = Modifier) {
         Row(
-            Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium)
+            modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium)
                 .background(MaterialTheme.colorScheme.surfaceContainerLowest)
-                .clickable(onClick = onToggle)
+                .clickable(onClick = onEdit)
                 .padding(end = 14.dp, top = 4.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -281,5 +369,4 @@ private fun SwipeLine(line: ShoppingLine, onToggle: () -> Unit, onDelete: () -> 
                 )
             }
         }
-    }
 }

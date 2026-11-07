@@ -132,6 +132,12 @@ fun AppRoot(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
                     importUrl = entry.arguments?.getString("import"),
                     onImportConsumed = onSharedUrlConsumed,
                     onOpenRecipe = { nav.navigate("recipe/$it") },
+                    // Recette importée par « Partager » : on retire l'écran d'import de l'historique, sinon le
+                    // bouton Retour y revient et relance l'import (boucle). Retour => liste des recettes.
+                    onImported = { id ->
+                        nav.navigate("cookbook") { popUpTo("cookbook?import={import}") { inclusive = true } }
+                        nav.navigate("recipe/$id")
+                    },
                     onNewRecipe = { nav.navigate("recipe/edit/0") },
                     onOpenSettings = { nav.navigate("settings") },
                     onOpenPreview = { nav.navigate("recipes/preview?url=${android.net.Uri.encode(it)}") },

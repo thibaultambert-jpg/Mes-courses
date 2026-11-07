@@ -1,5 +1,6 @@
 package fr.mescourses.core.shopping
 
+import fr.mescourses.core.ingredients.FoodName
 import fr.mescourses.core.ingredients.IngredientParser
 import fr.mescourses.core.model.Ingredient
 import fr.mescourses.core.model.ItemSource
@@ -52,9 +53,15 @@ object ShoppingListMerger {
         return recipe.ingredients.map { it.copy(quantity = it.quantity?.times(factor)) }
     }
 
-    fun fromRecipe(recipe: Recipe, portions: Double): List<ShoppingItem> = scale(recipe, portions).map {
+    /**
+     * Articles de la liste pour une recette : l'aliment seul (« morceaux de poulet » → poulet),
+     * sans les produits de placard (sel, huile, beurre…).
+     */
+    fun fromRecipe(recipe: Recipe, portions: Double): List<ShoppingItem> = scale(recipe, portions)
+        .filterNot { Pantry.isStaple(it.name) }
+        .map {
         ShoppingItem(
-            name = it.name,
+            name = FoodName.clean(it.name),
             quantity = it.quantity,
             unit = it.unit,
             source = ItemSource.RECETTE,
@@ -74,7 +81,9 @@ object ShoppingListMerger {
      */
     fun merge(items: List<ShoppingItem>): List<ShoppingItem> {
         val groups = LinkedHashMap<String, MutableList<ShoppingItem>>()
-        for (item in items.filterNot { it.checked }) {
+        for (raw in items.filterNot { it.checked }) {
+            // Œufs : jaunes, blancs, « œufs bio »… tout se retrouve dans une seule ligne, sans unité.
+            val item = if (isEgg(raw.name)) raw.copy(name = "Œufs", unit = null) else raw
             val n = normalizeUnit(item.quantity, item.unit)
             val groupKey = key(item.name) + "|" + (n.unit ?: "")
             groups.getOrPut(groupKey) { mutableListOf() }.add(item.copy(quantity = n.quantity, unit = n.unit))
@@ -83,7 +92,7 @@ object ShoppingListMerger {
             val first = group.first()
             val quantities = group.mapNotNull { it.quantity }
             val total = if (quantities.isEmpty()) null else quantities.sum()
-            val (q, u) = humanize(total, first.unit)
+            val (q, u) = if (isEgg(first.name)) eggBoxes(total) to null else humanize(total, first.unit)
             ShoppingItem(
                 id = first.id,
                 name = first.name.replaceFirstChar { it.uppercase() },
@@ -94,6 +103,11 @@ object ShoppingListMerger {
             )
         }
     }
+
+    fun isEgg(name: String): Boolean = key(name).split(' ').any { it == "oeuf" }
+
+    /** Les œufs s'achètent par boîte de 12 : 2 œufs → 12, 15 → 24. */
+    fun eggBoxes(count: Double?): Double = 12.0 * kotlin.math.max(1.0, kotlin.math.ceil((count ?: 1.0) / 12 - 1e-9))
 
     /** Repasse en kg / l au-delà de 1000 et arrondit raisonnablement. */
     private fun humanize(quantity: Double?, unit: String?): Pair<Double?, String?> {

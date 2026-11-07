@@ -2,6 +2,9 @@
 
 package fr.mescourses.app.ui.cart
 
+import fr.mescourses.app.llm.ModelStatus
+import fr.mescourses.app.ui.components.ChefCard
+import fr.mescourses.app.ui.components.ModelLoadingCard
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -281,6 +284,10 @@ private fun ShoppingChatSheet(onDismiss: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            when {
+                model == ModelStatus.Loading -> ModelLoadingCard(Modifier.padding(top = 8.dp))
+                busy -> ChefCard("Le chef réfléchit…", "Il cherche les produits au drive Carrefour.", Modifier.padding(top = 8.dp))
+            }
             LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().height(320.dp).padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(lines) { l ->
                     if (l.tool) {
