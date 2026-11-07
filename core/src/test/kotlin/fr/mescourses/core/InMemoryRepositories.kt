@@ -1,19 +1,21 @@
 package fr.mescourses.core
 
+import fr.mescourses.core.model.MenuDish
 import fr.mescourses.core.model.PlannedMeal
 import fr.mescourses.core.model.Recipe
 import fr.mescourses.core.model.ShoppingItem
 import fr.mescourses.core.model.stripAccents
 import fr.mescourses.core.repository.MealPlanRepository
+import fr.mescourses.core.repository.MenuDraftRepository
 import fr.mescourses.core.repository.RecipeRepository
 import fr.mescourses.core.repository.ShoppingRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.map
 
 class InMemoryRecipes : RecipeRepository {
     val state = MutableStateFlow<List<Recipe>>(emptyList())
     override fun observeAll(): Flow<List<Recipe>> = state
+    override suspend fun all() = state.value
     override suspend fun get(id: Long) = state.value.firstOrNull { it.id == id }
     override suspend fun search(query: String): List<Recipe> {
         val q = query.lowercase().stripAccents()
@@ -41,9 +43,17 @@ class InMemoryShopping : ShoppingRepository {
 class InMemoryPlan : MealPlanRepository {
     val state = MutableStateFlow<List<PlannedMeal>>(emptyList())
     private var next = 1L
-    override fun observeFrom(date: String) = state.map { l -> l.filter { it.date >= date } }
-    override suspend fun between(from: String, to: String) = state.value.filter { it.date in from..to }.sortedBy { it.date }
+    override fun observeAll(): Flow<List<PlannedMeal>> = state
+    override suspend fun all() = state.value
     override suspend fun add(meal: PlannedMeal): Long { val id = next++; state.value = state.value + meal.copy(id = id); return id }
     override suspend fun update(meal: PlannedMeal) { state.value = state.value.map { if (it.id == meal.id) meal else it } }
     override suspend fun delete(id: Long) { state.value = state.value.filterNot { it.id == id } }
+    override suspend fun clear() { state.value = emptyList() }
+}
+
+class InMemoryDraft : MenuDraftRepository {
+    val state = MutableStateFlow<List<MenuDish>>(emptyList())
+    override fun observe(): Flow<List<MenuDish>> = state
+    override suspend fun get() = state.value
+    override suspend fun set(dishes: List<MenuDish>) { state.value = dishes }
 }

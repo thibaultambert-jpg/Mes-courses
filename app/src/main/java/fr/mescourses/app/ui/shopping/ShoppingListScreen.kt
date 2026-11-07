@@ -97,7 +97,7 @@ fun ShoppingListScreen(onOpenSettings: () -> Unit) {
                 FilterChip(selected = merged, onClick = { merged = true }, label = { Text("Fusionnée (pour le panier)") })
             }
             if (items.isEmpty()) {
-                EmptyState("Liste vide", "Ajoute des articles ci-dessus, ou depuis une recette / le planning.")
+                EmptyState("Liste vide", "Ajoute des articles ci-dessus, ou depuis une recette ou en validant un menu.")
                 return@Column
             }
             LazyColumn {

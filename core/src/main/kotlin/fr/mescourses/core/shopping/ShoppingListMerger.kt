@@ -46,13 +46,13 @@ object ShoppingListMerger {
         else -> word
     }
 
-    /** Ingrédients d'une recette ajustés au nombre de personnes voulu. */
-    fun scale(recipe: Recipe, servings: Int): List<Ingredient> {
-        val factor = if (recipe.servings > 0) servings.toDouble() / recipe.servings else 1.0
+    /** Ingrédients d'une recette ajustés à un nombre de portions (adultes + enfants × coefficient). */
+    fun scale(recipe: Recipe, portions: Double): List<Ingredient> {
+        val factor = if (recipe.servings > 0) portions / recipe.servings else 1.0
         return recipe.ingredients.map { it.copy(quantity = it.quantity?.times(factor)) }
     }
 
-    fun fromRecipe(recipe: Recipe, servings: Int): List<ShoppingItem> = scale(recipe, servings).map {
+    fun fromRecipe(recipe: Recipe, portions: Double): List<ShoppingItem> = scale(recipe, portions).map {
         ShoppingItem(
             name = it.name,
             quantity = it.quantity,

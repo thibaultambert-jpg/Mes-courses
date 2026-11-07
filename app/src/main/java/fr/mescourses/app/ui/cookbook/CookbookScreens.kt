@@ -5,13 +5,13 @@ package fr.mescourses.app.ui.cookbook
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -28,13 +28,15 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -45,6 +47,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -63,10 +67,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import fr.mescourses.app.ui.common.EmptyState
 import fr.mescourses.app.ui.common.ScreenScaffold
 import fr.mescourses.app.ui.common.containerViewModel
-import fr.mescourses.core.agent.DateResolver
-import fr.mescourses.core.model.MealSlot
+import fr.mescourses.core.model.RecipeStatus
 import fr.mescourses.core.shopping.ShoppingListMerger
-import java.time.LocalDate
 
 @Composable
 fun CookbookScreen(
@@ -78,6 +80,8 @@ fun CookbookScreen(
 ) {
     val vm = containerViewModel { CookbookViewModel(it) }
     val recipes by vm.recipes.collectAsStateWithLifecycle()
+    val counts by vm.counts.collectAsStateWithLifecycle()
+    val tab by vm.tab.collectAsStateWithLifecycle()
     val query by vm.query.collectAsStateWithLifecycle()
     val importing by vm.importing.collectAsStateWithLifecycle()
     val message by vm.messages.collectAsStateWithLifecycle()
@@ -99,11 +103,20 @@ fun CookbookScreen(
         floatingActionButton = {
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 SmallFloatingActionButton(onClick = { showImport = true }) { Icon(Icons.Filled.Link, "Importer depuis une adresse") }
-                FloatingActionButton(onClick = onNewRecipe) { Icon(Icons.Filled.Add, "Nouvelle recette") }
+                FloatingActionButton(onClick = onNewRecipe) { Icon(Icons.Filled.Add, "Écrire une recette") }
             }
         },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
+            TabRow(selectedTabIndex = tab.ordinal) {
+                RecipeStatus.entries.forEach { s ->
+                    Tab(
+                        selected = tab == s,
+                        onClick = { vm.tab.value = s },
+                        text = { Text("${s.label} (${counts[s] ?: 0})", maxLines = 1) },
+                    )
+                }
+            }
             OutlinedTextField(
                 value = query,
                 onValueChange = { vm.query.value = it },
@@ -117,8 +130,16 @@ fun CookbookScreen(
             }
             if (recipes.isEmpty()) {
                 EmptyState(
-                    "Ton livre de recettes est vide",
-                    "Demande des idées à l'assistant, importe une page (bouton lien, ou « Partager » depuis le navigateur), ou écris ta recette.",
+                    when (tab) {
+                        RecipeStatus.HISTORIQUE -> "Aucun plat dans l'historique"
+                        RecipeStatus.FAVORI -> "Aucun favori"
+                        RecipeStatus.BANNI -> "Aucun plat exclu"
+                    },
+                    when (tab) {
+                        RecipeStatus.HISTORIQUE -> "Les plats des menus que tu valides arrivent ici."
+                        RecipeStatus.FAVORI -> "Partage une recette depuis ton navigateur, colle une adresse (bouton lien) ou écris-la (+). Tu peux aussi déplacer un plat de l'historique ici."
+                        RecipeStatus.BANNI -> "Déplace ici les plats que l'assistant ne doit plus te proposer."
+                    },
                 )
             } else {
                 LazyColumn {
@@ -127,12 +148,12 @@ fun CookbookScreen(
                             headlineContent = { Text(r.title) },
                             supportingContent = {
                                 Text(listOfNotNull(
-                                    "${r.servings} pers.",
+                                    r.lastCookedAt?.let { "dernier : ${formatDate(it)}" },
+                                    r.timesCooked.takeIf { it > 0 }?.let { "cuisiné ${it}×" },
                                     r.cookMinutes?.let { "${(r.prepMinutes ?: 0) + it} min" },
-                                    r.tags.take(3).joinToString(", ").ifEmpty { null },
-                                ).joinToString(" · "))
+                                ).joinToString(" · ").ifEmpty { "${r.servings} pers." })
                             },
-                            trailingContent = { if (r.favorite) Icon(Icons.Filled.Star, "Favori") },
+                            trailingContent = { MoveMenu(current = r.status) { vm.move(r, it) } },
                             modifier = Modifier.clickable { onOpenRecipe(r.id) },
                         )
                         HorizontalDivider()
@@ -149,7 +170,7 @@ fun CookbookScreen(
             title = { Text("Importer une recette") },
             text = {
                 Column {
-                    Text("Colle l'adresse d'une page (Marmiton, 750g, Cuisine AZ…).", style = MaterialTheme.typography.bodySmall)
+                    Text("Colle l'adresse d'une page (Marmiton, 750g, Cuisine AZ…). Elle sera ajoutée à tes favoris.", style = MaterialTheme.typography.bodySmall)
                     OutlinedTextField(url, { url = it }, singleLine = true, placeholder = { Text("https://…") })
                 }
             },
@@ -161,15 +182,40 @@ fun CookbookScreen(
     }
 }
 
+/** Bouton « Déplacer vers… » une autre liste du livre. */
+@Composable
+fun MoveMenu(current: RecipeStatus, onMove: (RecipeStatus) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(
+                when (current) {
+                    RecipeStatus.FAVORI -> Icons.Filled.Star
+                    RecipeStatus.BANNI -> Icons.Filled.Block
+                    RecipeStatus.HISTORIQUE -> Icons.Filled.History
+                },
+                "Déplacer vers…",
+            )
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            RecipeStatus.entries.filter { it != current }.forEach { s ->
+                DropdownMenuItem(text = { Text("Déplacer vers « ${s.label} »") }, onClick = { open = false; onMove(s) })
+            }
+        }
+    }
+}
+
+private fun formatDate(iso: String): String =
+    runCatching { java.time.LocalDate.parse(iso).format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yy")) }.getOrDefault(iso)
+
 @Composable
 fun RecipeDetailScreen(recipeId: Long, onBack: () -> Unit, onEdit: () -> Unit) {
     val vm = containerViewModel(key = "recipe-$recipeId") { RecipeDetailViewModel(it, recipeId) }
     val recipe by vm.recipe.collectAsStateWithLifecycle()
-    val servingsOverride by vm.servings.collectAsStateWithLifecycle()
+    val portions by vm.portions.collectAsStateWithLifecycle()
     val message by vm.messages.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
-    var showPlan by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     LaunchedEffect(message) { message?.let { snackbar.showSnackbar(it); vm.messages.value = null } }
 
@@ -180,42 +226,45 @@ fun RecipeDetailScreen(recipeId: Long, onBack: () -> Unit, onEdit: () -> Unit) {
         snackbar = snackbar,
         actions = {
             if (r != null) {
-                IconButton(onClick = { vm.toggleFavorite(r) }) {
-                    Icon(if (r.favorite) Icons.Filled.Star else Icons.Filled.StarBorder, "Favori")
-                }
+                MoveMenu(current = r.status) { vm.move(r, it) }
                 IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, "Modifier") }
                 IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Filled.Delete, "Supprimer") }
             }
         },
     ) { padding ->
         if (r == null) return@ScreenScaffold
-        val servings = servingsOverride ?: vm.servingsOrDefault(r)
         Column(
             Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp).navigationBarsPadding(),
         ) {
             Text(
                 listOfNotNull(
-                    r.prepMinutes?.let { "Préparation $it min" },
-                    r.cookMinutes?.let { "Cuisson $it min" },
-                    r.tags.joinToString(", ").ifEmpty { null },
+                    r.status.label,
+                    r.timesCooked.takeIf { it > 0 }?.let { "cuisiné ${it}×" },
+                    r.prepMinutes?.let { "préparation $it min" },
+                    r.cookMinutes?.let { "cuisson $it min" },
                 ).joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall,
             )
+            r.description?.let { Text(it, Modifier.padding(top = 4.dp)) }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Pour", Modifier.padding(end = 8.dp))
-                IconButton(onClick = { vm.servings.value = (servings - 1).coerceAtLeast(1) }) { Icon(Icons.Filled.Remove, "Moins") }
-                Text("$servings pers.", fontWeight = FontWeight.Bold)
-                IconButton(onClick = { vm.servings.value = servings + 1 }) { Icon(Icons.Filled.Add, "Plus") }
+                Text("Adultes")
+                IconButton(onClick = { vm.portions.value = portions.withAdults(-1) }) { Icon(Icons.Filled.Remove, "Moins") }
+                Text("${portions.adults}", fontWeight = FontWeight.Bold)
+                IconButton(onClick = { vm.portions.value = portions.withAdults(1) }) { Icon(Icons.Filled.Add, "Plus") }
+                Text("Enfants")
+                IconButton(onClick = { vm.portions.value = portions.withChildren(-1) }) { Icon(Icons.Filled.Remove, "Moins") }
+                Text("${portions.children}", fontWeight = FontWeight.Bold)
+                IconButton(onClick = { vm.portions.value = portions.withChildren(1) }) { Icon(Icons.Filled.Add, "Plus") }
             }
             Text("Ingrédients", style = MaterialTheme.typography.titleMedium)
-            ShoppingListMerger.scale(r, servings).forEach { ing ->
+            ShoppingListMerger.scale(r, portions.equivalent(vm.childFactor())).forEach { ing ->
                 val q = ing.quantity?.let { ShoppingListMerger.formatNumber(it) }
                 Text("• " + listOfNotNull(q, ing.unit, ing.name).joinToString(" "), Modifier.padding(vertical = 2.dp))
             }
             Spacer(Modifier.size(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { vm.addToList(r) }) { Text("Ajouter à la liste") }
-                OutlinedButton(onClick = { showPlan = true }) { Text("Planifier") }
+                OutlinedButton(onClick = { vm.addToMenu(r) }, enabled = !r.banned) { Text("Ajouter au menu") }
             }
             Spacer(Modifier.size(16.dp))
             Text("Préparation", style = MaterialTheme.typography.titleMedium)
@@ -228,41 +277,12 @@ fun RecipeDetailScreen(recipeId: Long, onBack: () -> Unit, onEdit: () -> Unit) {
         }
     }
 
-    if (showPlan && r != null) PlanDialog(onDismiss = { showPlan = false }) { date, slot -> vm.plan(r, date, slot); showPlan = false }
     if (confirmDelete) AlertDialog(
         onDismissRequest = { confirmDelete = false },
         title = { Text("Supprimer cette recette ?") },
+        text = { Text("Pour que l'assistant ne la propose plus, mieux vaut la déplacer vers « Ne plus proposer ».") },
         confirmButton = { TextButton(onClick = { confirmDelete = false; vm.delete(onBack) }) { Text("Supprimer") } },
         dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Annuler") } },
-    )
-}
-
-/** Choix d'une date (14 prochains jours) et d'un repas. */
-@Composable
-fun PlanDialog(onDismiss: () -> Unit, onConfirm: (LocalDate, MealSlot) -> Unit) {
-    val days = remember { (0L until 14L).map { LocalDate.now().plusDays(it) } }
-    var date by remember { mutableStateOf(days.first()) }
-    var slot by remember { mutableStateOf(MealSlot.DINER) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Planifier") },
-        text = {
-            Column {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    MealSlot.entries.forEach { s -> FilterChip(selected = slot == s, onClick = { slot = s }, label = { Text(s.label) }) }
-                }
-                LazyColumn(Modifier.padding(top = 8.dp).heightIn(max = 320.dp)) {
-                    items(days) { d ->
-                        ListItem(
-                            headlineContent = { Text(DateResolver.label(d), fontWeight = if (d == date) FontWeight.Bold else null) },
-                            modifier = Modifier.clickable { date = d },
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = { onConfirm(date, slot) }) { Text("OK") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Annuler") } },
     )
 }
 

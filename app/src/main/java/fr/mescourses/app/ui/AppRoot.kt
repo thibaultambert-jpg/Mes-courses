@@ -2,9 +2,8 @@ package fr.mescourses.app.ui
 
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.MenuBook
-import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.RestaurantMenu
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.Icon
@@ -25,19 +24,17 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import fr.mescourses.app.ui.cart.CartScreen
-import fr.mescourses.app.ui.chat.ChatScreen
 import fr.mescourses.app.ui.cookbook.CookbookScreen
 import fr.mescourses.app.ui.cookbook.RecipeDetailScreen
 import fr.mescourses.app.ui.cookbook.RecipeEditScreen
-import fr.mescourses.app.ui.planning.PlanningScreen
+import fr.mescourses.app.ui.menu.MenuScreen
 import fr.mescourses.app.ui.settings.SettingsScreen
 import fr.mescourses.app.ui.shopping.ShoppingListScreen
 
 private data class Tab(val route: String, val label: String, val icon: ImageVector)
 
 private val tabs = listOf(
-    Tab("chat", "Assistant", Icons.AutoMirrored.Filled.Chat),
-    Tab("planning", "Planning", Icons.Filled.CalendarMonth),
+    Tab("menu", "Menu", Icons.Filled.RestaurantMenu),
     Tab("cookbook", "Recettes", Icons.AutoMirrored.Filled.MenuBook),
     Tab("shopping", "Liste", Icons.Filled.Checklist),
     Tab("cart", "Panier", Icons.Filled.ShoppingCart),
@@ -75,10 +72,9 @@ fun AppRoot(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
             }
         },
     ) { padding ->
-        NavHost(nav, startDestination = "chat", modifier = Modifier.padding(bottom = padding.calculateBottomPadding())) {
-            composable("chat") { ChatScreen(onOpenSettings = { nav.navigate("settings") }) }
-            composable("planning") {
-                PlanningScreen(onOpenRecipe = { nav.navigate("recipe/$it") }, onOpenSettings = { nav.navigate("settings") })
+        NavHost(nav, startDestination = "menu", modifier = Modifier.padding(bottom = padding.calculateBottomPadding())) {
+            composable("menu") {
+                MenuScreen(onOpenSettings = { nav.navigate("settings") }, onOpenRecipe = { nav.navigate("recipe/$it") })
             }
             composable(
                 "cookbook?import={import}",

@@ -87,6 +87,27 @@ class LiteRtLmEngine(private val context: Context) : LlmEngine {
         }
     }.flowOn(Dispatchers.Default)
 
+    override fun hasConversation() = conversation != null
+
+    override suspend fun generateOnce(systemPrompt: String, prompt: String): String = withContext(Dispatchers.Default) {
+        val e = engine ?: error("Modèle non chargé")
+        runCatching { conversation?.close() }
+        conversation = null
+        val temp = e.createConversation(
+            ConversationConfig(
+                systemInstruction = Contents.of(systemPrompt),
+                samplerConfig = SamplerConfig(topK = 20, topP = 0.9, temperature = 0.4),
+            ),
+        )
+        try {
+            val out = StringBuilder()
+            temp.sendMessageAsync(prompt).collect { out.append(it.toString()) }
+            out.toString()
+        } finally {
+            temp.close()
+        }
+    }
+
     override fun close() {
         runCatching { conversation?.close() }
         runCatching { engine?.close() }

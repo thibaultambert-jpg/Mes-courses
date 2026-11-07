@@ -24,6 +24,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -157,8 +158,25 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             HorizontalDivider()
             Section("Foyer et goûts")
-            Field("Nombre de personnes par défaut", s.householdSize.toString(), number = true) { v ->
-                v.toIntOrNull()?.let { n -> vm.update { it.copy(householdSize = n.coerceIn(1, 20)) } }
+            Field("Adultes par repas (par défaut)", s.householdSize.toString(), number = true) { v ->
+                v.toIntOrNull()?.let { n -> vm.update { it.copy(householdSize = n.coerceIn(0, 20)) } }
+            }
+            Field("Enfants par repas (par défaut)", s.children.toString(), number = true) { v ->
+                v.toIntOrNull()?.let { n -> vm.update { it.copy(children = n.coerceIn(0, 20)) } }
+            }
+            Field("Nombre de repas par menu (par défaut)", s.meals.toString(), number = true) { v ->
+                v.toIntOrNull()?.let { n -> vm.update { it.copy(meals = n.coerceIn(1, 21)) } }
+            }
+            Text("Portion d'un enfant : ${(s.childFactor * 100).toInt()} % d'une portion adulte", style = MaterialTheme.typography.bodyMedium)
+            Slider(
+                value = s.childFactor.toFloat(),
+                onValueChange = { v -> vm.update { it.copy(childFactor = (Math.round(v * 20) / 20.0)) } },
+                valueRange = 0.25f..1f,
+                steps = 14,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Privilégier les produits bio au drive", Modifier.weight(1f))
+                Switch(checked = s.preferOrganic, onCheckedChange = { v -> vm.update { it.copy(preferOrganic = v) } })
             }
             Field("Préférences (régime, allergies, budget…)", s.preferences, lines = 3) { v -> vm.update { it.copy(preferences = v) } }
 

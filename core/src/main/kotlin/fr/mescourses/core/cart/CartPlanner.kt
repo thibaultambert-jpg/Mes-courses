@@ -30,26 +30,41 @@ data class CartLine(
 object CartPlanner {
 
     /** Termes à chercher : on retire les précisions inutiles pour un moteur de recherche drive. */
-    fun searchQuery(item: ShoppingItem): String = item.name
-        .replace(Regex("""(?i)\b(frais|fraîche|fraiches|fraîches|bio|émincé|émincée|haché|hachée|en dés|râpé|râpée)\b"""), " ")
-        .replace(Regex("\\s+"), " ").trim().ifEmpty { item.name }
+    fun searchQuery(item: ShoppingItem, preferOrganic: Boolean = false): String {
+        val base = item.name
+            .replace(Regex("""(?i)\b(frais|fraîche|fraiches|fraîches|bio|émincé|émincée|haché|hachée|en dés|râpé|râpée)\b"""), " ")
+            .replace(Regex("\\s+"), " ").trim().ifEmpty { item.name }
+        return if (preferOrganic) "$base bio" else base
+    }
 
     /** Classe les produits : ceux dont le nom contient les mots de l'article d'abord, l'ordre de l'enseigne ensuite. */
-    fun rank(item: ShoppingItem, products: List<Product>): List<Product> {
-        val words = ShoppingListMerger.key(item.name).split(' ').filter { it.length > 2 }
-        if (words.isEmpty()) return products
+    fun rank(item: ShoppingItem, products: List<Product>, preferOrganic: Boolean = false): List<Product> {
+        val words = ShoppingListMerger.key(item.name).split(' ').filter { it.length > 2 && it != "bio" }
+        fun isOrganic(p: Product) = Regex("""\bbio\b""").containsMatchIn(ShoppingListMerger.key(p.name + " " + (p.brand ?: "")))
         return products.withIndex()
-            .sortedWith(compareByDescending<IndexedValue<Product>> { (_, p) ->
-                val key = ShoppingListMerger.key(p.name)
-                words.count { it in key }
-            }.thenBy { it.index })
+            .sortedWith(
+                compareByDescending<IndexedValue<Product>> { (_, p) ->
+                    val key = ShoppingListMerger.key(p.name)
+                    words.count { it in key }
+                }
+                    .thenByDescending { (_, p) -> preferOrganic && isOrganic(p) }
+                    .thenBy { it.index },
+            )
             .map { it.value }
     }
 
-    fun propose(session: RetailerSession, items: List<ShoppingItem>, pauseMs: Long = 600): Flow<CartLine> = flow {
+    fun propose(
+        session: RetailerSession,
+        items: List<ShoppingItem>,
+        preferOrganic: Boolean = false,
+        pauseMs: Long = 600,
+    ): Flow<CartLine> = flow {
         for (item in items) {
             val line = try {
-                val products = rank(item, session.search(searchQuery(item)))
+                var found = session.search(searchQuery(item, preferOrganic))
+                // Pas de version bio au drive : on se rabat sur le produit classique.
+                if (found.isEmpty() && preferOrganic) found = session.search(searchQuery(item))
+                val products = rank(item, found, preferOrganic)
                 if (products.isEmpty()) CartLine(item, status = LineStatus.INTROUVABLE, included = false)
                 else CartLine(item, products, status = LineStatus.PROPOSE)
             } catch (e: Exception) {

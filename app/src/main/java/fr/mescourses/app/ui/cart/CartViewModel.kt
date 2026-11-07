@@ -50,7 +50,7 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
                 }
                 _state.update { it.copy(phase = Phase.RECHERCHE, lines = items.map { item -> CartLine(item) }) }
                 var i = 0
-                CartPlanner.propose(session, items).collect { line ->
+                CartPlanner.propose(session, items, preferOrganic = c.settings.current.preferOrganic).collect { line ->
                     val index = i++
                     _state.update { s -> s.copy(lines = s.lines.toMutableList().also { it[index] = line }) }
                 }

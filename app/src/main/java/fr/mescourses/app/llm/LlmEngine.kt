@@ -21,5 +21,11 @@ interface LlmEngine {
     /** Démarre une nouvelle conversation (efface l'historique). */
     fun newConversation(systemPrompt: String, tools: List<AgentTool>)
     fun send(message: String): Flow<ChatEvent>
+    fun hasConversation(): Boolean
+    /**
+     * Génération ponctuelle sans outils (ex. une recette en JSON). Ferme la conversation en cours :
+     * il faut rappeler newConversation ensuite.
+     */
+    suspend fun generateOnce(systemPrompt: String, prompt: String): String
     fun close()
 }

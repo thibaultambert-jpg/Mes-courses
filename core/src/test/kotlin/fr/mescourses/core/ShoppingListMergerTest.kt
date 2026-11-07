@@ -20,14 +20,14 @@ class ShoppingListMergerTest {
     )
 
     @Test fun mise_a_l_echelle() {
-        val items = ShoppingListMerger.fromRecipe(crepes, servings = 2)
+        val items = ShoppingListMerger.fromRecipe(crepes, portions = 2.0)
         assertEquals(125.0, items.first { it.name == "farine" }.quantity)
         assertEquals(2.0, items.first { it.name == "œufs" }.quantity)
     }
 
     @Test fun fusion_des_doublons_et_conversion() {
         val merged = ShoppingListMerger.merge(
-            ShoppingListMerger.fromRecipe(crepes, 4) + ShoppingListMerger.fromRecipe(gateau, 6) +
+            ShoppingListMerger.fromRecipe(crepes, 4.0) + ShoppingListMerger.fromRecipe(gateau, 6.0) +
                 ShoppingListMerger.fromText("lessive"),
         )
         val farine = merged.first { it.name == "Farine" }
