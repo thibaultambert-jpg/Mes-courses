@@ -70,15 +70,28 @@ class MenuValidator(
         return ValidationResult(created, reused, items, failures)
     }
 
-    /** Recette pour un nombre « rond » de personnes, mise à l'échelle ensuite. */
+    /**
+     * Recette pour un nombre « rond » de personnes, mise à l'échelle ensuite. Si l'assiette n'est pas
+     * complète (protéine, légumes, féculent), on redemande une fois en précisant ce qui manque.
+     */
     private suspend fun generate(dish: MenuDish, alreadyBought: List<String>): Recipe? {
         val servings = max(2, ceil(dish.portions.equivalent(childFactor())).toInt())
-        repeat(2) {
+        var best: Recipe? = null
+        var missing = emptyList<PlateBalance.Component>()
+        for (attempt in 0 until 3) {
             val text = runCatching {
-                generator.generate(MenuPrompt.RECIPE_SYSTEM, MenuPrompt.recipeRequest(dish, servings, alreadyBought.take(25)))
-            }.getOrNull() ?: return@repeat
-            RecipeResponseParser.parse(text, dish.title, servings)?.let { return it.copy(tags = listOf("menu")) }
+                generator.generate(MenuPrompt.RECIPE_SYSTEM, MenuPrompt.recipeRequest(dish, servings, alreadyBought.take(25), missing))
+            }.getOrNull() ?: continue
+            val recipe = RecipeResponseParser.parse(text, dish.title, servings)?.copy(tags = listOf("menu")) ?: continue
+            val nowMissing = PlateBalance.missing(listOf(recipe.title) + recipe.ingredients.map { it.name })
+            if (nowMissing.isEmpty()) return recipe
+            if (best == null || nowMissing.size < missing.size || missing.isEmpty()) best = recipe
+            missing = nowMissing
+            if (attempt >= 1) break // une seule relance pour l'équilibre
         }
-        return null
+        return best?.copy(
+            notes = listOfNotNull(best.notes, "Assiette à compléter : il manque ${missing.joinToString(" et ") { it.missingLabel }}.")
+                .joinToString("\n"),
+        )
     }
 }

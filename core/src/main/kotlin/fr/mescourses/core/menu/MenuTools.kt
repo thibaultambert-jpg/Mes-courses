@@ -58,8 +58,13 @@ class MenuTools(
 
     /** Message de l'outil + bilan de mutualisation, pour que le modèle puisse s'améliorer. */
     private suspend fun withOverlap(message: String): JsonElement {
-        val summary = IngredientOverlap.summary(IngredientOverlap.compute(draft.get()))
-        return toolOk(if (summary.isEmpty()) message else "$message. $summary")
+        val dishes = draft.get()
+        val parts = listOfNotNull(
+            message,
+            IngredientOverlap.summary(IngredientOverlap.compute(dishes)).ifEmpty { null },
+            PlateBalance.menuSummary(dishes),
+        )
+        return toolOk(parts.joinToString(". "))
     }
 
     private fun bannedError(title: String) =

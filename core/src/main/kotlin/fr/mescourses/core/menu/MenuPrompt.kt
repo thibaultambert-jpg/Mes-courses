@@ -34,7 +34,8 @@ object MenuPrompt {
             appendLine("Nous sommes le ${DateResolver.label(today)}.")
             appendLine()
             appendLine("RÈGLES TOUJOURS APPLIQUÉES :")
-            appendLine("- Plats sains et équilibrés : légumes à chaque repas, céréales complètes ou légumineuses, peu de viande rouge, poisson 1 à 2 fois par semaine, pas de produits ultra-transformés ni de friture.")
+            appendLine("- CHAQUE plat est un repas complet et équilibré : une protéine (viande, poisson, œufs, légumineuses, tofu ou fromage), des légumes (la moitié de l'assiette) et un féculent (céréales complètes, riz, pâtes, pommes de terre, quinoa, pain complet…). Si l'accompagnement n'est pas évident, indique-le dans le titre (ex. « Saumon, poireaux fondants et riz complet ») et dans les ingrédients.")
+            appendLine("- Plats sains : légumes à chaque repas, céréales complètes ou légumineuses, peu de viande rouge, poisson 1 à 2 fois par semaine, pas de produits ultra-transformés ni de friture.")
             appendLine("- Ingrédients bio.")
             appendLine("- Uniquement des fruits et légumes de saison. Ce mois-ci : légumes = ${season.vegetables.joinToString(", ")} ; fruits = ${season.fruits.joinToString(", ")}.")
             appendLine("- Mutualise les ingrédients frais entre les plats : un légume, une herbe ou un produit entamé (crème, fromage, bouillon, botte de persil…) doit servir à au moins 2 plats quand c'est possible. Évite d'acheter un produit pour une petite quantité dans un seul plat.")
@@ -76,10 +77,15 @@ object MenuPrompt {
             "Garde les plats qui le font déjà et remplace ceux dont les ingrédients ne servent qu'une fois."
 
     /** Demande de recette détaillée, envoyée à la validation (sans outils). */
-    fun recipeRequest(dish: MenuDish, servings: Int, alreadyBought: List<String> = emptyList()): String = """
+    fun recipeRequest(
+        dish: MenuDish,
+        servings: Int,
+        alreadyBought: List<String> = emptyList(),
+        missing: List<PlateBalance.Component> = emptyList(),
+    ): String = """
 Donne la recette de « ${dish.title} »${if (dish.description.isNotBlank()) " (${dish.description})" else ""} pour $servings personnes.
-Recette saine, ingrédients bio et de saison.${if (dish.mainIngredients.isNotEmpty()) " Ingrédients principaux prévus : ${dish.mainIngredients.joinToString(", ")}." else ""}
-${if (alreadyBought.isNotEmpty()) "Déjà achetés pour les autres plats du menu, à réutiliser en priorité plutôt que d'en acheter d'autres : ${alreadyBought.joinToString(", ")}.\n" else ""}Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
+Recette saine, ingrédients bio et de saison, assiette équilibrée : une protéine, des légumes (la moitié de l'assiette) et un féculent.${if (dish.mainIngredients.isNotEmpty()) " Ingrédients principaux prévus : ${dish.mainIngredients.joinToString(", ")}." else ""}
+${if (missing.isNotEmpty()) "IMPORTANT : ta version précédente n'avait pas ${missing.joinToString(" ni ") { it.missingLabel }}. Ajoute-le en accompagnement.\n" else ""}${if (alreadyBought.isNotEmpty()) "Déjà achetés pour les autres plats du menu, à réutiliser en priorité plutôt que d'en acheter d'autres : ${alreadyBought.joinToString(", ")}.\n" else ""}Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
 {"titre": "...", "personnes": $servings, "preparation_min": 15, "cuisson_min": 30,
  "ingredients": ["200 g de ...", "2 ..."], "etapes": ["...", "..."]}
 Quantités précises en g, ml, cl ou nombre de pièces.

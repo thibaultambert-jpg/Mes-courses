@@ -48,7 +48,8 @@ class MenuToolsTest {
         val msg = r["message"]!!.jsonPrimitive.content
         assertTrue("Ingrédients partagés : poireaux (plats 1, 2), crème fraîche (plats 1, 2)" in msg, msg)
         assertTrue("pois chiches (plat 3)" in msg, msg)
-        assertTrue("sel" !in msg && "poivre" !in msg, msg) // produits du placard ignorés
+        assertTrue("sel (" !in msg && "poivre" !in msg, msg) // produits du placard ignorés
+        assertTrue("Équilibre à corriger" in msg && "plat 2 sans protéine" in msg, msg)
         assertEquals(listOf("poireaux", "crème fraîche", "œufs", "sel"), draft.state.value[0].mainIngredients)
 
         val replaced = run("replace_dish", """{"numero":3,"titre":"Gratin de poireaux","ingredients":["poireaux","pommes de terre","comté"]}""")
