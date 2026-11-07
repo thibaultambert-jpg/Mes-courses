@@ -32,8 +32,26 @@ class MenuParsingTest {
                 "Curry de pois chiches" to "au lait de coco",
                 "Poisson en papillote" to "avec des poireaux",
             ),
-            MenuTextParser.parse(text),
+            MenuTextParser.parse(text).map { it.title to it.description },
         )
+    }
+
+    @Test fun ingredients_principaux_dans_la_ligne() {
+        val d = MenuTextParser.parseLine("Tarte aux poireaux — pâte maison — ingrédients : poireaux, crème fraîche, œufs et comté")
+        assertEquals("Tarte aux poireaux", d.title)
+        assertEquals("pâte maison", d.description)
+        assertEquals(listOf("poireaux", "crème fraîche", "œufs", "comté"), d.ingredients)
+        val sansDescription = MenuTextParser.parseLine("Dahl de lentilles (ingrédients principaux : lentilles corail, lait de coco)")
+        assertEquals("Dahl de lentilles", sansDescription.title)
+        assertEquals(listOf("lentilles corail", "lait de coco"), sansDescription.ingredients)
+    }
+
+    @Test fun demande_de_recette_reutilise_les_achats() {
+        val req = MenuPrompt.recipeRequest(
+            fr.mescourses.core.model.MenuDish("Gratin", "", Portions(2), mainIngredients = listOf("chou-fleur")),
+            4, listOf("crème fraîche", "persil"),
+        )
+        assertTrue("chou-fleur" in req && "à réutiliser en priorité" in req && "crème fraîche, persil" in req)
     }
 
     @Test fun recette_en_texte_si_pas_de_json() {
@@ -62,6 +80,7 @@ class MenuParsingTest {
         )
         val p = MenuPrompt.system(LocalDate.of(2026, 11, 7), MenuConfig(5, Portions(2, 1), "rapide"), cookbook)
         assertTrue("bio" in p && "saison" in p && "sains" in p)
+        assertTrue("Mutualise les ingrédients" in p && "ingrédients : a, b, c" in p)
         assertTrue("poireau" in p)
         assertTrue("NE JAMAIS proposer : Lasagnes" in p)
         assertTrue("favoris" in p && "Gratin dauphinois" in p)

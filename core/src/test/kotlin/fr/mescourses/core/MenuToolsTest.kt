@@ -40,6 +40,21 @@ class MenuToolsTest {
         assertTrue(d.all { it.portions == Portions(2, 1) })
     }
 
+    @Test fun bilan_de_mutualisation_renvoye_au_modele() = runTest {
+        val r = run("propose_menu", """{"plats":[
+            "Tarte aux poireaux — ingrédients : poireaux, crème fraîche, œufs, sel",
+            "Velouté de poireaux — ingrédients : poireau, pommes de terre, crème fraîche épaisse",
+            "Curry de pois chiches — ingrédients : pois chiches, lait de coco, épinards, poivre"]}""")
+        val msg = r["message"]!!.jsonPrimitive.content
+        assertTrue("Ingrédients partagés : poireaux (plats 1, 2), crème fraîche (plats 1, 2)" in msg, msg)
+        assertTrue("pois chiches (plat 3)" in msg, msg)
+        assertTrue("sel" !in msg && "poivre" !in msg, msg) // produits du placard ignorés
+        assertEquals(listOf("poireaux", "crème fraîche", "œufs", "sel"), draft.state.value[0].mainIngredients)
+
+        val replaced = run("replace_dish", """{"numero":3,"titre":"Gratin de poireaux","ingredients":["poireaux","pommes de terre","comté"]}""")
+        assertTrue("pommes de terre (plats 2, 3)" in replaced["message"]!!.jsonPrimitive.content)
+    }
+
     @Test fun invites_ajoutes_a_un_seul_plat() = runTest {
         run("propose_menu", """{"plats":["Poulet rôti — légumes","Soupe de poireaux"]}""")
         run("add_guests", """{"numero":2,"adultes":3,"enfants":2}""")

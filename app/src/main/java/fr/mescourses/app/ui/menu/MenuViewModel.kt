@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import fr.mescourses.app.AppContainer
 import fr.mescourses.app.llm.ChatEvent
+import fr.mescourses.core.menu.IngredientOverlap
 import fr.mescourses.core.menu.MenuConfig
 import fr.mescourses.core.menu.MenuPrompt
 import fr.mescourses.core.menu.MenuTextParser
@@ -51,6 +52,11 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
 
     val dishes: StateFlow<List<MenuDish>> = c.draft.observe().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val week: StateFlow<List<PlannedMeal>> = c.plan.observeAll().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    /** Ingrédients partagés / isolés du brouillon. */
+    val overlap: StateFlow<IngredientOverlap.Report> = c.draft.observe()
+        .map { IngredientOverlap.compute(it) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, IngredientOverlap.Report(emptyList(), emptyList()))
+
     /** Ids des recettes favorites, pour l'étoile sur les cartes. */
     val favoriteIds: StateFlow<Set<Long>> = c.recipes.observeAll()
         .map { l -> l.filter { it.favorite }.map { it.id }.toSet() }
@@ -111,7 +117,11 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
             if (c.draft.get().isEmpty()) {
                 val parsed = MenuTextParser.parse(answer)
                 if (parsed.isNotEmpty()) {
-                    c.draft.set(parsed.map { (t, d) -> MenuDish(t, d, Portions(_state.value.adults, _state.value.children)) })
+                    c.draft.set(
+                        parsed.map { p ->
+                            MenuDish(p.title, p.description, Portions(_state.value.adults, _state.value.children), mainIngredients = p.ingredients)
+                        },
+                    )
                 } else {
                     _state.update { it.copy(message = "Le modèle n'a pas proposé de menu, réessaie.") }
                 }
@@ -129,7 +139,10 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
         }
     }
 
-    fun anotherIdea(index: Int) = send("Remplace le plat ${index + 1} par une autre idée.")
+    fun anotherIdea(index: Int) =
+        send("Remplace le plat ${index + 1} par une autre idée, qui réutilise si possible des ingrédients des autres plats.")
+
+    fun improveSharing() = send(MenuPrompt.IMPROVE_SHARING)
 
     /** Envoie un message au LLM et suit les appels d'outils ; renvoie le texte de la réponse. */
     private suspend fun exchange(prompt: String, shownAs: String?): String {

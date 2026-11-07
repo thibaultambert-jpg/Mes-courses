@@ -34,6 +34,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -52,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import fr.mescourses.app.ui.common.ScreenScaffold
 import fr.mescourses.app.ui.common.containerViewModel
+import fr.mescourses.core.menu.IngredientOverlap
 import fr.mescourses.core.model.MenuDish
 
 @Composable
@@ -61,6 +63,7 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit) {
     val dishes by vm.dishes.collectAsStateWithLifecycle()
     val week by vm.week.collectAsStateWithLifecycle()
     val favorites by vm.favoriteIds.collectAsStateWithLifecycle()
+    val overlap by vm.overlap.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -137,6 +140,12 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit) {
                             onAnother = { vm.anotherIdea(i) },
                             onRemove = { vm.removeDish(i) },
                         )
+                    }
+                }
+
+                if (dishes.isNotEmpty() && overlap.hasData) {
+                    item {
+                        SharingCard(overlap, enabled = ready && !state.busy, onImprove = vm::improveSharing)
                     }
                 }
 
@@ -281,6 +290,13 @@ private fun DishCard(
                 IconButton(onClick = onRemove, enabled = enabled) { Icon(Icons.Filled.Delete, "Retirer") }
             }
             if (dish.description.isNotBlank()) Text(dish.description, style = MaterialTheme.typography.bodySmall)
+            if (dish.mainIngredients.isNotEmpty()) {
+                Text(
+                    "🧺 " + dish.mainIngredients.joinToString(", "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Adultes", style = MaterialTheme.typography.bodySmall)
                 IconButton(onClick = { onPortions(-1, 0) }, enabled = enabled) { Icon(Icons.Filled.Remove, "Un adulte de moins") }
@@ -290,6 +306,36 @@ private fun DishCard(
                 IconButton(onClick = { onPortions(0, -1) }, enabled = enabled) { Icon(Icons.Filled.Remove, "Un enfant de moins") }
                 Text("${dish.portions.children}")
                 IconButton(onClick = { onPortions(0, 1) }, enabled = enabled) { Icon(Icons.Filled.Add, "Un enfant de plus") }
+            }
+        }
+    }
+}
+
+/** Ingrédients qui servent à plusieurs plats (moins d'achats, moins de gaspillage). */
+@Composable
+private fun SharingCard(report: IngredientOverlap.Report, enabled: Boolean, onImprove: () -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Text("Ingrédients partagés", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "${report.shared.size} ingrédient(s) servent à plusieurs plats · ${report.isolated.size} pour un seul plat",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            report.shared.take(8).forEach { u ->
+                Text("♻️ ${u.name} → plats ${u.dishes.joinToString(", ")}", style = MaterialTheme.typography.bodyMedium)
+            }
+            if (report.isolated.isNotEmpty()) {
+                Text(
+                    "Un seul plat : " + report.isolated.take(10).joinToString(", ") { "${it.name} (${it.dishes.single()})" },
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+            if (report.isolated.size > 1) {
+                OutlinedButton(onClick = onImprove, enabled = enabled, modifier = Modifier.padding(top = 8.dp)) {
+                    Text("Mieux mutualiser")
+                }
             }
         }
     }

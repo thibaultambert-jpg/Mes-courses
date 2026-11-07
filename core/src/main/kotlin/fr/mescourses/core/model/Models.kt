@@ -66,6 +66,8 @@ data class MenuDish(
     val portions: Portions,
     /** Renseigné quand le plat existe déjà dans le livre (favori, historique) : pas besoin de le générer. */
     val recipeId: Long? = null,
+    /** Ingrédients principaux annoncés par le LLM, pour mesurer ce qui est partagé entre les plats. */
+    val mainIngredients: List<String> = emptyList(),
 )
 
 /** Un plat du menu de la semaine validé, à cocher une fois cuisiné. */

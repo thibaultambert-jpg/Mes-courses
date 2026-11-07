@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import fr.mescourses.app.data.AppDatabase
 import fr.mescourses.app.data.MIGRATION_1_2
+import fr.mescourses.app.data.MIGRATION_2_3
 import fr.mescourses.app.data.RoomMealPlanRepository
 import fr.mescourses.app.data.RoomMenuDraftRepository
 import fr.mescourses.app.data.RoomRecipeRepository
@@ -40,7 +41,7 @@ class AppContainer(context: Context) {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val db = Room.databaseBuilder(context, AppDatabase::class.java, "mes-courses.db")
-        .addMigrations(MIGRATION_1_2)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
         .build()
     val recipes = RoomRecipeRepository(db.recipeDao())
     val plan = RoomMealPlanRepository(db.mealDao())

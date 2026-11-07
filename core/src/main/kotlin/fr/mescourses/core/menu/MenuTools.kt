@@ -37,7 +37,13 @@ class MenuTools(
     private suspend fun index() = CookbookIndex(recipes.all())
 
     /** Crée un plat en le rattachant au livre s'il y est déjà ; null s'il est dans « Ne plus proposer ». */
-    private fun dish(index: CookbookIndex, title: String, description: String, portions: Portions): MenuDish? {
+    private fun dish(
+        index: CookbookIndex,
+        title: String,
+        description: String,
+        portions: Portions,
+        ingredients: List<String> = emptyList(),
+    ): MenuDish? {
         val existing = index.find(title)
         if (existing?.banned == true) return null
         return MenuDish(
@@ -45,7 +51,15 @@ class MenuTools(
             description = description.ifBlank { existing?.description.orEmpty() },
             portions = portions,
             recipeId = existing?.id,
+            // Pour un plat du livre, ses vrais ingrédients font foi.
+            mainIngredients = existing?.ingredients?.map { it.name }?.takeIf { it.isNotEmpty() }?.take(8) ?: ingredients,
         )
+    }
+
+    /** Message de l'outil + bilan de mutualisation, pour que le modèle puisse s'améliorer. */
+    private suspend fun withOverlap(message: String): JsonElement {
+        val summary = IngredientOverlap.summary(IngredientOverlap.compute(draft.get()))
+        return toolOk(if (summary.isEmpty()) message else "$message. $summary")
     }
 
     private fun bannedError(title: String) =
@@ -61,20 +75,32 @@ class MenuTools(
     val proposeMenu = tool(
         "propose_menu",
         "Remplace le menu par une nouvelle proposition complète.",
-        params { stringArray("plats", "Un élément par plat : « Titre — courte description »") },
+        params {
+            stringArray(
+                "plats",
+                "Un élément par plat : « Titre — courte description — ingrédients : a, b, c » (3 à 6 ingrédients principaux)",
+            )
+        },
     ) { args ->
-        val lines = args.strList("plats").ifEmpty { args.strList("dishes") }
+        // Un élément par plat ; on ne découpe pas sur les virgules (elles séparent les ingrédients).
+        val lines = (args["plats"] ?: args["dishes"]).let { v ->
+            when (v) {
+                is kotlinx.serialization.json.JsonArray -> v.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+                is kotlinx.serialization.json.JsonPrimitive -> v.content.lines()
+                else -> emptyList()
+            }
+        }.map { it.trim() }.filter { it.isNotEmpty() }
         if (lines.isEmpty()) return@tool toolError("Aucun plat")
         val index = index()
         val refused = mutableListOf<String>()
         val dishes = lines.mapNotNull { line ->
-            val (title, description) = MenuTextParser.splitTitle(line)
-            dish(index, title, description, defaultPortions()) ?: run { refused += title; null }
+            val parsed = MenuTextParser.parseLine(line)
+            dish(index, parsed.title, parsed.description, defaultPortions(), parsed.ingredients) ?: run { refused += parsed.title; null }
         }
         draft.set(dishes)
         val msg = "Menu de ${dishes.size} plats enregistré" +
-            if (refused.isNotEmpty()) ". Refusés car « Ne plus proposer » : ${refused.joinToString()} — remplace-les avec add_dish." else ""
-        toolOk(msg)
+            if (refused.isNotEmpty()) ". Refusés car « Ne plus proposer » : ${refused.joinToString()} — remplace-les avec add_dish" else ""
+        withOverlap(msg)
     }
 
     val replaceDish = tool(
@@ -84,13 +110,15 @@ class MenuTools(
             integer("numero", "Numéro du plat à remplacer (à partir de 1)")
             string("titre", "Titre du nouveau plat")
             string("description", "Courte description", required = false)
+            stringArray("ingredients", "Ingrédients principaux (réutilise ceux des autres plats si possible)", required = false)
         },
     ) { args ->
         val (i, dishes) = numbered(args)
         val title = args.str("titre") ?: return@tool toolError("titre manquant")
-        val new = dish(index(), title, args.str("description").orEmpty(), dishes[i].portions) ?: return@tool bannedError(title)
+        val new = dish(index(), title, args.str("description").orEmpty(), dishes[i].portions, args.strList("ingredients"))
+            ?: return@tool bannedError(title)
         draft.set(dishes.toMutableList().also { it[i] = new })
-        toolOk("Plat ${i + 1} remplacé par « ${new.title} »")
+        withOverlap("Plat ${i + 1} remplacé par « ${new.title} »")
     }
 
     val addDish = tool(
@@ -99,13 +127,15 @@ class MenuTools(
         params {
             string("titre", "Titre du plat")
             string("description", "Courte description", required = false)
+            stringArray("ingredients", "Ingrédients principaux (réutilise ceux des autres plats si possible)", required = false)
         },
     ) { args ->
         val title = args.str("titre") ?: return@tool toolError("titre manquant")
-        val new = dish(index(), title, args.str("description").orEmpty(), defaultPortions()) ?: return@tool bannedError(title)
+        val new = dish(index(), title, args.str("description").orEmpty(), defaultPortions(), args.strList("ingredients"))
+            ?: return@tool bannedError(title)
         val dishes = draft.get() + new
         draft.set(dishes)
-        toolOk("« ${new.title} » ajouté (plat ${dishes.size})")
+        withOverlap("« ${new.title} » ajouté (plat ${dishes.size})")
     }
 
     val removeDish = tool(

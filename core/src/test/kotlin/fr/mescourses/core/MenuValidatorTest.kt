@@ -57,6 +57,8 @@ class MenuValidatorTest {
         assertEquals(1, result.reused)
         assertEquals(listOf("Plat impossible"), result.failures)
         assertTrue("pour 3 personnes" in prompts.first())
+        // La recette suivante est invitée à réutiliser ce que la première a fait acheter.
+        assertTrue("potimarron" in prompts.last() && "à réutiliser en priorité" in prompts.last(), prompts.last())
 
         val velo = recipes.state.value.first { it.title == "Velouté de potimarron" }
         assertEquals(RecipeStatus.HISTORIQUE, velo.status)

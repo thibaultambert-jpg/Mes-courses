@@ -101,12 +101,20 @@ class RoomMealPlanRepository(private val dao: MealDao) : MealPlanRepository {
 }
 
 class RoomMenuDraftRepository(private val dao: MenuDraftDao) : MenuDraftRepository {
-    private fun MenuDraftEntity.toModel() = MenuDish(title, description, Portions(adults, children), recipeId)
+    private fun MenuDraftEntity.toModel() = MenuDish(
+        title, description, Portions(adults, children), recipeId,
+        runCatching { json.decodeFromString(stringsSer, mainIngredients) }.getOrDefault(emptyList()),
+    )
 
     override fun observe(): Flow<List<MenuDish>> = dao.observe().map { l -> l.map { it.toModel() } }
     override suspend fun get(): List<MenuDish> = dao.all().map { it.toModel() }
     override suspend fun set(dishes: List<MenuDish>) = dao.replace(
-        dishes.mapIndexed { i, d -> MenuDraftEntity(i, d.title, d.description, d.portions.adults, d.portions.children, d.recipeId) },
+        dishes.mapIndexed { i, d ->
+            MenuDraftEntity(
+                i, d.title, d.description, d.portions.adults, d.portions.children, d.recipeId,
+                json.encodeToString(stringsSer, d.mainIngredients),
+            )
+        },
     )
 }
 

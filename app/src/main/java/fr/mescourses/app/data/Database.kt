@@ -53,6 +53,8 @@ data class MenuDraftEntity(
     val adults: Int,
     val children: Int,
     val recipeId: Long?,
+    /** List<String> en JSON */
+    val mainIngredients: String,
 )
 
 @Entity(tableName = "shopping_items")
@@ -153,7 +155,7 @@ interface MenuDraftDao {
 
 @Database(
     entities = [RecipeEntity::class, PlannedMealEntity::class, ShoppingItemEntity::class, MenuDraftEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -194,7 +196,15 @@ val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
         db.execSQL(
             """CREATE TABLE menu_draft (
                 position INTEGER PRIMARY KEY NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL,
-                adults INTEGER NOT NULL, children INTEGER NOT NULL, recipeId INTEGER)""",
+                adults INTEGER NOT NULL, children INTEGER NOT NULL, recipeId INTEGER,
+                mainIngredients TEXT NOT NULL DEFAULT '[]')""",
         )
+    }
+}
+
+/** v2 → v3 : ingrédients principaux des plats du brouillon (mutualisation). */
+val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE menu_draft ADD COLUMN mainIngredients TEXT NOT NULL DEFAULT '[]'")
     }
 }

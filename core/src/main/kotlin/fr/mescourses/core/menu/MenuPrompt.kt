@@ -37,7 +37,8 @@ object MenuPrompt {
             appendLine("- Plats sains et équilibrés : légumes à chaque repas, céréales complètes ou légumineuses, peu de viande rouge, poisson 1 à 2 fois par semaine, pas de produits ultra-transformés ni de friture.")
             appendLine("- Ingrédients bio.")
             appendLine("- Uniquement des fruits et légumes de saison. Ce mois-ci : légumes = ${season.vegetables.joinToString(", ")} ; fruits = ${season.fruits.joinToString(", ")}.")
-            appendLine("- Varie les plats et les protéines d'un repas à l'autre.")
+            appendLine("- Mutualise les ingrédients frais entre les plats : un légume, une herbe ou un produit entamé (crème, fromage, bouillon, botte de persil…) doit servir à au moins 2 plats quand c'est possible. Évite d'acheter un produit pour une petite quantité dans un seul plat.")
+            appendLine("- Garde malgré tout de la variété dans les protéines et les saveurs d'un repas à l'autre.")
             if (preferences.isNotBlank()) appendLine("- Préférences du foyer : $preferences")
             if (banned.isNotEmpty()) appendLine("- NE JAMAIS proposer : ${banned.joinToString(" ; ")}.")
             if (favorites.isNotEmpty()) appendLine("- Plats favoris (tu peux en reproposer un ou deux, avec leur titre exact) : ${favorites.joinToString(" ; ")}.")
@@ -47,8 +48,9 @@ object MenuPrompt {
             if (config.wishes.isNotBlank()) appendLine("Envies de la semaine : ${config.wishes}")
             appendLine()
             appendLine("OUTILS :")
-            appendLine("- propose_menu : pour proposer le menu complet (une ligne « Titre — courte description » par plat).")
-            appendLine("- replace_dish, add_dish, remove_dish : pour modifier un plat (numéros à partir de 1).")
+            appendLine("- propose_menu : pour proposer le menu complet, une ligne par plat : « Titre — courte description — ingrédients : a, b, c » (3 à 6 ingrédients principaux).")
+            appendLine("- replace_dish, add_dish, remove_dish : pour modifier un plat (numéros à partir de 1), avec ses ingrédients principaux.")
+            appendLine("- Les outils renvoient le bilan des ingrédients partagés : sers-t'en pour améliorer la mutualisation.")
             appendLine("- add_guests : quand l'utilisateur AJOUTE des convives à un plat (« ajoute 3 adultes et 2 enfants au plat 2 »).")
             appendLine("- set_dish_people : quand il donne le nombre TOTAL de personnes pour un plat.")
             appendLine("Chaque message de l'utilisateur commence par l'état actuel du menu entre crochets : appuie-toi dessus.")
@@ -59,17 +61,25 @@ object MenuPrompt {
     fun firstRequest(config: MenuConfig): String =
         "Propose un menu de ${config.meals} plats pour ${config.portions.label()}" +
             (if (config.wishes.isNotBlank()) ", en tenant compte de : ${config.wishes}" else "") +
-            ". Utilise l'outil propose_menu."
+            ". Choisis des plats qui partagent des ingrédients. Utilise l'outil propose_menu."
 
     /** État du brouillon ajouté en tête de chaque message utilisateur. */
     fun context(dishes: List<MenuDish>): String =
         if (dishes.isEmpty()) "[Menu actuel : vide]"
-        else "[Menu actuel :\n" + dishes.mapIndexed { i, d -> "${i + 1}. ${d.title} (${d.portions.label()})" }.joinToString("\n") + "]"
+        else "[Menu actuel :\n" + dishes.mapIndexed { i, d ->
+            "${i + 1}. ${d.title} (${d.portions.label()})" +
+                if (d.mainIngredients.isNotEmpty()) " — ingrédients : ${d.mainIngredients.joinToString(", ")}" else ""
+        }.joinToString("\n") + "]"
+
+    const val IMPROVE_SHARING =
+        "Réorganise le menu pour que les plats partagent davantage d'ingrédients (moins d'achats, moins de gaspillage). " +
+            "Garde les plats qui le font déjà et remplace ceux dont les ingrédients ne servent qu'une fois."
 
     /** Demande de recette détaillée, envoyée à la validation (sans outils). */
-    fun recipeRequest(dish: MenuDish, servings: Int): String = """
+    fun recipeRequest(dish: MenuDish, servings: Int, alreadyBought: List<String> = emptyList()): String = """
 Donne la recette de « ${dish.title} »${if (dish.description.isNotBlank()) " (${dish.description})" else ""} pour $servings personnes.
-Recette saine, ingrédients bio et de saison. Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
+Recette saine, ingrédients bio et de saison.${if (dish.mainIngredients.isNotEmpty()) " Ingrédients principaux prévus : ${dish.mainIngredients.joinToString(", ")}." else ""}
+${if (alreadyBought.isNotEmpty()) "Déjà achetés pour les autres plats du menu, à réutiliser en priorité plutôt que d'en acheter d'autres : ${alreadyBought.joinToString(", ")}.\n" else ""}Réponds UNIQUEMENT avec un objet JSON, sans texte autour :
 {"titre": "...", "personnes": $servings, "preparation_min": 15, "cuisson_min": 30,
  "ingredients": ["200 g de ...", "2 ..."], "etapes": ["...", "..."]}
 Quantités précises en g, ml, cl ou nombre de pièces.

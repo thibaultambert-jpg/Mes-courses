@@ -41,11 +41,14 @@ class MenuValidator(
         var items = 0
         val failures = mutableListOf<String>()
         val index = CookbookIndex(recipes.all())
+        // Ingrédients déjà prévus par les plats précédents : proposés aux recettes suivantes.
+        val bought = LinkedHashSet<String>()
 
         dishes.forEachIndexed { i, dish ->
             onProgress(i, dishes.size, dish.title)
             val existing = dish.recipeId?.let { recipes.get(it) } ?: index.find(dish.title)?.takeUnless { it.banned }
-            val recipe = existing ?: generate(dish) ?: run { failures += dish.title; return@forEachIndexed }
+            val recipe = existing ?: generate(dish, bought.toList()) ?: run { failures += dish.title; return@forEachIndexed }
+            recipe.ingredients.map { it.name.lowercase() }.filter { it.length > 2 }.forEach { bought += it }
 
             val saved = recipe.copy(
                 status = existing?.status ?: RecipeStatus.HISTORIQUE,
@@ -68,11 +71,11 @@ class MenuValidator(
     }
 
     /** Recette pour un nombre « rond » de personnes, mise à l'échelle ensuite. */
-    private suspend fun generate(dish: MenuDish): Recipe? {
+    private suspend fun generate(dish: MenuDish, alreadyBought: List<String>): Recipe? {
         val servings = max(2, ceil(dish.portions.equivalent(childFactor())).toInt())
         repeat(2) {
             val text = runCatching {
-                generator.generate(MenuPrompt.RECIPE_SYSTEM, MenuPrompt.recipeRequest(dish, servings))
+                generator.generate(MenuPrompt.RECIPE_SYSTEM, MenuPrompt.recipeRequest(dish, servings, alreadyBought.take(25)))
             }.getOrNull() ?: return@repeat
             RecipeResponseParser.parse(text, dish.title, servings)?.let { return it.copy(tags = listOf("menu")) }
         }
