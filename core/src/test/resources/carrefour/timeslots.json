@@ -1,0 +1,9 @@
+{"data": {"days": [
+  {"date": "2026-11-09", "slots": [
+    {"begDate": "2026-11-09T09:00:00+01:00", "endDate": "2026-11-09T10:00:00+01:00", "available": false, "price": 0},
+    {"begDate": "2026-11-09T18:00:00+01:00", "endDate": "2026-11-09T19:00:00+01:00", "available": true, "price": 2.0}
+  ]},
+  {"date": "2026-11-10", "slots": [
+    {"begDate": "2026-11-10T12:00:00+01:00", "endDate": "2026-11-10T13:00:00+01:00", "available": true, "price": 0}
+  ]}
+]}}

@@ -1,6 +1,6 @@
 package fr.mescourses.core.cart
 
-import fr.mescourses.core.mcp.Product
+import fr.mescourses.core.carrefour.Product
 import fr.mescourses.core.model.ShoppingItem
 import fr.mescourses.core.shopping.ShoppingListMerger
 import kotlinx.coroutines.delay
@@ -19,6 +19,8 @@ data class CartLine(
     val included: Boolean = true,
     val status: LineStatus = LineStatus.A_CHERCHER,
     val message: String? = null,
+    /** Produit repris de la mémoire des choix (pas de recherche faite). */
+    val remembered: Boolean = false,
 ) {
     val product: Product? get() = candidates.getOrNull(selected)
 }
@@ -53,36 +55,54 @@ object CartPlanner {
             .map { it.value }
     }
 
+    /**
+     * Propose un produit par article. Un produit déjà choisi pour cet ingrédient (mémoire) est présélectionné
+     * sans recherche ; sinon on cherche (bio d'abord si demandé).
+     */
     fun propose(
-        session: RetailerSession,
+        backend: RetailerBackend,
         items: List<ShoppingItem>,
         preferOrganic: Boolean = false,
+        memory: ProductMemory? = null,
         pauseMs: Long = 600,
     ): Flow<CartLine> = flow {
         for (item in items) {
-            val line = try {
-                var found = session.search(searchQuery(item, preferOrganic))
-                // Pas de version bio au drive : on se rabat sur le produit classique.
-                if (found.isEmpty() && preferOrganic) found = session.search(searchQuery(item))
-                val products = rank(item, found, preferOrganic)
-                if (products.isEmpty()) CartLine(item, status = LineStatus.INTROUVABLE, included = false)
-                else CartLine(item, products, status = LineStatus.PROPOSE)
-            } catch (e: Exception) {
-                CartLine(item, status = LineStatus.ERREUR, included = false, message = e.message)
+            val known = memory?.get(ShoppingListMerger.key(item.name))
+            if (known != null) {
+                emit(CartLine(item, listOf(known), status = LineStatus.PROPOSE, remembered = true))
+                continue
             }
-            emit(line)
+            emit(searchLine(backend, item, preferOrganic))
             delay(pauseMs) // rythme « humain » pour ne pas déclencher les protections anti-robots
         }
     }
 
-    fun fill(session: RetailerSession, lines: List<CartLine>, pauseMs: Long = 1200): Flow<Pair<Int, CartLine>> = flow {
+    /** Recherche des produits pour une ligne (aussi utilisée pour « autres choix » d'un produit mémorisé). */
+    suspend fun searchLine(backend: RetailerBackend, item: ShoppingItem, preferOrganic: Boolean): CartLine = try {
+        var found = backend.search(searchQuery(item, preferOrganic))
+        // Pas de version bio au drive : on se rabat sur le produit classique.
+        if (found.isEmpty() && preferOrganic) found = backend.search(searchQuery(item))
+        val products = rank(item, found, preferOrganic)
+        if (products.isEmpty()) CartLine(item, status = LineStatus.INTROUVABLE, included = false)
+        else CartLine(item, products, status = LineStatus.PROPOSE)
+    } catch (e: Exception) {
+        CartLine(item, status = LineStatus.ERREUR, included = false, message = e.message)
+    }
+
+    /** Envoie les lignes validées et mémorise les choix confirmés. */
+    fun fill(
+        backend: RetailerBackend,
+        lines: List<CartLine>,
+        memory: ProductMemory? = null,
+        pauseMs: Long = 1200,
+    ): Flow<Pair<Int, CartLine>> = flow {
         lines.forEachIndexed { index, line ->
             val product = line.product
             if (!line.included || product == null || line.status == LineStatus.AJOUTE) return@forEachIndexed
             val updated = try {
-                val r = session.addToCart(product, line.quantity)
-                if (r.isError) line.copy(status = LineStatus.ERREUR, message = r.text.take(200))
-                else line.copy(status = LineStatus.AJOUTE, message = null)
+                backend.addToCart(product, line.quantity)
+                memory?.remember(ShoppingListMerger.key(line.item.name), product)
+                line.copy(status = LineStatus.AJOUTE, message = null)
             } catch (e: Exception) {
                 line.copy(status = LineStatus.ERREUR, message = e.message)
             }

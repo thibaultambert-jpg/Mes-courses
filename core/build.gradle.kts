@@ -23,15 +23,11 @@ dependencies {
     api(libs.coroutines.core)
     api(libs.serialization.json)
     api(libs.ktor.client.core)
-    api(libs.mcp.client)
     implementation(libs.jsoup)
 
     testImplementation(libs.kotlin.test)
     testImplementation(libs.coroutines.test)
     testImplementation(libs.ktor.client.mock)
-    testImplementation(libs.ktor.client.cio)
-    testImplementation(libs.ktor.server.cio)
-    testImplementation(libs.mcp.server)
 }
 
 tasks.test { useJUnitPlatform() }

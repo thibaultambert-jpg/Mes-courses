@@ -1,0 +1,6 @@
+{"data": [
+  {"id": "0678", "attributes": {"name": "Carrefour Drive Exemple-Nord", "ref": "0678", "distance": 2.4,
+    "address": {"address1": "1 rue de l'Exemple", "city": "Exempleville", "postalCode": "00000"}}},
+  {"id": "0912", "attributes": {"name": "Carrefour Market Exemple-Sud", "ref": "0912", "distance": 0.8,
+    "address": {"address1": "2 avenue Fictive", "city": "Exempleville", "postalCode": "00000"}}}
+]}

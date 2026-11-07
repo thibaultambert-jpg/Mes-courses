@@ -1,7 +1,7 @@
 package fr.mescourses.core
 
 import fr.mescourses.core.cart.CartPlanner
-import fr.mescourses.core.mcp.Product
+import fr.mescourses.core.carrefour.Product
 import fr.mescourses.core.menu.MenuConfig
 import fr.mescourses.core.menu.MenuPrompt
 import fr.mescourses.core.menu.MenuTextParser
