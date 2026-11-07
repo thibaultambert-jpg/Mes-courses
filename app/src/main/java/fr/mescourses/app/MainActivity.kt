@@ -17,7 +17,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        handle(intent)
+        // Après une recréation (rotation, retour de l'arrière-plan), le partage a déjà été traité.
+        if (savedInstanceState == null) handle(intent)
         setContent {
             MesCoursesTheme {
                 AppRoot(sharedUrl = sharedUrl.value, onSharedUrlConsumed = { sharedUrl.value = null })
@@ -34,6 +35,8 @@ class MainActivity : ComponentActivity() {
         if (intent?.action == Intent.ACTION_SEND) {
             val text = intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
             sharedUrl.value = Regex("https?://\\S+").find(text)?.value
+            // L'intent est consommé : il ne doit pas relancer l'import une seconde fois.
+            setIntent(Intent(this, MainActivity::class.java))
         }
     }
 }

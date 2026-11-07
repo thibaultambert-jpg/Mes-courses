@@ -2,6 +2,7 @@
 
 package fr.mescourses.app.ui.cookbook
 
+import androidx.compose.runtime.saveable.rememberSaveable
 import fr.mescourses.app.llm.ModelStatus
 import fr.mescourses.app.ui.components.ChefCard
 import fr.mescourses.app.ui.components.ModelLoadingCard
@@ -108,6 +109,7 @@ private val RecipeStatus.emoji get() = when (this) {
 fun CookbookScreen(
     importUrl: String?,
     onImportConsumed: () -> Unit,
+    onImported: (Long) -> Unit,
     onOpenRecipe: (Long) -> Unit,
     onNewRecipe: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -123,10 +125,13 @@ fun CookbookScreen(
     var showImport by remember { mutableStateOf(false) }
     var addMenu by remember { mutableStateOf(false) }
 
+    // Un lien partagé n'est importé qu'une fois, même si l'écran est recréé (retour, rotation).
+    var importedUrl by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(importUrl) {
-        if (importUrl != null) {
-            vm.import(importUrl) { onOpenRecipe(it) }
+        if (importUrl != null && importedUrl != importUrl) {
+            importedUrl = importUrl
             onImportConsumed()
+            vm.import(importUrl) { onImported(it) }
         }
     }
     LaunchedEffect(message) { message?.let { snackbar.showSnackbar(it); vm.messages.value = null } }

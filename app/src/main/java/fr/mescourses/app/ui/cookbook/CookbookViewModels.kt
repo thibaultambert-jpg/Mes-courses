@@ -49,6 +49,12 @@ class CookbookViewModel(private val c: AppContainer) : ViewModel() {
         viewModelScope.launch {
             importing.value = true
             try {
+                // Déjà dans le livre : on l'ouvre au lieu d'en créer un doublon.
+                c.recipes.all().firstOrNull { it.sourceUrl == url.trim() }?.let { existing ->
+                    messages.value = "« ${existing.title} » est déjà dans ton livre"
+                    onDone(existing.id)
+                    return@launch
+                }
                 val recipe = c.importer.import(url.trim()).copy(status = RecipeStatus.FAVORI)
                 val id = c.recipes.save(recipe)
                 tab.value = RecipeStatus.FAVORI
