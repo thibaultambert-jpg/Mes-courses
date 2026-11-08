@@ -58,7 +58,7 @@ class WebViewPageFetcher(private val appContext: Context) : PageFetcher {
         settings.domStorageEnabled = true
         settings.blockNetworkImage = true
         // Se présente comme Chrome (sans la mention « wv ») : moins de pages de vérification.
-        settings.userAgentString = settings.userAgentString.replace("; wv", "")
+        settings.userAgentString = fr.mescourses.app.ui.discover.chromeUserAgent(settings.userAgentString)
         CookieManager.getInstance().setAcceptCookie(true)
         webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {

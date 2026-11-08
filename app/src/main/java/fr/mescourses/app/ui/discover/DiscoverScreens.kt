@@ -97,7 +97,6 @@ import fr.mescourses.app.ui.components.StatChip
 import fr.mescourses.core.model.Recipe
 import fr.mescourses.core.model.RecipeStatus
 import fr.mescourses.core.recipes.RecipeHit
-import fr.mescourses.core.recipes.RecipeCategory
 import fr.mescourses.core.recipes.RecipeSites
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -123,7 +122,6 @@ fun DiscoverContent(
     val filters by vm.filters.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
     val popular by vm.popularMode.collectAsStateWithLifecycle()
-    val category by vm.category.collectAsStateWithLifecycle()
     val adding by vm.adding.collectAsStateWithLifecycle()
     val inBook by vm.favorites.byUrl.collectAsStateWithLifecycle()
     val message by vm.messages.collectAsStateWithLifecycle()
@@ -186,8 +184,6 @@ fun DiscoverContent(
                         ideas = vm.seasonIdeas,
                         onIdea = { focus.clearFocus(); vm.searchIdea(it) },
                         onBrowse = onBrowse,
-                        categories = vm.categories,
-                        onCategory = { focus.clearFocus(); vm.browse(it) },
                     )
                 }
             }
@@ -197,7 +193,6 @@ fun DiscoverContent(
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                         Text(
                             when {
-                                category != null -> "Lecture de « ${category!!.label} »…"
                                 popular -> "Recettes populaires du moment…"
                                 else -> "Recherche sur les sites…"
                             },
@@ -213,7 +208,7 @@ fun DiscoverContent(
                         val answered = r.hits.map { it.siteName }.distinct().size
                         Text(
                             if (r.hits.isEmpty()) "Aucune recette trouvée"
-                            else (category?.let { cat -> "📂 ${RecipeSites.byId(cat.siteId)?.name ?: ""} · ${cat.label} · " } ?: if (popular) "🔥 Populaires en ce moment · " else "") +
+                            else (if (popular) "🔥 Populaires en ce moment · " else "") +
                                 "${r.hits.size} recettes · $answered site${if (answered > 1) "s" else ""}",
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -254,22 +249,8 @@ private fun IdleDiscover(
     ideas: List<String>,
     onIdea: (String) -> Unit,
     onBrowse: (String) -> Unit,
-    categories: List<RecipeCategory>,
-    onCategory: (RecipeCategory) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 8.dp)) {
-        if (categories.isNotEmpty()) {
-            SectionHeader("Parcourir les recettes", emoji = "📂")
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                categories.forEach { cat ->
-                    FilterChip(
-                        selected = false,
-                        onClick = { onCategory(cat) },
-                        label = { Text("${RecipeSites.byId(cat.siteId)?.name ?: cat.siteId} · ${cat.label}") },
-                    )
-                }
-            }
-        }
         if (ideas.isNotEmpty()) {
             SectionHeader("De saison en ce moment", emoji = "🍂")
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -291,7 +272,7 @@ private fun IdleDiscover(
         )
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             RecipeSites.all.forEach { site ->
-                OutlinedButton(onClick = { onBrowse(site.homeUrl) }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
+                OutlinedButton(onClick = { onBrowse(site.browsePage) }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
                     Text(site.name)
                 }
             }
@@ -462,15 +443,13 @@ private fun configureLikeChrome(wv: WebView) {
         domStorageEnabled = true
         @Suppress("DEPRECATION")
         databaseEnabled = true
-        useWideViewPort = true
-        loadWithOverviewMode = true
         mediaPlaybackRequiresUserGesture = true
         javaScriptCanOpenWindowsAutomatically = true
         // Les liens « nouvelle fenêtre » s'ouvrent dans la même vue.
         setSupportMultipleWindows(false)
         builtInZoomControls = true
         displayZoomControls = false
-        userAgentString = userAgentString.replace("; wv", "")
+        userAgentString = chromeUserAgent(userAgentString)
     }
     CookieManager.getInstance().setAcceptCookie(true)
     // Bandeaux de consentement (Didomi, Sourcepoint…) servis depuis un autre domaine.
@@ -485,6 +464,9 @@ private fun configureLikeChrome(wv: WebView) {
         }
     }
 }
+
+/** User-Agent identique à Chrome pour Android (voir [RecipeSites.chromeUserAgent]). */
+fun chromeUserAgent(webViewUa: String): String = RecipeSites.chromeUserAgent(webViewUa)
 
 private const val READ_JSON_LD =
     "JSON.stringify(Array.prototype.map.call(document.querySelectorAll('script[type=\"application/ld+json\"]'),function(s){return s.textContent;}))"
@@ -566,6 +548,12 @@ fun RecipeBrowserScreen(startUrl: String, onClose: () -> Unit, onOpenRecipe: (Lo
                                 }
 
                                 override fun onPageStarted(v: WebView?, url: String?, favicon: Bitmap?) {
+                                    // Changement de page par JavaScript (location.href) vers une recette : on reste sur la liste.
+                                    if (url != null && url != startUrl && isRecipe(url)) {
+                                        v?.stopLoading()
+                                        simplify(url)
+                                        return
+                                    }
                                     loading = true
                                     url?.let { currentUrl = it }
                                 }

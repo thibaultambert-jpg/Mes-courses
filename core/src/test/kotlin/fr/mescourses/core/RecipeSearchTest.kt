@@ -75,14 +75,27 @@ class RecipeSearchTest {
         assertNull(RecipeSearchParser.ratingOf("8/10"))
     }
 
-    @Test fun parcourir_une_categorie() = runTest {
-        val page = javaClass.getResource("/search/marmiton_like_search.html")!!.readText()
-        val asked = mutableListOf<String>()
-        val cat = RecipeSites.categories.first { it.siteId == "marmiton" }
-        val result = RecipeSearcher(PageFetcher { url -> asked += url; page }).browse(cat)
-        assertTrue(result.hits.isNotEmpty())
-        assertEquals(listOf("https://www.marmiton.org/recettes/index/categorie/plat-principal/"), asked)
-        assertEquals(setOf("marmiton", "750g", "jdf"), RecipeSites.categories.map { it.siteId }.toSet())
+    @Test fun user_agent_comme_chrome() {
+        val wv = "Mozilla/5.0 (Linux; Android 14; PGT-N19 Build/HONORPGT-N19; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/130.0.6723.58 Mobile Safari/537.36"
+        assertEquals(
+            "Mozilla/5.0 (Linux; Android 14; PGT-N19 Build/HONORPGT-N19) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.6723.58 Mobile Safari/537.36",
+            RecipeSites.chromeUserAgent(wv),
+        )
+    }
+
+    @Test fun parcourir_un_site_ouvre_sa_page_de_recettes() {
+        assertEquals("https://www.marmiton.org/recettes/index/categorie/plat-principal/", RecipeSites.byId("marmiton")!!.browsePage)
+        assertEquals("https://www.750g.com/home_rubrique_-_recettes.htm", RecipeSites.byId("750g")!!.browsePage)
+        assertEquals("https://cuisine.journaldesfemmes.fr/toutes-les-recettes/", RecipeSites.byId("jdf")!!.browsePage)
+        // Les recettes ouvertes depuis ces pages sont reconnues (=> version simplifiée).
+        listOf(
+            "https://www.marmiton.org/recettes/recette_poulet-basquaise_17543.aspx",
+            "https://www.750g.com/boeuf-bourguignon-r1234.htm",
+            "https://cuisine.journaldesfemmes.fr/recette/315418-boeuf-bourguignon",
+        ).forEach { url -> assertTrue(RecipeSites.forUrl(url)?.isRecipeUrl(url) == true, url) }
+        // Les pages de liste, elles, ne le sont pas (on peut naviguer dedans).
+        listOf("marmiton", "750g", "jdf").map { RecipeSites.byId(it)!!.browsePage }
+            .forEach { url -> assertTrue(RecipeSites.forUrl(url)?.isRecipeUrl(url) == false, url) }
     }
 
     @Test fun recettes_populaires_du_moment() = runTest {

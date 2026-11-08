@@ -10,7 +10,6 @@ import fr.mescourses.core.recipes.RecipeHit
 import fr.mescourses.core.recipes.RecipeJsonLdExtractor
 import fr.mescourses.core.recipes.RecipeSearchResult
 import fr.mescourses.core.recipes.RecipeSite
-import fr.mescourses.core.recipes.RecipeCategory
 import fr.mescourses.core.recipes.RecipeSites
 import fr.mescourses.core.season.Seasonality
 import fr.mescourses.core.shopping.ShoppingListMerger
@@ -80,9 +79,6 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
     private var lastSearch: String? = null
     /** Mode « Populaires du moment » (au lieu d'une recherche). */
     val popularMode = MutableStateFlow(false)
-    /** Catégorie d'un site en cours de lecture (« Plats principaux » de Marmiton…). */
-    val category = MutableStateFlow<RecipeCategory?>(null)
-    val categories: List<RecipeCategory> = RecipeSites.categories
 
     val seasonIdeas: List<String> = Seasonality.highlights(LocalDate.now().month).take(10)
     val searchableSites: List<RecipeSite> = RecipeSites.searchable
@@ -101,19 +97,7 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     private fun refresh() {
-        if (category.value != null) return
         if (popularMode.value) popular() else if (lastSearch != null) search()
-    }
-
-    /** Affiche en cartes la page de liste d'un site. */
-    fun browse(cat: RecipeCategory) {
-        popularMode.value = false
-        category.value = cat
-        job?.cancel()
-        job = viewModelScope.launch {
-            state.value = State.Loading
-            state.value = State.Done(c.recipeSearch.browse(cat))
-        }
     }
 
     /**
@@ -121,10 +105,9 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
      * Renvoie false si on est déjà sur l'accueil (le retour sort alors de Découvrir).
      */
     fun back(): Boolean {
-        if (state.value == State.Idle && !popularMode.value && category.value == null) return false
+        if (state.value == State.Idle && !popularMode.value) return false
         job?.cancel()
         popularMode.value = false
-        category.value = null
         lastSearch = null
         state.value = State.Idle
         return true
@@ -132,7 +115,6 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
 
     /** Recettes populaires du moment sur les sites choisis. */
     fun popular() {
-        category.value = null
         popularMode.value = true
         val chosen = searchableSites.filter { sites.value.isEmpty() || it.id in sites.value }
         job?.cancel()
@@ -165,7 +147,6 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
         val q = (listOf(query.value.trim()) + filters.value.map { it.words }).filter { it.isNotBlank() }.joinToString(" ")
         if (query.value.isBlank()) return
         popularMode.value = false
-        category.value = null
         lastSearch = q
         val chosen = searchableSites.filter { sites.value.isEmpty() || it.id in sites.value }
         job?.cancel()
@@ -177,7 +158,7 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
 
     /** Adresse de recherche d'un site, pour l'ouvrir dans le navigateur de l'app. */
     fun searchUrl(site: RecipeSite): String =
-        category.value?.url ?: if (popularMode.value) site.popularPage else site.searchUrlFor(lastSearch ?: query.value) ?: site.homeUrl
+        if (popularMode.value) site.popularPage else site.searchUrlFor(lastSearch ?: query.value) ?: site.homeUrl
 
     fun addFavorite(hit: RecipeHit) {
         val existing = favorites.find(hit.url)

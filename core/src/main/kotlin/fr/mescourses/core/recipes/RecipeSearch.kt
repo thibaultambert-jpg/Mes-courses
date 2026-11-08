@@ -221,15 +221,6 @@ class RecipeSearcher(private val fetchers: List<PageFetcher>) {
         )
     }
 
-    /** Lit une page de liste (catégorie) d'un site et renvoie ses recettes en cartes. */
-    suspend fun browse(category: RecipeCategory, limit: Int = 36): RecipeSearchResult {
-        val site = RecipeSites.byId(category.siteId) ?: return RecipeSearchResult(emptyList(), emptyMap(), emptyList())
-        return runCatching { fetchHits(category.url, site, limit) }.fold(
-            onSuccess = { RecipeSearchResult(it, emptyMap(), if (it.isEmpty()) listOf(site) else emptyList()) },
-            onFailure = { RecipeSearchResult(emptyList(), mapOf(site to (it.message ?: it.toString())), emptyList()) },
-        )
-    }
-
     private suspend fun searchSite(query: String, site: RecipeSite, perSite: Int): List<RecipeHit> =
         fetchHits(site.searchUrlFor(query)!!, site, perSite)
 

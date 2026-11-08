@@ -25,20 +25,18 @@ data class RecipeSite(
     val note: String = "",
     /** Page des recettes populaires du moment ; à défaut, la page d'accueil (qui met en avant les tendances). */
     val popularUrl: String? = null,
-    /** Pages de liste de recettes (catégories) à parcourir dans l'app. */
-    val categories: List<RecipeCategory> = emptyList(),
+    /** Page des recettes du site, ouverte par « Parcourir un site » (sinon la page d'accueil). */
+    val browseUrl: String? = null,
 ) {
     val searchable: Boolean get() = searchUrl != null
     val popularPage: String get() = popularUrl ?: homeUrl
+    val browsePage: String get() = browseUrl ?: homeUrl
 
     fun searchUrlFor(query: String): String? =
         searchUrl?.replace("{q}", URLEncoder.encode(query.trim(), Charsets.UTF_8).replace("+", "%20"))
 
     fun isRecipeUrl(url: String): Boolean = recipeUrl.containsMatchIn(url.substringBefore('#').substringBefore('?'))
 }
-
-/** Une page de liste de recettes d'un site (« Plats principaux »…), lue et affichée en cartes par l'app. */
-data class RecipeCategory(val siteId: String, val label: String, val url: String)
 
 object RecipeSites {
 
@@ -49,7 +47,7 @@ object RecipeSites {
             searchUrl = "https://www.marmiton.org/recettes/recherche.aspx?aqt={q}",
             recipeUrl = Regex("""marmiton\.org/recettes/recette_[^/]+\.aspx$"""),
             note = "Le plus grand catalogue, avec notes et avis.",
-            categories = listOf(RecipeCategory("marmiton", "Plats principaux", "https://www.marmiton.org/recettes/index/categorie/plat-principal/")),
+            browseUrl = "https://www.marmiton.org/recettes/index/categorie/plat-principal/",
         ),
         RecipeSite(
             id = "750g", name = "750g", domain = "750g.com",
@@ -58,7 +56,7 @@ object RecipeSites {
             recipeUrl = Regex("""750g\.com/[^/]+-r\d+\.htm$"""),
             note = "Recettes de chefs, durées bien renseignées.",
             popularUrl = "https://www.750g.com/recettes_populaires.htm",
-            categories = listOf(RecipeCategory("750g", "Recettes", "https://www.750g.com/home_rubrique_-_recettes.htm")),
+            browseUrl = "https://www.750g.com/home_rubrique_-_recettes.htm",
         ),
         RecipeSite(
             id = "cuisineaz", name = "Cuisine AZ", domain = "cuisineaz.com",
@@ -72,7 +70,7 @@ object RecipeSites {
             homeUrl = "https://cuisine.journaldesfemmes.fr/",
             searchUrl = "https://cuisine.journaldesfemmes.fr/s/?f_libelle={q}",
             recipeUrl = Regex("""journaldesfemmes\.fr/recette/\d+-[^/]+$"""),
-            categories = listOf(RecipeCategory("jdf", "Toutes les recettes", "https://cuisine.journaldesfemmes.fr/toutes-les-recettes/")),
+            browseUrl = "https://cuisine.journaldesfemmes.fr/toutes-les-recettes/",
             note = "Gros catalogue, beaucoup de recettes de saison.",
         ),
         RecipeSite(
@@ -110,9 +108,6 @@ object RecipeSites {
 
     val searchable: List<RecipeSite> get() = all.filter { it.searchable }
 
-    /** Toutes les catégories à parcourir, dans l'ordre des sites. */
-    val categories: List<RecipeCategory> get() = all.flatMap { it.categories }
-
     fun byId(id: String): RecipeSite? = all.firstOrNull { it.id == id }
 
     /** Site connu correspondant à une adresse (sous-domaines compris), ou null. */
@@ -131,6 +126,13 @@ object RecipeSites {
         .removePrefix("www.")
         .trimEnd('/')
         .lowercase()
+
+    /**
+     * User-Agent identique à Chrome pour Android : sans « ; wv » ni « Version/4.0 ». Avec « Version/4.0 », certains
+     * sites (Marmiton, 750g) croient avoir affaire au vieux navigateur d'Android 4 et servent un menu dégradé.
+     */
+    fun chromeUserAgent(webViewUa: String): String =
+        webViewUa.replace("; wv", "").replace(Regex("""Version/\d+(\.\d+)*\s*"""), "").replace(Regex("\\s+"), " ").trim()
 
     /** Extrait la première adresse http(s) d'un texte partagé ou copié (« Regarde ça : https://… »). */
     fun findUrl(text: String?): String? =
