@@ -125,10 +125,8 @@ fun RetailerDebugScreen(onBack: () -> Unit, onOpenSite: (Retailer) -> Unit) {
                 // On dit seulement si les jetons ont été vus, jamais leur valeur.
                 val t = c.auchanTokens.current()
                 Text(
-                    "Jetons API relevés : ${t?.headers?.keys?.sorted()?.joinToString().orEmpty().ifBlank { "aucun" }}
-" +
-                        "consentId : ${if (t?.consentId != null) "oui" else "non"}
-Magasin lu : ${settings.auchanStoreName.ifBlank { "—" }}",
+                    "Jetons API relevés : ${t?.headers?.keys?.sorted()?.joinToString().orEmpty().ifBlank { "aucun" }}\n" +
+                        "consentId : ${if (t?.consentId != null) "oui" else "non"}\nMagasin lu : ${settings.auchanStoreName.ifBlank { "—" }}",
                     style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
                 )
             }
