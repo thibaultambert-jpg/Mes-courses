@@ -506,6 +506,13 @@ fun RecipeBrowserScreen(startUrl: String, onClose: () -> Unit, onOpenRecipe: (Lo
                 Json.decodeFromString(ListSerializer(String.serializer()), text)
             }.getOrDefault(emptyList())
             vm.onPage(url, blocks)
+            // Filet de sécurité : page de recette dont l'adresse n'est pas reconnue (Picnic, site qui a changé
+            // ses adresses…) mais qui contient une recette → version simplifiée, en revenant à la liste.
+            val found = vm.detected.value
+            if (found != null && found.sourceUrl == url && url != startUrl && !isRecipe(url) && v.url == url) {
+                if (v.canGoBack()) v.goBack()
+                simplify(url)
+            }
         }
     }
 

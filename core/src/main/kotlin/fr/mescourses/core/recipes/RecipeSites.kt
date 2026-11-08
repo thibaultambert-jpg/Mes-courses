@@ -62,6 +62,7 @@ object RecipeSites {
             id = "cuisineaz", name = "Cuisine AZ", domain = "cuisineaz.com",
             homeUrl = "https://www.cuisineaz.com/",
             searchUrl = "https://www.cuisineaz.com/recettes/recherche_terme.aspx?recherche={q}",
+            browseUrl = "https://www.cuisineaz.com/categories/",
             recipeUrl = Regex("""cuisineaz\.com/recettes/[^/]+-\d+\.aspx$"""),
             note = "Belles photos, ingrédients précis.",
         ),
@@ -77,32 +78,52 @@ object RecipeSites {
             id = "cuisineactuelle", name = "Cuisine Actuelle", domain = "cuisineactuelle.fr",
             homeUrl = "https://www.cuisineactuelle.fr/",
             recipeUrl = Regex("""cuisineactuelle\.fr/recettes/[^/]+-\d+"""),
+            browseUrl = "https://www.cuisineactuelle.fr/recettes-de-cuisine",
         ),
         RecipeSite(
             id = "ptitchef", name = "Ptitchef", domain = "ptitchef.com",
             homeUrl = "https://www.ptitchef.com/",
             recipeUrl = Regex("""ptitchef\.com/recettes/.+-fid-\d+"""),
+            browseUrl = "https://www.ptitchef.com/recettes",
         ),
         RecipeSite(
             id = "ricardo", name = "Ricardo", domain = "ricardocuisine.com",
             homeUrl = "https://www.ricardocuisine.com/",
             recipeUrl = Regex("""ricardocuisine\.com/recettes/\d+-"""),
+            browseUrl = "https://www.ricardocuisine.com/recettes/plats-principaux?currentPage=1&grouping-type=3&content-type=recipe&sort=alpha&searchValue=",
             note = "Québécois : unités parfois en tasses.",
         ),
         RecipeSite(
             id = "chefsimon", name = "Chef Simon", domain = "chefsimon.com",
             homeUrl = "https://chefsimon.com/",
             recipeUrl = Regex("""chefsimon\.com/recettes/[^/]+$"""),
+            browseUrl = "https://chefsimon.com/recettes/tag/plat%20principal",
         ),
         RecipeSite(
             id = "elle", name = "Elle à table", domain = "elle.fr",
             homeUrl = "https://www.elle.fr/Elle-a-Table/Recettes-de-cuisine",
-            recipeUrl = Regex("""elle\.fr/Elle-a-Table/Recettes-de-cuisine/.+"""),
+            // Fiches recettes seulement (« …/Gratin-dauphinois-2971574 »), pas les pages de catégories.
+            recipeUrl = Regex("""elle\.fr/Elle-a-Table/Recettes-de-cuisine/(.+/)?[^/]+-\d+$"""),
+            browseUrl = "https://www.elle.fr/Elle-a-Table/Recettes-de-cuisine",
         ),
         RecipeSite(
             id = "hellofresh", name = "HelloFresh", domain = "hellofresh.fr",
             homeUrl = "https://www.hellofresh.fr/recipes",
             recipeUrl = Regex("""hellofresh\.fr/recipes/[^/]+-[0-9a-f]{24}$"""),
+            browseUrl = "https://www.hellofresh.fr/recipes#recettes-les-plus-populaires",
+        ),
+        RecipeSite(
+            id = "picnic", name = "Picnic", domain = "picnic.app",
+            homeUrl = "https://picnic.app/fr/recettes/",
+            // Forme exacte inconnue : la détection de la recette dans la page (schema.org) prend le relais.
+            recipeUrl = Regex("""picnic\.app/fr/recettes?/[^/]+/[^/]+$"""),
+            browseUrl = "https://picnic.app/fr/recettes/",
+        ),
+        RecipeSite(
+            id = "jow", name = "Jow", domain = "jow.fr",
+            homeUrl = "https://jow.fr/",
+            recipeUrl = Regex("""jow\.fr/recipes/[^/]+$"""),
+            browseUrl = "https://jow.fr/blog/categories/idees-recettes",
         ),
     )
 
