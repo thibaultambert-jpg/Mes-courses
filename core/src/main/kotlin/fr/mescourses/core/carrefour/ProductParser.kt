@@ -30,6 +30,7 @@ data class Product(
      * ajouter au panier. Lu dans `offers.{ean}.{offerServiceId}` des résultats de recherche.
      */
     val offerServiceId: String? = null,
+    val description: String? = null,
 ) {
     val ean: String get() = identifiers["ean"] ?: identifiers["gtin13"] ?: identifiers["gtin"] ?: id
     val organic: Boolean get() = Regex("""\bbio\b""", RegexOption.IGNORE_CASE).containsMatchIn(name + " " + (brand ?: ""))
@@ -53,6 +54,7 @@ object ProductParser {
     private val unitPriceKeys = listOf("perUnitLabel", "unit_price", "unitPrice", "price_per_unit", "pricePerUnit", "prixAuKilo", "unitPriceLabel")
     private val packagingKeys = listOf("packaging", "format", "conditionnement", "quantity_label", "size", "weight")
     private val availabilityKeys = listOf("available", "in_stock", "inStock", "isAvailable", "disponible")
+    private val offerAvailabilityKeys = listOf("purchasable", "isPurchasable", "available", "isAvailable", "inStock")
 
     /** Analyse un texte (JSON ou JSON précédé d'une phrase). */
     fun parse(text: String, structured: JsonObject? = null): List<Product> {
@@ -126,8 +128,11 @@ object ProductParser {
         val ids = idKeys.mapNotNull { k -> (obj[k] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }?.let { k to it } }.toMap()
         val id = ids["ean"] ?: ids["gtin13"] ?: ids.values.firstOrNull() ?: return null
         val name = obj.first(nameKeys).text() ?: return null
-        val available = (obj.first(availabilityKeys) as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() ?: true
         val offers = obj["offers"]
+        // Disponibilité : au niveau du produit, sinon dans l'offre du drive (offers…attributes.availability.purchasable).
+        val available = (obj.first(availabilityKeys) as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull()
+            ?: offers?.let { deep(it, offerAvailabilityKeys, { e -> (e as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() }) as? Boolean }
+            ?: true
         return Product(
             id = id,
             name = name,
@@ -144,6 +149,7 @@ object ProductParser {
             } ?: (obj["image"] as? JsonPrimitive).text(),
             identifiers = ids,
             offerServiceId = offerServiceId(offers),
+            description = obj.first(listOf("description", "shortDescription", "marketingDescription")).text(),
         )
     }
 

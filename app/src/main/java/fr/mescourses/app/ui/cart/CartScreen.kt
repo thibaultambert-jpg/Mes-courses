@@ -2,6 +2,9 @@
 
 package fr.mescourses.app.ui.cart
 
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
 import fr.mescourses.core.carrefour.CarrefourRoutes
 import fr.mescourses.app.llm.ModelStatus
 import fr.mescourses.app.ui.components.ChefCard
@@ -95,6 +98,7 @@ fun CartScreen(
     val session by vm.session.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
     var alternativesFor by remember { mutableStateOf<Int?>(null) }
+    val productSheet by vm.productSheet.collectAsStateWithLifecycle()
     var chatOpen by remember { mutableStateOf(false) }
     val stepIndex = when (state.phase) {
         Phase.IDLE, Phase.RECHERCHE -> 0
@@ -214,8 +218,13 @@ fun CartScreen(
                         editable = state.phase == Phase.VALIDATION,
                         onChange = { t -> vm.updateLine(index, t) },
                         onAlternatives = { if (line.remembered) vm.moreChoices(index) else alternativesFor = index },
+                        onProduct = vm::openProduct,
                     )
                 }
+            }
+            // Articles du panier que le drive ne pourra pas servir : remplaçants proposés.
+            if (state.toReplace.isNotEmpty()) item {
+                ReplacementsCard(state.toReplace, onReplace = vm::replace, onProduct = vm::openProduct)
             }
             if (state.loadingInfo) item { Busy("Lecture du panier…") }
             state.cart?.let { cart -> item { CartSummary(cart, state.slots, onOpenWebCart = { onOpenSite(CarrefourRoutes.WEB_CART) }) } }
@@ -233,10 +242,21 @@ fun CartScreen(
                 )
                 line.candidates.forEachIndexed { i, p ->
                     ListItem(
-                        headlineContent = { Text(p.name) },
-                        supportingContent = { Text(listOfNotNull(p.brand, p.unitPrice, p.nutriscore?.let { "Nutri-Score $it" }, p.promo).joinToString(" · ")) },
-                        trailingContent = { p.price?.let { Text(euros(it), style = MaterialTheme.typography.titleSmall) } },
-                        leadingContent = { if (p.organic) BioBadge() else if (i == line.selected) Icon(Icons.Filled.CheckCircle, null) },
+                        headlineContent = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (i == line.selected) { Icon(Icons.Filled.CheckCircle, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.size(4.dp)) }
+                                if (p.organic) { BioBadge(); Spacer(Modifier.size(4.dp)) }
+                                Text(p.name, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                        },
+                        supportingContent = { Text(listOfNotNull(p.brand, p.packaging, p.unitPrice, p.nutriscore?.let { "Nutri-Score $it" }, p.promo).joinToString(" · ")) },
+                        trailingContent = {
+                            Column(horizontalAlignment = Alignment.End) {
+                                p.price?.let { Text(euros(it), style = MaterialTheme.typography.titleSmall) }
+                                TextButton(onClick = { vm.openProduct(p) }, contentPadding = PaddingValues(0.dp)) { Text("Détails", style = MaterialTheme.typography.labelMedium) }
+                            }
+                        },
+                        leadingContent = { ProductThumb(p, 56) },
                         modifier = Modifier.clickable { vm.updateLine(index) { it.copy(selected = i) }; alternativesFor = null },
                     )
                 }
@@ -245,7 +265,113 @@ fun CartScreen(
         }
     }
 
+    productSheet?.let { sheet -> ProductDetailSheet(sheet, onDismiss = vm::closeProduct) }
+
     if (chatOpen) ShoppingChatSheet(onDismiss = { chatOpen = false })
+}
+
+/** Vignette d'un produit (photo Carrefour, sinon emoji). */
+@Composable
+private fun ProductThumb(p: Product, size: Int) {
+    Box(
+        Modifier.size(size.dp).clip(RoundedCornerShape(10.dp)).background(Color.White),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (p.imageUrl != null) {
+            AsyncImage(model = p.imageUrl, contentDescription = p.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().padding(2.dp))
+        } else {
+            Text("🛒", fontSize = (size / 2.5).sp)
+        }
+    }
+}
+
+/** Fiche produit : grande photo, prix, Nutri-Score, description, composition, allergènes. */
+@Composable
+private fun ProductDetailSheet(sheet: ProductSheet, onDismiss: () -> Unit) {
+    val p = when (sheet) { is ProductSheet.Loading -> sheet.product; is ProductSheet.Loaded -> sheet.product }
+    val detail = (sheet as? ProductSheet.Loaded)?.detail
+    val image = p.imageUrl ?: detail?.product?.imageUrl
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            if (image != null) {
+                Box(Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(20.dp)).background(Color.White), contentAlignment = Alignment.Center) {
+                    AsyncImage(model = image, contentDescription = p.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().padding(8.dp))
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (p.organic) { BioBadge(); Spacer(Modifier.size(6.dp)) }
+                Text(p.name, style = MaterialTheme.typography.titleLarge)
+            }
+            Text(
+                listOfNotNull(p.brand ?: detail?.product?.brand, p.packaging).joinToString(" · "),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                (p.price ?: detail?.product?.price)?.let { StatChip(euros(it), emphasized = true) }
+                p.unitPrice?.let { StatChip(it) }
+                (p.nutriscore ?: detail?.product?.nutriscore)?.let { StatChip("Nutri-Score $it") }
+            }
+            p.promo?.let { Text("🏷 $it", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.tertiary) }
+            if (!p.available || detail?.product?.available == false) {
+                Text("⚠ Indisponible dans ton drive pour le moment", color = MaterialTheme.colorScheme.error)
+            }
+            if (sheet is ProductSheet.Loading) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+            } else {
+                val description = detail?.description ?: p.description
+                description?.let { Section("Description", it) }
+                detail?.ingredients?.let { Section("Ingrédients", it) }
+                detail?.allergens?.let { Section("Allergènes", it) }
+                if (description == null && detail?.ingredients == null && detail?.allergens == null) {
+                    Text("Pas de description fournie par Carrefour pour ce produit.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Section(title: String, text: String) {
+    Column {
+        Text(title, style = MaterialTheme.typography.titleSmall)
+        Text(text.replace(Regex("<[^>]+>"), " ").replace(Regex("\\s+"), " ").trim(), style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/** Articles que le drive ne pourra pas servir, avec jusqu'à 3 remplaçants disponibles. */
+@Composable
+private fun ReplacementsCard(items: List<Replacement>, onReplace: (Replacement, Product) -> Unit, onProduct: (Product) -> Unit) {
+    SectionCard {
+        Text("⚠ À remplacer", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Le drive indique que ces articles de ton panier ne seront pas disponibles. Choisis un remplaçant :",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        items.forEach { r ->
+            Text((if (r.done) "✅ " else "") + r.name, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+            if (r.done) {
+                Text("Remplacé.", style = MaterialTheme.typography.bodySmall)
+            } else if (r.alternatives.isEmpty()) {
+                Text("Aucun remplaçant disponible trouvé : retire-le ou choisis sur carrefour.fr.", style = MaterialTheme.typography.bodySmall)
+            } else {
+                r.alternatives.forEach { p ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { onProduct(p) }.padding(vertical = 4.dp)) {
+                        ProductThumb(p, 44)
+                        Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                            Text(p.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(listOfNotNull(p.brand, p.price?.let { euros(it) }, p.unitPrice).joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        TextButton(onClick = { onReplace(r, p) }) { Text("Remplacer") }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -375,7 +501,13 @@ private fun BioBadge() {
 }
 
 @Composable
-private fun CartLineCard(line: CartLine, editable: Boolean, onChange: ((CartLine) -> CartLine) -> Unit, onAlternatives: () -> Unit) {
+private fun CartLineCard(
+    line: CartLine,
+    editable: Boolean,
+    onChange: ((CartLine) -> CartLine) -> Unit,
+    onAlternatives: () -> Unit,
+    onProduct: (Product) -> Unit,
+) {
     val product = line.product
     Card(
         shape = MaterialTheme.shapes.medium,
@@ -391,6 +523,9 @@ private fun CartLineCard(line: CartLine, editable: Boolean, onChange: ((CartLine
                 enabled = editable && product != null,
                 onCheckedChange = { checked -> onChange { it.copy(included = checked) } },
             )
+            product?.let { p ->
+                Box(Modifier.padding(end = 10.dp).clickable { onProduct(p) }) { ProductThumb(p, 52) }
+            }
             Column(Modifier.weight(1f)) {
                 Text(ShoppingListMerger.format(line.item), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 when (line.status) {
@@ -407,6 +542,7 @@ private fun CartLineCard(line: CartLine, editable: Boolean, onChange: ((CartLine
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        line.note?.let { Text("⚠ $it", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary) }
                         if (editable && (line.candidates.size > 1 || line.remembered)) {
                             TextButton(onClick = onAlternatives, contentPadding = PaddingValues(0.dp)) {
                                 Icon(Icons.Filled.SwapHoriz, null, Modifier.size(16.dp))

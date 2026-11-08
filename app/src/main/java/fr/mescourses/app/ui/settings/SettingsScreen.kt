@@ -72,14 +72,18 @@ class SettingsViewModel(val c: AppContainer) : ViewModel() {
 
     fun update(transform: (Settings) -> Settings) = viewModelScope.launch { c.settings.update(transform) }
 
-    fun download(model: ModelInfo) = c.models.download(model, hfToken = settings.value.hfToken) { path ->
-        installed.value = c.models.installed()
-        update { it.copy(modelPath = path) }
+    init {
+        // Téléchargement terminé (même lancé depuis une autre visite de l'écran) : liste à jour.
+        viewModelScope.launch { c.models.state.collect { if (it is DownloadState.Done) installed.value = c.models.installed() } }
     }
 
-    fun import(uri: Uri) = viewModelScope.launch {
+    // Le choix du modèle est enregistré au niveau de l'application (c.selectModel), pas de l'écran :
+    // quitter les Réglages pendant le téléchargement ne l'empêche plus.
+    fun download(model: ModelInfo) = c.models.download(model, hfToken = settings.value.hfToken) { path -> c.selectModel(path) }
+
+    fun import(uri: Uri) = c.appScope.launch {
         runCatching { c.models.import(uri) }
-            .onSuccess { path -> installed.value = c.models.installed(); update { it.copy(modelPath = path) } }
+            .onSuccess { path -> installed.value = c.models.installed(); c.selectModel(path) }
             .onFailure { testResult.value = "Import impossible : ${it.message}" }
     }
 

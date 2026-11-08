@@ -31,6 +31,8 @@ data class Settings(
     /** Drive Carrefour choisi dans l'app. */
     val storeId: String = "",
     val storeName: String = "",
+    /** Référence du magasin (pour vérifier les indisponibles du panier). */
+    val storeRef: String = "",
     /** Contexte du drive lu dans le panier Carrefour (mémorisé pour les fois suivantes). */
     val basketServiceId: String = "",
     val subBasketType: String = "",
@@ -56,6 +58,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
         val preferences = stringPreferencesKey("preferences")
         val storeId = stringPreferencesKey("cf_store_id")
         val storeName = stringPreferencesKey("cf_store_name")
+        val storeRef = stringPreferencesKey("cf_store_ref")
         val basket = stringPreferencesKey("cf_basket_service")
         val subBasket = stringPreferencesKey("cf_sub_basket")
         val facility = stringPreferencesKey("cf_facility_service")
@@ -74,6 +77,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
         preferences = this[K.preferences].orEmpty(),
         storeId = this[K.storeId].orEmpty(),
         storeName = this[K.storeName].orEmpty(),
+        storeRef = this[K.storeRef].orEmpty(),
         basketServiceId = this[K.basket].orEmpty(),
         subBasketType = this[K.subBasket].orEmpty(),
         facilityServiceId = this[K.facility].orEmpty(),
@@ -100,6 +104,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
             prefs[K.preferences] = s.preferences
             prefs[K.storeId] = s.storeId
             prefs[K.storeName] = s.storeName
+            prefs[K.storeRef] = s.storeRef
             prefs[K.basket] = s.basketServiceId
             prefs[K.subBasket] = s.subBasketType
             prefs[K.facility] = s.facilityServiceId

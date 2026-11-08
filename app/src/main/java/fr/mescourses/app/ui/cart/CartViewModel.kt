@@ -1,5 +1,6 @@
 package fr.mescourses.app.ui.cart
 
+import fr.mescourses.core.carrefour.Product
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import fr.mescourses.app.AppContainer
@@ -29,6 +30,8 @@ data class CartState(
     val cart: Cart? = null,
     val slots: List<TimeSlot>? = null,
     val loadingInfo: Boolean = false,
+    /** Articles du panier que le drive ne pourra pas servir, avec des remplaçants proposés. */
+    val toReplace: List<Replacement> = emptyList(),
 ) {
     /** Carrefour n'a pas encore donné l'identifiant du drive (panier vide et aucune offre trouvée). */
     val noDrive: Boolean get() = lines.any { it.status == LineStatus.ERREUR && it.message == NO_DRIVE_MESSAGE }
@@ -37,6 +40,15 @@ data class CartState(
     companion object {
         val NO_DRIVE_MESSAGE: String? = fr.mescourses.core.carrefour.CarrefourException.NoDrive().message
     }
+}
+
+/** Un article du panier indisponible au drive et ses remplaçants disponibles. */
+data class Replacement(val ean: String, val name: String, val quantity: Int, val alternatives: List<Product>, val done: Boolean = false)
+
+/** Fiche produit affichée dans une feuille (photo, description, composition). */
+sealed interface ProductSheet {
+    data class Loading(val product: Product) : ProductSheet
+    data class Loaded(val product: Product, val detail: fr.mescourses.core.carrefour.CarrefourParsers.ProductDetail?) : ProductSheet
 }
 
 class CartViewModel(private val c: AppContainer) : ViewModel() {
@@ -109,6 +121,7 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
                 val failures = _state.value.lines.count { it.status == LineStatus.ERREUR }
                 _state.update { it.copy(phase = Phase.TERMINE, error = if (failures > 0) "$failures article(s) en erreur" else null) }
                 loadInfo()
+                checkUnavailable()
             } catch (e: Exception) {
                 fail(e)
                 _state.update { it.copy(phase = Phase.VALIDATION) }
@@ -131,6 +144,52 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     fun reset() = _state.update { CartState() }
+
+    // ---------- Fiche produit ----------
+
+    val productSheet = MutableStateFlow<ProductSheet?>(null)
+
+    fun openProduct(p: Product) {
+        productSheet.value = ProductSheet.Loading(p)
+        viewModelScope.launch {
+            val detail = runCatching { c.carrefour.productDetail(p.ean) }.getOrNull()
+            // Garde les infos de la recherche (prix au drive) et complète avec la fiche.
+            if (productSheet.value is ProductSheet.Loading) productSheet.value = ProductSheet.Loaded(p, detail)
+        }
+    }
+
+    fun closeProduct() { productSheet.value = null }
+
+    // ---------- Indisponibles du panier ----------
+
+    /** Demande au drive les articles du panier qu'il ne pourra pas servir, et cherche des remplaçants. */
+    fun checkUnavailable() = viewModelScope.launch {
+        val eans = runCatching { c.carrefour.unavailableInCart() }.getOrDefault(emptyList())
+        if (eans.isEmpty()) { _state.update { it.copy(toReplace = emptyList()) }; return@launch }
+        val cart = _state.value.cart ?: runCatching { c.carrefour.cart() }.getOrNull()
+        val replacements = eans.map { ean ->
+            val inCart = cart?.lines?.firstOrNull { it.ean == ean }
+            val sent = _state.value.lines.firstOrNull { it.product?.ean == ean }
+            val name = inCart?.name ?: sent?.product?.name ?: ean
+            val query = sent?.item?.let { CartPlanner.searchQuery(it, c.settings.current.preferOrganic) } ?: name
+            val alternatives = runCatching { c.carrefour.search(query, 6) }.getOrDefault(emptyList())
+                .filter { it.ean != ean && it.available }.take(3)
+            Replacement(ean, name, inCart?.quantity ?: sent?.quantity ?: 1, alternatives)
+        }
+        _state.update { it.copy(toReplace = replacements) }
+    }
+
+    /** Remplace un article indisponible : quantité 0 pour l'ancien, ajout du nouveau. */
+    fun replace(r: Replacement, product: Product) = viewModelScope.launch {
+        try {
+            c.carrefour.setQuantity(r.ean, 0)
+            c.carrefour.addToCart(product, r.quantity)
+            _state.update { s -> s.copy(toReplace = s.toReplace.map { if (it.ean == r.ean) it.copy(done = true) else it }) }
+            loadInfo()
+        } catch (e: Exception) {
+            fail(e)
+        }
+    }
 
     /** Coche dans la liste de courses les articles envoyés au panier. */
     fun markSentAsBought() = viewModelScope.launch {

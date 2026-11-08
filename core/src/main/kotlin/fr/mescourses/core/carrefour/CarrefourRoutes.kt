@@ -34,6 +34,8 @@ object CarrefourRoutes {
     fun driveStores(lat: Double, lon: Double, postalCode: String, city: String, limit: Int = 20) =
         "/api/eligibility/drive?latitude=$lat&longitude=$lon&postalCode=${enc(postalCode)}&city=${enc(city)}&page=1&limit=$limit"
     const val FAVORITE_STORE = "/api/favoritestore"
+    /** Articles du panier que le drive ne pourra pas servir (lecture seule). */
+    fun cartSimulate(storeRef: String) = "/api/cart/simulate?storeRef=${enc(storeRef)}"
 
     /** En-têtes attendus par les routes JSON (comme le site lui-même). */
     val JSON_HEADERS = mapOf(

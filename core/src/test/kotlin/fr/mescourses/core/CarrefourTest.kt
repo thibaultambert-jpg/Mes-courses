@@ -264,4 +264,49 @@ class CarrefourTest {
         assertTrue(second.remembered)
         assertEquals(searchesBefore, t.calls.count { it.second.startsWith("/s?") }) // pas de nouvelle recherche
     }
+
+    // ---------- Indisponibles ----------
+
+    private val rupture = fixture("search.json").replace(
+        "\"0001-150-1\": {\"attributes\": {\"price\": {\"price\": 1.15",
+        "\"0001-150-1\": {\"attributes\": {\"availability\": {\"purchasable\": false}, \"price\": {\"price\": 1.15",
+    )
+
+    @Test fun disponibilite_lue_dans_l_offre() = runTest {
+        assertTrue("purchasable\": false" in rupture)
+        val p = CarrefourParsers.parseSearch(rupture)
+        assertEquals(listOf(true, false), p.map { it.available })
+        // La recherche ne propose jamais un produit en rupture.
+        val client = CarrefourClient(FakeTransport { _, _, _ -> ok(rupture) })
+        assertEquals(listOf("3560070000011"), client.search("lait", 5).map { it.ean })
+    }
+
+    @Test fun choix_habituel_indisponible_remplace() = runTest {
+        val habitual = Product(id = "3560070000028", name = "Lait entier 1L", identifiers = mapOf("ean" to "3560070000028"))
+        val memory = object : ProductMemory {
+            override suspend fun get(key: String) = habitual
+            override suspend fun remember(key: String, product: Product) {}
+        }
+        val t = FakeTransport { m, path, _ ->
+            when {
+                m == "POST" && path == CarrefourRoutes.PRODUCTS_BY_GTINS -> ok(rupture) // le n°28 est en rupture
+                path.startsWith("/s?") -> ok(fixture("search.json"))
+                else -> ok("{}")
+            }
+        }
+        val line = CartPlanner.propose(CarrefourClient(t), listOf(ShoppingItem(name = "Lait")), memory = memory, pauseMs = 0).toList().single()
+        assertTrue(!line.remembered)
+        assertTrue(line.candidates.none { it.ean == "3560070000028" })
+        assertEquals("3560070000011", line.product?.ean)
+        assertTrue(line.note!!.contains("indisponible"))
+    }
+
+    @Test fun articles_du_panier_a_remplacer() = runTest {
+        val body = """{"data":{"count":1,"unavailableProducts":[{"gtin":"3560070000011"}],"available":["3560070000028"]}}"""
+        assertEquals(listOf("3560070000011"), CarrefourParsers.parseSimulation(body))
+        val t = FakeTransport { _, _, _ -> ok(body) }
+        val client = CarrefourClient(t, storeRef = { "0678" })
+        assertEquals(listOf("3560070000011"), client.unavailableInCart())
+        assertEquals("/api/cart/simulate?storeRef=0678", t.calls.single().second)
+    }
 }

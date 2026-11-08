@@ -106,7 +106,7 @@ fun CarrefourStoreScreen(onBack: () -> Unit, onOpenSite: () -> Unit) {
                         scope.launch {
                             // Nouveau drive : l'ancien identifiant de panier ne vaut plus, il sera relu (panier ou recherche).
                             c.carrefour.forgetContext()
-                            c.settings.update { it.copy(storeId = store.id, storeName = store.name, basketServiceId = "", facilityServiceId = "") }
+                            c.settings.update { it.copy(storeId = store.id, storeName = store.name, storeRef = store.ref.orEmpty(), basketServiceId = "", facilityServiceId = "") }
                         }
                     },
                     shape = MaterialTheme.shapes.medium,
