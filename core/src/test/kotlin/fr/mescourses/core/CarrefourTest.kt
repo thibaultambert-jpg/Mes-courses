@@ -351,4 +351,28 @@ class CarrefourTest {
         assertEquals(listOf("3560070000011"), client.unavailableInCart())
         assertTrue(t.calls.any { it.second == "/api/cart/simulate?storeRef=0678" })
     }
+
+    // ---------- Vraie réponse Carrefour (recherche « lait ») ----------
+
+    @Test fun vraie_reponse_recherche() {
+        val p = CarrefourParsers.parseSearch(fixture("search_reel.json")).single()
+        assertEquals("3428274200273", p.ean)
+        assertEquals("LACTEL", p.brand)
+        assertEquals(11.89, p.price)
+        assertEquals("0.99 € / L", p.unitPrice)
+        assertEquals("0697-150-1107", p.offerServiceId)
+        assertTrue(p.available)
+        // Le modèle d'adresse « p_FORMAT » est rempli avec une vraie taille.
+        assertEquals(
+            "https://media.carrefour.fr/medias/da433fbba1023dce94dc3080183349c8/p_540x540/03428274200273-c1l1-s01.jpg",
+            p.imageUrl,
+        )
+    }
+
+    @Test fun offre_suspendue_indisponible() {
+        val suspended = fixture("search_reel.json").replace("\"suspended\":false", "\"suspended\":true")
+        assertEquals(false, CarrefourParsers.parseSearch(suspended).single().available)
+        val stopped = fixture("search_reel.json").replace("\"stopped\":false", "\"stopped\":true")
+        assertEquals(false, CarrefourParsers.parseSearch(stopped).single().available)
+    }
 }

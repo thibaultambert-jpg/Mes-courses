@@ -131,7 +131,12 @@ object ProductParser {
         val offers = obj["offers"]
         // Disponibilité : au niveau du produit, sinon dans l'offre du drive (offers…attributes.availability.purchasable).
         val available = (obj.first(availabilityKeys) as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull()
-            ?: offers?.let { deep(it, offerAvailabilityKeys, { e -> (e as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() }) as? Boolean }
+            ?: offers?.let { o ->
+                // Offre arrêtée ou suspendue au drive = rupture, même si « purchasable » est vrai.
+                val blocked = deep(o, listOf("stopped", "suspended"), { e -> (e as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull()?.takeIf { it } }) as? Boolean
+                if (blocked == true) false
+                else deep(o, offerAvailabilityKeys, { e -> (e as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() }) as? Boolean
+            }
             ?: true
         return Product(
             id = id,
@@ -152,7 +157,7 @@ object ProductParser {
     }
 
     private val imageKeys = listOf("images", "image", "imageUrl", "image_url", "thumbnail", "picture", "media", "visual", "photos")
-    private val imageFields = listOf("medium", "large", "url", "src", "path", "href", "main", "default", "small", "zoom", "original")
+    private val imageFields = listOf("paths", "medium", "large", "url", "src", "path", "pattern", "withFormats", "href", "main", "default", "small", "zoom", "original")
     private val imageExt = Regex("""\.(jpe?g|png|webp|gif)(\?.*)?$""", RegexOption.IGNORE_CASE)
 
     /**
@@ -171,7 +176,22 @@ object ProductParser {
             }
         }
         val raw = imageKeys.firstNotNullOfOrNull { pick(obj[it]) } ?: return null
-        return absoluteImage(raw)
+        return absoluteImage(withFormat(raw, obj["images"]))
+    }
+
+    /**
+     * Carrefour renvoie un modèle d'adresse : `…/p_FORMAT/…jpg`. On remplace `FORMAT` par une taille proposée
+     * (540x540 de préférence, sinon `formats.largest`, sinon la plus grande de `common`).
+     */
+    private fun withFormat(url: String, images: JsonElement?): String {
+        if (!url.contains("FORMAT")) return url
+        val formats = (images as? JsonObject)?.get("formats") as? JsonObject
+        val common = (formats?.get("common") as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty()
+        val size = when {
+            "540x540" in common || common.isEmpty() -> "540x540"
+            else -> (formats?.get("largest") as? JsonPrimitive)?.contentOrNull ?: common.last()
+        }
+        return url.replace("FORMAT", size)
     }
 
     fun absoluteImage(url: String): String = when {
