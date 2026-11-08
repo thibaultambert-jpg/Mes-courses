@@ -144,13 +144,40 @@ object ProductParser {
             available = available,
             nutriscore = (obj["nutriscore"] as? JsonObject)?.get("value").text() ?: (obj["nutriscore"] as? JsonPrimitive).text(),
             promo = (obj["promotion"] as? JsonObject)?.get("label").text(),
-            imageUrl = (obj["images"] as? JsonArray)?.firstOrNull()?.let { img ->
-                (img as? JsonObject)?.let { (it["medium"] ?: it["large"] ?: it["url"]).text() } ?: (img as? JsonPrimitive).text()
-            } ?: (obj["image"] as? JsonPrimitive).text(),
+            imageUrl = imageOf(obj),
             identifiers = ids,
             offerServiceId = offerServiceId(offers),
             description = obj.first(listOf("description", "shortDescription", "marketingDescription")).text(),
         )
+    }
+
+    private val imageKeys = listOf("images", "image", "imageUrl", "image_url", "thumbnail", "picture", "media", "visual", "photos")
+    private val imageFields = listOf("medium", "large", "url", "src", "path", "href", "main", "default", "small", "zoom", "original")
+    private val imageExt = Regex("""\.(jpe?g|png|webp|gif)(\?.*)?$""", RegexOption.IGNORE_CASE)
+
+    /**
+     * Photo du produit, quelle que soit la forme : `images[]` (objets ou chaînes), `image`, `imageUrl`, `media`…
+     * Les adresses relatives (« /images/… », « //media… ») deviennent absolues.
+     */
+    private fun imageOf(obj: JsonObject): String? {
+        fun pick(e: JsonElement?, depth: Int = 0): String? {
+            if (e == null || depth > 4) return null
+            return when (e) {
+                is JsonPrimitive -> e.contentOrNull?.takeIf { it.isNotBlank() && (imageExt.containsMatchIn(it) || it.startsWith("http") || it.startsWith("/")) }
+                is JsonArray -> e.firstNotNullOfOrNull { pick(it, depth + 1) }
+                is JsonObject -> imageFields.firstNotNullOfOrNull { pick(e[it], depth + 1) }
+                    ?: e.values.firstNotNullOfOrNull { v -> (v as? JsonPrimitive)?.contentOrNull?.takeIf { imageExt.containsMatchIn(it) } }
+                    ?: e.values.firstNotNullOfOrNull { v -> if (v !is JsonPrimitive) pick(v, depth + 1) else null }
+            }
+        }
+        val raw = imageKeys.firstNotNullOfOrNull { pick(obj[it]) } ?: return null
+        return absoluteImage(raw)
+    }
+
+    fun absoluteImage(url: String): String = when {
+        url.startsWith("//") -> "https:$url"
+        url.startsWith("/") -> CarrefourRoutes.ORIGIN + url
+        else -> url
     }
 
     private val serviceIdPattern = Regex("""^\d+-\d+-\d+$""")

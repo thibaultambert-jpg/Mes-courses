@@ -11,7 +11,15 @@ data class DriveContext(
 )
 
 @Serializable
-data class CartLineItem(val ean: String, val name: String, val quantity: Int, val subtotal: Double? = null)
+data class CartLineItem(
+    val ean: String,
+    val name: String,
+    val quantity: Int,
+    val subtotal: Double? = null,
+    /** false = le drive signale l'article indisponible (à remplacer). */
+    val available: Boolean = true,
+    val imageUrl: String? = null,
+)
 
 @Serializable
 data class Cart(val lines: List<CartLineItem>, val total: Double?, val context: DriveContext?) {

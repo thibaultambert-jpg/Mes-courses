@@ -40,6 +40,10 @@ class FakeTransport(private val responder: (method: String, path: String, body: 
     }
 }
 
+private object ProductParserForTest {
+    fun parse(json: String): String? = fr.mescourses.core.carrefour.ProductParser.parse(json).firstOrNull()?.imageUrl
+}
+
 private fun ok(body: String, headers: Map<String, String> = emptyMap()) = HttpResponse(200, headers, body)
 
 class CarrefourTest {
@@ -301,12 +305,50 @@ class CarrefourTest {
         assertTrue(line.note!!.contains("indisponible"))
     }
 
+    @Test fun produit_en_rupture_visible_mais_jamais_preselectionne() = runTest {
+        // « Lait entier » (n°28) correspond mieux à l'article mais il est en rupture.
+        val client = CarrefourClient(FakeTransport { _, _, _ -> ok(rupture) })
+        val line = CartPlanner.searchLine(client, ShoppingItem(name = "lait entier"), preferOrganic = false)
+        assertEquals("3560070000011", line.product?.ean)
+        assertEquals(listOf(true, false), line.candidates.map { it.available })
+        assertTrue(line.note!!.contains("Lait entier 1L"), line.note)
+    }
+
+    @Test fun ligne_de_panier_indisponible() {
+        val cart = CarrefourParsers.parseCart(
+            """{"items":[
+                {"ean":"3560070000011","title":"Lait bio","quantity":1,"status":"UNAVAILABLE"},
+                {"ean":"3560070000028","title":"Lait entier","quantity":2,"availability":{"purchasable":true}},
+                {"ean":"3560070000035","title":"Beurre","quantity":1,"isSubstitutionNeeded":true}
+            ]}""",
+        )
+        assertEquals(mapOf("3560070000011" to false, "3560070000028" to true, "3560070000035" to false), cart.lines.associate { it.ean to it.available })
+    }
+
+    @Test fun session_testee_sur_une_route_securisee() = runTest {
+        // Panier invité : /api/cart répond 200, mais la route sécurisée répond 401.
+        val t = FakeTransport { _, path, _ ->
+            if (path == CarrefourRoutes.SESSION_PROBE) HttpResponse(401, emptyMap(), "") else ok(fixture("cart.json"))
+        }
+        assertFailsWith<CarrefourException.SessionExpired> { CarrefourClient(t).sessionProbe() }
+        val logged = FakeTransport { _, _, _ -> ok(fixture("cart.json")) }
+        assertNotNull(CarrefourClient(logged).sessionProbe())
+        assertEquals(CarrefourRoutes.SESSION_PROBE, logged.calls.first().second)
+    }
+
+    @Test fun images_relatives_et_autres_formes() {
+        fun img(attrs: String) = ProductParserForTest.parse("""{"type":"product","id":"1","attributes":{"ean":"3560070000011","title":"Lait",$attrs}}""")
+        assertEquals("https://www.carrefour.fr/images/lait.jpg", img(""""images":[{"path":"/images/lait.jpg"}]"""))
+        assertEquals("https://media.carrefour.fr/lait.webp", img(""""image":"//media.carrefour.fr/lait.webp""""))
+        assertEquals("https://cdn.exemple/lait.png", img(""""media":{"main":{"url":"https://cdn.exemple/lait.png"}}"""))
+    }
+
     @Test fun articles_du_panier_a_remplacer() = runTest {
         val body = """{"data":{"count":1,"unavailableProducts":[{"gtin":"3560070000011"}],"available":["3560070000028"]}}"""
         assertEquals(listOf("3560070000011"), CarrefourParsers.parseSimulation(body))
-        val t = FakeTransport { _, _, _ -> ok(body) }
+        val t = FakeTransport { _, path, _ -> ok(if (path == CarrefourRoutes.CART) "{\"cart\":{}}" else body) }
         val client = CarrefourClient(t, storeRef = { "0678" })
         assertEquals(listOf("3560070000011"), client.unavailableInCart())
-        assertEquals("/api/cart/simulate?storeRef=0678", t.calls.single().second)
+        assertTrue(t.calls.any { it.second == "/api/cart/simulate?storeRef=0678" })
     }
 }

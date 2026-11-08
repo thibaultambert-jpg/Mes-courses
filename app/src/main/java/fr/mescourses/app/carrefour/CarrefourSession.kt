@@ -49,6 +49,10 @@ class CarrefourSession(
         } catch (e: CarrefourException.ChallengeRequired) {
             lastProblem = "Carrefour demande une vérification anti-robot."
             SessionState.VERIFICATION
+        } catch (e: CarrefourException.Http) {
+            // Route de test déplacée par Carrefour (404…) : on se fie au cookie de connexion.
+            lastProblem = "Vérification indisponible (HTTP ${e.status})."
+            if (hasSsoCookie()) SessionState.CONNECTE else SessionState.CONNEXION_REQUISE
         } catch (e: Exception) {
             lastProblem = e.message ?: e.toString()
             _state.value
@@ -56,13 +60,15 @@ class CarrefourSession(
         return _state.value
     }
 
-    /** La WebView visible a constaté elle-même la connexion (GET /api/cart = 200) : on le croit tout de suite. */
+    /** La WebView visible a constaté elle-même la connexion (route sécurisée = 200) : on le croit tout de suite. */
     fun markConnected() {
         lastProblem = null
         _state.value = SessionState.CONNECTE
     }
 
     /** Présence du cookie SSO Carrefour (jamais lu ni journalisé, on teste seulement son existence). */
+    fun isLoggedInStatus(status: Int): Boolean = status == 200 || (status in setOf(404, 410) && hasSsoCookie())
+
     fun hasSsoCookie(): Boolean =
         CookieManager.getInstance().getCookie(CarrefourRoutes.IAM_ORIGIN)?.contains("c4iamsecuretk=") == true
 
