@@ -3,6 +3,11 @@ package fr.mescourses.app.work
 import android.content.Context
 import fr.mescourses.app.llm.ModelController
 import fr.mescourses.core.menu.MenuValidator
+import fr.mescourses.core.menu.RecipeStepsWriter
+import fr.mescourses.core.repository.RecipeRepository
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.update
 import fr.mescourses.core.menu.ValidationResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -22,6 +27,8 @@ class ChefWork(
     private val context: Context,
     private val scope: CoroutineScope,
     private val model: ModelController,
+    private val recipes: RecipeRepository,
+    private val stepsWriter: () -> RecipeStepsWriter,
 ) {
     private val running = AtomicInteger(0)
 
@@ -65,6 +72,92 @@ class ChefWork(
             }
             _validation.value = null
             _result.value = result
+            // Les ingrédients sont prêts : le chef écrit maintenant les étapes, une recette après l'autre.
+            if (result.isSuccess) enqueuePendingSteps()
+        }
+    }
+
+    // ---------- Étapes des recettes, en file (jamais en parallèle : un seul modèle) ----------
+
+    /** Recettes en attente d'étapes, dans l'ordre de traitement. */
+    private val _stepsQueue = MutableStateFlow<List<Long>>(emptyList())
+    val stepsQueue: StateFlow<List<Long>> = _stepsQueue
+
+    /** Recette dont les étapes sont en cours d'écriture. */
+    private val _writing = MutableStateFlow<Long?>(null)
+    val writing: StateFlow<Long?> = _writing
+
+    /** Échecs (recette → message), pour proposer « Réessayer ». */
+    private val _stepsFailures = MutableStateFlow<Map<Long, String>>(emptyMap())
+    val stepsFailures: StateFlow<Map<Long, String>> = _stepsFailures
+
+    private val wakeUp = Channel<Unit>(Channel.CONFLATED)
+
+    init {
+        scope.launch {
+            for (signal in wakeUp) {
+                if (_stepsQueue.value.isEmpty()) continue
+                runCatching {
+                    keepAwake("Le chef écrit les recettes…") {
+                        while (true) {
+                            val id = _stepsQueue.value.firstOrNull() ?: break
+                            writeOne(id)
+                            _stepsQueue.update { it - id }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun writeOne(id: Long) {
+        val recipe = recipes.get(id) ?: return
+        val writer = stepsWriter()
+        if (!writer.needsSteps(recipe)) return
+        if (!model.status.value.available) {
+            _stepsFailures.update { it + (id to "L'assistant n'est pas installé : installe-le dans les Réglages.") }
+            return
+        }
+        _writing.value = id
+        progress("Le chef écrit « ${recipe.title} »… (${_stepsQueue.value.size} en attente)")
+        try {
+            val done = writer.complete(recipe)
+            if (done == null) {
+                _stepsFailures.update { it + (id to "Le chef n'a pas réussi à écrire les étapes.") }
+            } else {
+                // Relit la recette : elle a pu être modifiée entre-temps.
+                val current = recipes.get(id) ?: return
+                recipes.save(current.copy(steps = done.steps, prepMinutes = done.prepMinutes, cookMinutes = done.cookMinutes, notes = done.notes, tags = done.tags))
+                _stepsFailures.update { it - id }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            _stepsFailures.update { it + (id to (e.message ?: e.toString())) }
+        } finally {
+            _writing.value = null
+        }
+    }
+
+    /** Ajoute une recette à la file ; [first] = l'utilisateur l'a ouverte, elle passe devant. */
+    fun requestSteps(id: Long, first: Boolean = false) {
+        _stepsFailures.update { it - id }
+        _stepsQueue.update { q ->
+            when {
+                _writing.value == id -> q
+                first -> listOf(id) + (q - id)
+                id in q -> q
+                else -> q + id
+            }
+        }
+        wakeUp.trySend(Unit)
+    }
+
+    /** Met en file toutes les recettes du livre qui attendent leurs étapes. */
+    fun enqueuePendingSteps() {
+        scope.launch {
+            val writer = stepsWriter()
+            recipes.all().filter { writer.needsSteps(it) }.forEach { requestSteps(it.id) }
         }
     }
 

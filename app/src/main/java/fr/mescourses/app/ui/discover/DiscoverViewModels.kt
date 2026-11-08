@@ -77,6 +77,8 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
     val adding = MutableStateFlow<Set<String>>(emptySet())
     val messages = MutableStateFlow<String?>(null)
     private var lastSearch: String? = null
+    /** Mode « Populaires du moment » (au lieu d'une recherche). */
+    val popularMode = MutableStateFlow(false)
 
     val seasonIdeas: List<String> = Seasonality.highlights(LocalDate.now().month).take(10)
     val searchableSites: List<RecipeSite> = RecipeSites.searchable
@@ -86,12 +88,36 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
 
     fun toggleSite(id: String) {
         sites.value = if (id in sites.value) sites.value - id else sites.value + id
-        if (lastSearch != null) search()
+        refresh()
     }
 
     fun allSites() {
         sites.value = emptySet()
-        if (lastSearch != null) search()
+        refresh()
+    }
+
+    private fun refresh() {
+        if (popularMode.value) popular() else if (lastSearch != null) search()
+    }
+
+    /** Recettes populaires du moment sur les sites choisis. */
+    fun popular() {
+        popularMode.value = true
+        val chosen = searchableSites.filter { sites.value.isEmpty() || it.id in sites.value }
+        job?.cancel()
+        job = viewModelScope.launch {
+            state.value = State.Loading
+            state.value = State.Done(c.recipeSearch.popular(chosen))
+        }
+    }
+
+    fun togglePopular() {
+        if (popularMode.value) {
+            popularMode.value = false
+            if (lastSearch != null) search() else { job?.cancel(); state.value = State.Idle }
+        } else {
+            popular()
+        }
     }
 
     fun toggleFilter(f: Filter) {
@@ -107,6 +133,7 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
     fun search() {
         val q = (listOf(query.value.trim()) + filters.value.map { it.words }).filter { it.isNotBlank() }.joinToString(" ")
         if (query.value.isBlank()) return
+        popularMode.value = false
         lastSearch = q
         val chosen = searchableSites.filter { sites.value.isEmpty() || it.id in sites.value }
         job?.cancel()
@@ -117,7 +144,8 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     /** Adresse de recherche d'un site, pour l'ouvrir dans le navigateur de l'app. */
-    fun searchUrl(site: RecipeSite): String = site.searchUrlFor(lastSearch ?: query.value) ?: site.homeUrl
+    fun searchUrl(site: RecipeSite): String =
+        if (popularMode.value) site.popularPage else site.searchUrlFor(lastSearch ?: query.value) ?: site.homeUrl
 
     fun addFavorite(hit: RecipeHit) {
         val existing = favorites.find(hit.url)

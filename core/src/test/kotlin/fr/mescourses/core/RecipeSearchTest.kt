@@ -75,6 +75,18 @@ class RecipeSearchTest {
         assertNull(RecipeSearchParser.ratingOf("8/10"))
     }
 
+    @Test fun recettes_populaires_du_moment() = runTest {
+        val page = javaClass.getResource("/search/marmiton_like_search.html")!!.readText()
+        val asked = mutableListOf<String>()
+        val searcher = RecipeSearcher(PageFetcher { url -> asked += url; page })
+        val sites = listOfNotNull(RecipeSites.byId("marmiton"), RecipeSites.byId("750g"))
+        val result = searcher.popular(sites)
+        assertTrue(result.hits.isNotEmpty())
+        // 750g a une page dédiée ; Marmiton : sa page d'accueil.
+        assertTrue("https://www.750g.com/recettes_populaires.htm" in asked, asked.toString())
+        assertTrue("https://www.marmiton.org/" in asked, asked.toString())
+    }
+
     @Test fun melange_les_sites_et_bascule_sur_le_navigateur() = runTest {
         val sites = RecipeSites.searchable.take(2)
         val http = PageFetcher { url -> if ("marmiton" in url) page else error("403") }
