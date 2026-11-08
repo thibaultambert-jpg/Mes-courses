@@ -401,6 +401,11 @@ fun RecipeDetailScreen(recipeId: Long, onBack: () -> Unit, onEdit: () -> Unit, o
                         RecipeDetailViewModel.StepsState.Writing ->
                             if (modelStatus == ModelStatus.Loading) ModelLoadingCard()
                             else ChefCard("Le chef écrit la recette…", "Étapes et temps de cuisson, à partir des ingrédients ci-dessus.")
+                        is RecipeDetailViewModel.StepsState.Queued -> ChefCard(
+                            "En attente du chef…",
+                            if (st.position <= 1) "C'est la prochaine recette qu'il écrit." else "${st.position - 1} recette(s) avant celle-ci.",
+                            emoji = "⏳",
+                        )
                         is RecipeDetailViewModel.StepsState.Failed -> Column {
                             Text(st.message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
                             TextButton(onClick = vm::writeSteps) { Text("Réessayer") }

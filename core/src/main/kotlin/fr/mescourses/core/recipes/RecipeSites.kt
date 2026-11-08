@@ -23,8 +23,11 @@ data class RecipeSite(
     /** Reconnaît l'adresse d'une page de recette (et pas d'une catégorie, d'un article…). */
     val recipeUrl: Regex,
     val note: String = "",
+    /** Page des recettes populaires du moment ; à défaut, la page d'accueil (qui met en avant les tendances). */
+    val popularUrl: String? = null,
 ) {
     val searchable: Boolean get() = searchUrl != null
+    val popularPage: String get() = popularUrl ?: homeUrl
 
     fun searchUrlFor(query: String): String? =
         searchUrl?.replace("{q}", URLEncoder.encode(query.trim(), Charsets.UTF_8).replace("+", "%20"))
@@ -48,6 +51,7 @@ object RecipeSites {
             searchUrl = "https://www.750g.com/recherche/?q={q}",
             recipeUrl = Regex("""750g\.com/[^/]+-r\d+\.htm$"""),
             note = "Recettes de chefs, durées bien renseignées.",
+            popularUrl = "https://www.750g.com/recettes_populaires.htm",
         ),
         RecipeSite(
             id = "cuisineaz", name = "Cuisine AZ", domain = "cuisineaz.com",

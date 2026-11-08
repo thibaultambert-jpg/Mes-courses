@@ -210,8 +210,21 @@ class RecipeSearcher(private val fetchers: List<PageFetcher>) {
         )
     }
 
-    private suspend fun searchSite(query: String, site: RecipeSite, perSite: Int): List<RecipeHit> {
-        val url = site.searchUrlFor(query)!!
+    /** Recettes populaires du moment : page « populaires » du site, ou sa page d'accueil. */
+    suspend fun popular(sites: List<RecipeSite>, perSite: Int = 12): RecipeSearchResult = coroutineScope {
+        val jobs = sites.map { site -> site to async { runCatching { fetchHits(site.popularPage, site, perSite) } } }
+        val results = jobs.map { (site, job) -> site to job.await() }
+        RecipeSearchResult(
+            hits = interleave(results.mapNotNull { (_, r) -> r.getOrNull()?.takeIf { it.isNotEmpty() } }),
+            failures = results.mapNotNull { (site, r) -> r.exceptionOrNull()?.let { site to (it.message ?: it.toString()) } }.toMap(),
+            empty = results.filter { (_, r) -> r.getOrNull()?.isEmpty() == true }.map { it.first },
+        )
+    }
+
+    private suspend fun searchSite(query: String, site: RecipeSite, perSite: Int): List<RecipeHit> =
+        fetchHits(site.searchUrlFor(query)!!, site, perSite)
+
+    private suspend fun fetchHits(url: String, site: RecipeSite, perSite: Int): List<RecipeHit> {
         var lastError: Exception? = null
         var answered = false
         for (fetcher in fetchers) {

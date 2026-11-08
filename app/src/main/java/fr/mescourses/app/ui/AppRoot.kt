@@ -163,6 +163,7 @@ fun AppRoot(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
                     startUrl = entry.arguments?.getString("url").orEmpty(),
                     onClose = { nav.popBackStack() },
                     onOpenRecipe = { nav.navigate("recipe/$it") },
+                    onSimplify = { nav.navigate("recipes/preview?url=${android.net.Uri.encode(it)}") },
                 )
             }
             composable("shopping") {

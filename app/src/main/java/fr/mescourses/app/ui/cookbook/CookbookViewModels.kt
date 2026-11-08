@@ -84,47 +84,34 @@ class RecipeDetailViewModel(private val c: AppContainer, private val id: Long) :
 
     fun childFactor() = c.settings.current.childFactor
 
-    /** Écriture des étapes à la demande (recettes validées dont seuls les ingrédients existent). */
+    /** Étapes de la recette : écrites par le chef en tâche de fond, une recette à la fois (file d'attente). */
     sealed interface StepsState {
         data object Idle : StepsState
         data object Writing : StepsState
+        data class Queued(val position: Int) : StepsState
         data class Failed(val message: String) : StepsState
     }
 
-    val steps = MutableStateFlow<StepsState>(StepsState.Idle)
+    val steps: StateFlow<StepsState> = combine(c.chef.writing, c.chef.stepsQueue, c.chef.stepsFailures) { writing, queue, failures ->
+        when {
+            writing == id -> StepsState.Writing
+            id in queue -> StepsState.Queued(queue.filter { it != writing }.indexOf(id) + 1)
+            failures[id] != null -> StepsState.Failed(failures.getValue(id))
+            else -> StepsState.Idle
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, StepsState.Idle)
     val model = c.model.status
     private val writer = c.stepsWriter()
 
     init {
         viewModelScope.launch {
-            // Première recette reçue : si les étapes manquent, le chef les écrit tout de suite.
+            // Recette ouverte sans étapes : elle passe en tête de la file du chef.
             val r = recipe.filterNotNull().first()
-            if (writer.needsSteps(r)) writeSteps()
+            if (writer.needsSteps(r)) c.chef.requestSteps(id, first = true)
         }
     }
 
-    fun writeSteps() {
-        if (steps.value == StepsState.Writing) return
-        viewModelScope.launch {
-            val r = c.recipes.get(id) ?: return@launch
-            if (!writer.needsSteps(r)) return@launch
-            if (!c.model.status.value.available) {
-                steps.value = StepsState.Failed("L'assistant n'est pas installé : installe-le dans les Réglages.")
-                return@launch
-            }
-            steps.value = StepsState.Writing
-            val done = runCatching { c.chef.keepAwake("Le chef écrit « ${r.title} »…") { writer.complete(r) } }
-            val completed = done.getOrNull()
-            if (completed != null) {
-                // Relit la recette : l'utilisateur a pu la modifier entre-temps.
-                val current = c.recipes.get(id) ?: return@launch
-                c.recipes.save(current.copy(steps = completed.steps, prepMinutes = completed.prepMinutes, cookMinutes = completed.cookMinutes, notes = completed.notes, tags = completed.tags))
-                steps.value = StepsState.Idle
-            } else {
-                steps.value = StepsState.Failed(done.exceptionOrNull()?.message ?: "Le chef n'a pas réussi à écrire les étapes.")
-            }
-        }
-    }
+    fun writeSteps() = c.chef.requestSteps(id, first = true)
 
     fun addToList(r: Recipe) = viewModelScope.launch {
         val p = portions.value

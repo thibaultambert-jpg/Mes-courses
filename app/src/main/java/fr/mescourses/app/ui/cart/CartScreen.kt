@@ -161,6 +161,8 @@ fun CartScreen(
                             OutlinedButton(onClick = { chatOpen = true }) { Text("💬 Avec l'assistant") }
                             TextButton(onClick = { vm.loadInfo() }) { Text("Voir mon panier") }
                         }
+                        // Liste vide ou rien à préparer : accès direct au panier du site.
+                        TextButton(onClick = { onOpenSite(CarrefourRoutes.WEB_CART) }) { Text("Ouvrir mon panier sur carrefour.fr ↗") }
                     }
                 }
                 Phase.TERMINE -> item {
@@ -216,7 +218,7 @@ fun CartScreen(
                 }
             }
             if (state.loadingInfo) item { Busy("Lecture du panier…") }
-            state.cart?.let { cart -> item { CartSummary(cart, state.slots) } }
+            state.cart?.let { cart -> item { CartSummary(cart, state.slots, onOpenWebCart = { onOpenSite(CarrefourRoutes.WEB_CART) }) } }
         }
     }
 
@@ -267,7 +269,7 @@ private fun AccountCard(session: SessionState, storeName: String, onLogin: () ->
 }
 
 @Composable
-private fun CartSummary(cart: fr.mescourses.core.carrefour.Cart, slots: List<fr.mescourses.core.carrefour.TimeSlot>?) {
+private fun CartSummary(cart: fr.mescourses.core.carrefour.Cart, slots: List<fr.mescourses.core.carrefour.TimeSlot>?, onOpenWebCart: () -> Unit) {
     SectionCard {
         Text("Mon panier Carrefour", style = MaterialTheme.typography.titleMedium)
         if (cart.lines.isEmpty()) Text("Panier vide.", style = MaterialTheme.typography.bodyMedium)
@@ -284,6 +286,7 @@ private fun CartSummary(cart: fr.mescourses.core.carrefour.Cart, slots: List<fr.
                 Text("• ${s.date} ${s.start}–${s.end}" + (s.price?.let { " · ${euros(it)}" } ?: ""), style = MaterialTheme.typography.bodySmall)
             }
         }
+        OutlinedButton(onClick = onOpenWebCart) { Text("🛒 Voir mon panier sur carrefour.fr") }
     }
 }
 

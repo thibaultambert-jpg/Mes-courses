@@ -83,7 +83,7 @@ class AppContainer(context: Context) {
     val models = ModelManager(context, appScope)
     val model = ModelController(llm, settings)
     /** Travaux longs du chef (proposition, validation), qui continuent quand on quitte l'app. */
-    val chef = ChefWork(context, appScope, model)
+    val chef = ChefWork(context, appScope, model, recipes) { stepsWriter() }
 
     // --- Carrefour (natif, via une WebView connectée) ---
     val bridge = CarrefourWebViewBridge(context) { settings.current.uaWithoutWv }

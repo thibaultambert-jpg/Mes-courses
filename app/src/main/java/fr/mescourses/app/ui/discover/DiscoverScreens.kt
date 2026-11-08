@@ -8,6 +8,10 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.webkit.CookieManager
+import android.webkit.GeolocationPermissions
+import android.webkit.PermissionRequest
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
@@ -116,6 +120,7 @@ fun DiscoverContent(
     val sites by vm.sites.collectAsStateWithLifecycle()
     val filters by vm.filters.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
+    val popular by vm.popularMode.collectAsStateWithLifecycle()
     val adding by vm.adding.collectAsStateWithLifecycle()
     val inBook by vm.favorites.byUrl.collectAsStateWithLifecycle()
     val message by vm.messages.collectAsStateWithLifecycle()
@@ -161,7 +166,10 @@ fun DiscoverContent(
                     }
                 }
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(DiscoverViewModel.Filter.entries.toList()) { f ->
+                    item {
+                        FilterChip(selected = popular, onClick = { focus.clearFocus(); vm.togglePopular() }, label = { Text("🔥 Populaires") })
+                    }
+                    if (!popular) items(DiscoverViewModel.Filter.entries.toList()) { f ->
                         FilterChip(selected = f in filters, onClick = { vm.toggleFilter(f) }, label = { Text(f.label) })
                     }
                 }
@@ -182,7 +190,7 @@ fun DiscoverContent(
                 item(span = { GridItemSpan(2) }) {
                     Row(Modifier.padding(vertical = 24.dp), verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        Text("Recherche sur les sites…", Modifier.padding(start = 12.dp))
+                        Text(if (popular) "Recettes populaires du moment…" else "Recherche sur les sites…", Modifier.padding(start = 12.dp))
                     }
                 }
             }
@@ -193,7 +201,8 @@ fun DiscoverContent(
                         val answered = r.hits.map { it.siteName }.distinct().size
                         Text(
                             if (r.hits.isEmpty()) "Aucune recette trouvée"
-                            else "${r.hits.size} recettes · $answered site${if (answered > 1) "s" else ""}",
+                            else (if (popular) "🔥 Populaires en ce moment · " else "") +
+                                "${r.hits.size} recettes · $answered site${if (answered > 1) "s" else ""}",
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -412,12 +421,47 @@ private fun PreviewBody(r: Recipe, siteName: String, modifier: Modifier, onMenu:
 // ---------------------------------------------------------------------------------------------
 
 /** Lit le contenu des balises JSON-LD de la page (données schema.org/Recipe). */
+/**
+ * Réglages proches de Chrome pour les sites de recettes (Marmiton, 750g…) : sans eux, le menu ne s'ouvre pas
+ * ou s'affiche cassé (fenêtre de consentement aux cookies tiers bloquée, mise en page « bureau », popups ignorées).
+ */
+@SuppressLint("SetJavaScriptEnabled")
+private fun configureLikeChrome(wv: WebView) {
+    with(wv.settings) {
+        javaScriptEnabled = true
+        domStorageEnabled = true
+        @Suppress("DEPRECATION")
+        databaseEnabled = true
+        useWideViewPort = true
+        loadWithOverviewMode = true
+        mediaPlaybackRequiresUserGesture = true
+        javaScriptCanOpenWindowsAutomatically = true
+        // Les liens « nouvelle fenêtre » s'ouvrent dans la même vue.
+        setSupportMultipleWindows(false)
+        builtInZoomControls = true
+        displayZoomControls = false
+        userAgentString = userAgentString.replace("; wv", "")
+    }
+    CookieManager.getInstance().setAcceptCookie(true)
+    // Bandeaux de consentement (Didomi, Sourcepoint…) servis depuis un autre domaine.
+    CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
+    wv.webChromeClient = object : WebChromeClient() {
+        override fun onGeolocationPermissionsShowPrompt(origin: String?, callback: GeolocationPermissions.Callback?) {
+            callback?.invoke(origin, false, false)
+        }
+
+        override fun onPermissionRequest(request: PermissionRequest?) {
+            request?.deny()
+        }
+    }
+}
+
 private const val READ_JSON_LD =
     "JSON.stringify(Array.prototype.map.call(document.querySelectorAll('script[type=\"application/ld+json\"]'),function(s){return s.textContent;}))"
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun RecipeBrowserScreen(startUrl: String, onClose: () -> Unit, onOpenRecipe: (Long) -> Unit) {
+fun RecipeBrowserScreen(startUrl: String, onClose: () -> Unit, onOpenRecipe: (Long) -> Unit, onSimplify: (String) -> Unit = {}) {
     val vm = containerViewModel(key = "browser") { RecipeBrowserViewModel(it) }
     val detected by vm.detected.collectAsStateWithLifecycle()
     val saving by vm.saving.collectAsStateWithLifecycle()
@@ -453,6 +497,10 @@ fun RecipeBrowserScreen(startUrl: String, onClose: () -> Unit, onOpenRecipe: (Lo
         onBack = onClose,
         snackbar = snackbar,
         actions = {
+            // Page de recette mal affichée : version simplifiée lue par l'app (ingrédients, étapes).
+            if (RecipeSites.forUrl(currentUrl)?.isRecipeUrl(currentUrl) == true) {
+                TextButton(onClick = { onSimplify(currentUrl) }) { Text("Simplifier") }
+            }
             IconButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(currentUrl))) }) {
                 Icon(Icons.AutoMirrored.Filled.OpenInNew, "Ouvrir dans le navigateur")
             }
@@ -466,9 +514,7 @@ fun RecipeBrowserScreen(startUrl: String, onClose: () -> Unit, onOpenRecipe: (Lo
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
                         WebView(ctx).also { wv ->
-                            wv.settings.javaScriptEnabled = true
-                            wv.settings.domStorageEnabled = true
-                            wv.settings.userAgentString = wv.settings.userAgentString.replace("; wv", "")
+                            configureLikeChrome(wv)
                             wv.webViewClient = object : WebViewClient() {
                                 override fun onPageStarted(v: WebView?, url: String?, favicon: Bitmap?) {
                                     loading = true

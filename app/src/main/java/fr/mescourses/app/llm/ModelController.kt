@@ -3,6 +3,8 @@ package fr.mescourses.app.llm
 import fr.mescourses.app.data.SettingsStore
 import fr.mescourses.core.agent.AgentTool
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -66,7 +68,7 @@ class ModelController(private val llm: LlmEngine, private val settings: Settings
 
     /** Libère la mémoire si le modèle ne sert pas (appelé par onTrimMemory). */
     fun releaseIfIdle(): Boolean {
-        if (inUse.get() > 0 || !llm.isLoaded()) return false
+        if (inUse.get() > 0 || generation.isLocked || !llm.isLoaded()) return false
         llm.close()
         owner = null
         loadedPath = null
@@ -78,12 +80,20 @@ class ModelController(private val llm: LlmEngine, private val settings: Settings
 
     suspend fun startConversation(id: String, systemPrompt: String, tools: List<AgentTool>) {
         check(ensureLoaded()) { "Assistant indisponible" }
-        llm.newConversation(systemPrompt, tools)
-        owner = id
+        generation.withLock {
+            llm.newConversation(systemPrompt, tools)
+            owner = id
+        }
     }
 
     /** Message dans la conversation en cours ; le modèle reste réservé pendant la génération. */
-    fun send(message: String): Flow<ChatEvent> = llm.send(message)
+    /**
+     * Le moteur ne fait qu'une chose à la fois : une génération ne doit jamais fermer la conversation
+     * d'une autre en cours (cause de plantages). Toutes les générations passent par ce verrou, en file.
+     */
+    private val generation = Mutex()
+
+    fun send(message: String): Flow<ChatEvent> = flow { generation.withLock { emitAll(llm.send(message)) } }
 
     suspend fun <T> use(block: suspend () -> T): T {
         inUse.incrementAndGet()
@@ -92,7 +102,9 @@ class ModelController(private val llm: LlmEngine, private val settings: Settings
 
     suspend fun generateOnce(system: String, prompt: String): String = use {
         check(ensureLoaded()) { "Assistant indisponible" }
-        owner = null // la conversation en cours est fermée par generateOnce
-        llm.generateOnce(system, prompt)
+        generation.withLock {
+            owner = null // la conversation en cours est fermée par generateOnce
+            llm.generateOnce(system, prompt)
+        }
     }
 }
