@@ -55,6 +55,14 @@ class RetailerSession(
         } catch (e: CarrefourException.NoDrive) {
             lastProblem = e.message
             SessionState.DRIVE_REQUIS
+        } catch (e: CarrefourException.Http) {
+            // Route de test déplacée (404…) : chez Carrefour, on se fie au cookie de connexion ; ailleurs, état inchangé.
+            lastProblem = "Vérification indisponible (HTTP ${e.status})."
+            when {
+                ssoCookie == null -> _state.value
+                hasSsoCookie() -> SessionState.CONNECTE
+                else -> SessionState.CONNEXION_REQUISE
+            }
         } catch (e: Exception) {
             lastProblem = e.message ?: e.toString()
             _state.value
@@ -62,11 +70,14 @@ class RetailerSession(
         return _state.value
     }
 
-    /** La WebView visible a constaté elle-même la connexion : on le croit tout de suite. */
+    /** La WebView visible a constaté elle-même la connexion (route sécurisée = 200) : on le croit tout de suite. */
     fun markConnected() {
         lastProblem = null
         _state.value = SessionState.CONNECTE
     }
+
+    /** Code HTTP du test de connexion fait dans la page visible : 200, ou route déplacée (404/410) avec cookie SSO. */
+    fun isLoggedInStatus(status: Int): Boolean = status == 200 || (status in setOf(404, 410) && hasSsoCookie())
 
     fun hasSsoCookie(): Boolean = ssoCookie?.invoke() == true
 

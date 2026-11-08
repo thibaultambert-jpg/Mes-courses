@@ -108,11 +108,15 @@ class AuchanClient(
 
     override suspend fun cart(): Cart = rawCart().toCart(names())
 
-    override suspend fun search(query: String, limit: Int): List<Product> {
+    override suspend fun search(query: String, limit: Int): List<Product> =
+        searchWithUnavailable(query, Int.MAX_VALUE).filter { it.available }.take(limit)
+
+    /** Garde les produits en rupture (stock 0, `available = false`) pour que le panier les signale. */
+    override suspend fun searchWithUnavailable(query: String, limit: Int): List<Product> {
         val key = query.trim().lowercase()
         lock.withLock { searchCache[key]?.takeIf { now() - it.at < cacheTtlMs }?.let { return it.value.take(limit) } }
         val html = http.call("GET", AuchanRoutes.search(query), AuchanRoutes.HTML_HEADERS).body
-        val products = AuchanParsers.parseSearch(html).filter { it.available }
+        val products = AuchanParsers.parseSearch(html)
         lock.withLock {
             searchCache[key] = Cached(now(), products)
             products.forEach { seen[it.id] = it }

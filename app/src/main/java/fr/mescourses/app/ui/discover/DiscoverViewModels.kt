@@ -100,6 +100,19 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
         if (popularMode.value) popular() else if (lastSearch != null) search()
     }
 
+    /**
+     * Retour arrière dans Découvrir : des résultats affichés reviennent à l'accueil de Découvrir.
+     * Renvoie false si on est déjà sur l'accueil (le retour sort alors de Découvrir).
+     */
+    fun back(): Boolean {
+        if (state.value == State.Idle && !popularMode.value) return false
+        job?.cancel()
+        popularMode.value = false
+        lastSearch = null
+        state.value = State.Idle
+        return true
+    }
+
     /** Recettes populaires du moment sur les sites choisis. */
     fun popular() {
         popularMode.value = true
@@ -223,6 +236,12 @@ class RecipeBrowserViewModel(private val c: AppContainer) : ViewModel() {
     val detected = MutableStateFlow<Recipe?>(null)
     val messages = MutableStateFlow<String?>(null)
     val saving = MutableStateFlow(false)
+
+    /**
+     * Historique et page courante du navigateur, gardés pendant que la version simplifiée d'une recette
+     * est affichée (la WebView est alors détruite) : au retour, on reprend exactement là où on était.
+     */
+    var webState: android.os.Bundle? = null
 
     /** Appelé avec le contenu des balises JSON-LD de la page. */
     fun onPage(url: String, jsonLdBlocks: List<String>) {

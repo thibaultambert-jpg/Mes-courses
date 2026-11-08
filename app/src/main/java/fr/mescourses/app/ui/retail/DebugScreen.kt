@@ -62,6 +62,10 @@ fun RetailerDebugScreen(onBack: () -> Unit, onOpenSite: (Retailer) -> Unit) {
             "Panier" to CarrefourRoutes.CART,
             "Recherche lait" to CarrefourRoutes.search("lait"),
             "Drive favori" to CarrefourRoutes.FAVORITE_STORE,
+            "Session" to CarrefourRoutes.SESSION_PROBE,
+            "Simulation panier" to CarrefourRoutes.cartSimulate(
+                settings.storeRef.ifBlank { settings.basketServiceId.substringBefore('-') }.ifBlank { "0" },
+            ),
         )
         Retailer.LECLERC -> settings.leclercStore()?.let { s ->
             listOf("Panier (page)" to LeclercRoutes.cartPage(s), "Recherche lait" to LeclercRoutes.search(s, "lait"))

@@ -2,6 +2,8 @@
 
 package fr.mescourses.app.ui.cookbook
 
+import fr.mescourses.app.ui.discover.DiscoverViewModel
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.saveable.rememberSaveable
 import fr.mescourses.app.llm.ModelStatus
 import fr.mescourses.app.ui.components.ChefCard
@@ -122,6 +124,12 @@ fun CookbookScreen(
 ) {
     val vm = containerViewModel { CookbookViewModel(it) }
     val discover by vm.discover.collectAsStateWithLifecycle()
+    // Même instance que celle de l'onglet Découvrir (même écran, même clé).
+    val discoverVm = containerViewModel { DiscoverViewModel(it) }
+    // Retour dans Découvrir : résultats → accueil de Découvrir → listes du livre (et seulement ensuite l'onglet Menu).
+    BackHandler(enabled = discover) {
+        if (!discoverVm.back()) vm.discover.value = false
+    }
     val recipes by vm.recipes.collectAsStateWithLifecycle()
     val counts by vm.counts.collectAsStateWithLifecycle()
     val tab by vm.tab.collectAsStateWithLifecycle()

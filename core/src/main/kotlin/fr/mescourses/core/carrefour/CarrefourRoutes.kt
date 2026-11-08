@@ -28,12 +28,19 @@ object CarrefourRoutes {
     // --- API (chemins relatifs à ORIGIN) ---
     fun search(query: String, page: Int = 1) = "/s?q=${enc(query)}&page=$page"
     const val CART = "/api/cart"
+    /**
+     * Route réservée aux comptes connectés, pour vérifier la session (comme CarrefourDriveMCP).
+     * `/api/cart` ne convient pas : il répond 200 aussi pour un panier invité.
+     */
+    const val SESSION_PROBE = "/api/user/secured/loyalty/balance"
     const val CART_ITEMS = "/api/cart/items"
     const val PRODUCTS_BY_GTINS = "/products"
     fun timeslots(facilityServiceId: String) = "/api/timeslots?facilityServiceId=${enc(facilityServiceId)}"
     fun driveStores(lat: Double, lon: Double, postalCode: String, city: String, limit: Int = 20) =
         "/api/eligibility/drive?latitude=$lat&longitude=$lon&postalCode=${enc(postalCode)}&city=${enc(city)}&page=1&limit=$limit"
     const val FAVORITE_STORE = "/api/favoritestore"
+    /** Articles du panier que le drive ne pourra pas servir (lecture seule). */
+    fun cartSimulate(storeRef: String) = "/api/cart/simulate?storeRef=${enc(storeRef)}"
 
     /** En-têtes attendus par les routes JSON (comme le site lui-même). */
     val JSON_HEADERS = mapOf(

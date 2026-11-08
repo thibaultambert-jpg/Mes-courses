@@ -14,7 +14,11 @@ import fr.mescourses.core.retail.Retailer
 interface RetailerBackend {
     val retailer: Retailer
     val label: String get() = retailer.label
+    /** Produits disponibles au drive. */
     suspend fun search(query: String, limit: Int = 5): List<Product>
+
+    /** Comme [search], mais garde les produits en rupture (marqués `available = false`) pour les signaler. */
+    suspend fun searchWithUnavailable(query: String, limit: Int = 8): List<Product> = search(query, limit)
     suspend fun cart(): Cart
     /** Ajoute `quantity` unités à ce qui est déjà dans le panier. */
     suspend fun addToCart(product: Product, quantity: Int): Cart
@@ -30,6 +34,11 @@ interface RetailerBackend {
 
     /** Oublie le drive connu (après un changement de drive). */
     fun forgetContext() {}
+    /** Disponibilité au drive des produits (EAN → disponible) ; EAN absent = inconnu. */
+    suspend fun availability(eans: List<String>): Map<String, Boolean> = emptyMap()
+
+    /** EAN des articles du panier que le drive ne pourra pas servir. */
+    suspend fun unavailableInCart(): List<String> = emptyList()
 }
 
 /** Mémoire des produits choisis par l'utilisateur pour chaque ingrédient (clé = ShoppingListMerger.key). */

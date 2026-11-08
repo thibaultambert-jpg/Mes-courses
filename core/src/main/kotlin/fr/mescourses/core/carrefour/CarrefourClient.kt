@@ -23,6 +23,8 @@ class CarrefourClient(
     private val savedContext: () -> DriveContext? = { null },
     /** Appelé quand un contexte de drive est découvert (pour l'enregistrer dans les Réglages). */
     private val onContext: (DriveContext, String) -> Unit = { _, _ -> },
+    /** Référence du magasin choisi (pour /api/cart/simulate). */
+    private val storeRef: () -> String? = { null },
     private val now: () -> Long = System::currentTimeMillis,
     private val rateLimitWaitMs: Long = 3_000,
 ) : RetailerBackend {
@@ -89,24 +91,27 @@ class CarrefourClient(
     }
 
     /**
-     * Vérifie la session : seul le code HTTP compte (200 = connecté). La lecture du panier est « au mieux » :
-     * renvoie null si son format n'est pas reconnu, sans faire croire à une déconnexion.
+     * Vérifie la session sur une route réservée aux comptes connectés (401/403 = non connecté ;
+     * un panier invité répond 200 sur /api/cart, il ne prouve rien). Puis lit le panier « au mieux »
+     * pour le contexte du drive : renvoie null si son format n'est pas reconnu.
      */
     override suspend fun sessionProbe(): Cart? {
-        val body = call("GET", CarrefourRoutes.CART).body
-        return runCatching { CarrefourParsers.parseCart(body) }.getOrNull()?.also { c -> c.context?.let { remember(it, "panier") } }
+        call("GET", CarrefourRoutes.SESSION_PROBE)
+        return runCatching { cart() }.getOrNull()
     }
 
     // ---------- Recherche ----------
 
-    override suspend fun search(query: String, limit: Int): List<Product> {
+    override suspend fun search(query: String, limit: Int): List<Product> =
+        searchWithUnavailable(query, Int.MAX_VALUE).filter { it.available }.take(limit)
+
+    override suspend fun searchWithUnavailable(query: String, limit: Int): List<Product> {
         val key = query.trim().lowercase()
         cacheLock.withLock { searchCache[key]?.takeIf { now() - it.at < cacheTtlMs }?.let { return it.value.take(limit) } }
         val all = CarrefourParsers.parseSearch(call("GET", CarrefourRoutes.search(query)).body)
         all.firstNotNullOfOrNull { it.offerServiceId }?.let { searchServiceId = it }
-        val products = all.filter { it.available }
-        cacheLock.withLock { searchCache[key] = Cached(now(), products) }
-        return products.take(limit)
+        cacheLock.withLock { searchCache[key] = Cached(now(), all) }
+        return all.take(limit)
     }
 
     suspend fun productDetail(ean: String): CarrefourParsers.ProductDetail? {
@@ -191,6 +196,28 @@ class CarrefourClient(
         if (searchServiceId == null) product.offerServiceId?.let { searchServiceId = it }
         val current = cart().quantityOf(product.ean)
         return setQuantity(product.ean, current + quantity)
+    }
+
+    // ---------- Disponibilité ----------
+
+    /** Vérification groupée par EAN (POST /products avec le drive) ; les produits non renvoyés restent « inconnus ». */
+    override suspend fun availability(eans: List<String>): Map<String, Boolean> {
+        if (eans.isEmpty()) return emptyMap()
+        val body = buildJsonObject {
+            putJsonArray("gtins") { eans.forEach { add(JsonPrimitive(it)) } }
+            (lastContext ?: savedContext())?.facilityServiceId?.let { put("facilityServiceId", it) }
+        }.toString()
+        val products = ProductParser.parse(call("POST", CarrefourRoutes.PRODUCTS_BY_GTINS, body).body)
+        return products.associate { it.ean to it.available }
+    }
+
+    /** Articles du panier indisponibles : signalés par le panier lui-même, et par la simulation du drive. */
+    override suspend fun unavailableInCart(): List<String> {
+        val fromCart = runCatching { cart().lines.filterNot { it.available }.map { it.ean } }.getOrDefault(emptyList())
+        val ref = storeRef()?.takeIf { it.isNotBlank() }
+            ?: (lastContext ?: savedContext())?.basketServiceId?.substringBefore('-')
+        val fromSimulation = ref?.let { r -> runCatching { CarrefourParsers.parseSimulation(call("GET", CarrefourRoutes.cartSimulate(r)).body) }.getOrDefault(emptyList()) }.orEmpty()
+        return (fromCart + fromSimulation).distinct()
     }
 
     // ---------- Créneaux ----------

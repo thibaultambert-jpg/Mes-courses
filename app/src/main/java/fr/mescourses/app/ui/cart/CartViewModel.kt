@@ -1,5 +1,6 @@
 package fr.mescourses.app.ui.cart
 
+import fr.mescourses.core.carrefour.Product
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import fr.mescourses.app.AppContainer
@@ -21,6 +22,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.collectLatest
+import fr.mescourses.core.carrefour.CarrefourClient
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,10 +42,21 @@ data class CartState(
     val loadingInfo: Boolean = false,
     /** Enseigne chez qui les produits des lignes ont été cherchés. */
     val retailer: Retailer = Retailer.CARREFOUR,
+    /** Articles du panier que le drive ne pourra pas servir, avec des remplaçants proposés. */
+    val toReplace: List<Replacement> = emptyList(),
 ) {
     /** L'enseigne n'a pas encore donné l'identifiant du drive (Carrefour : panier vide et aucune offre trouvée). */
     val noDrive: Boolean get() = lines.any { it.status == LineStatus.ERREUR && it.message == CarrefourException.NoDrive(retailer.label).message }
     val added: Int get() = lines.count { it.status == LineStatus.AJOUTE }
+}
+
+/** Un article du panier indisponible au drive et ses remplaçants disponibles. */
+data class Replacement(val ean: String, val name: String, val quantity: Int, val alternatives: List<Product>, val done: Boolean = false)
+
+/** Fiche produit affichée dans une feuille (photo, description, composition). */
+sealed interface ProductSheet {
+    data class Loading(val product: Product) : ProductSheet
+    data class Loaded(val product: Product, val detail: fr.mescourses.core.carrefour.CarrefourParsers.ProductDetail?) : ProductSheet
 }
 
 class CartViewModel(private val c: AppContainer) : ViewModel() {
@@ -59,8 +73,8 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
     fun site(r: Retailer): RetailerSite = c.bridge(r).site
 
     init {
-        // Vérifie la session de l'enseigne active, et de nouveau à chaque changement d'enseigne.
-        viewModelScope.launch { c.activeRetailer.collect { c.session(it).ensureSession() } }
+        // À l’ouverture de l onglet, puis à chaque changement d’enseigne : session, puis panier et articles à remplacer.
+        viewModelScope.launch { c.activeRetailer.collectLatest { if (c.session(it).ensureSession()) loadInfo() } }
         // Panier choisi dans la comparaison des prix : repris tel quel, prêt à vérifier.
         viewModelScope.launch {
             c.pendingQuote.collect { q ->
@@ -151,6 +165,8 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
             val cart = c.backend(r).cart()
             val slots = runCatching { c.backend(r).timeslots(5) }.getOrNull()
             _state.update { it.copy(cart = cart, slots = slots) }
+            // Le drive signale-t-il des articles à remplacer ?
+            checkUnavailable()
         } catch (e: Exception) {
             fail(e)
         } finally {
@@ -178,6 +194,54 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
     fun prepareCompare() {
         val s = _state.value
         c.pendingCompare.value = if (s.lines.isNotEmpty()) PendingCart(s.source, s.lines.map { it.item }) else null
+    }
+
+    // ---------- Fiche produit ----------
+
+    val productSheet = MutableStateFlow<ProductSheet?>(null)
+
+    fun openProduct(p: Product) {
+        productSheet.value = ProductSheet.Loading(p)
+        viewModelScope.launch {
+            // Fiche détaillée (composition, allergènes) : Carrefour seulement ; ailleurs, les infos de la recherche.
+            val detail = runCatching { (c.backend() as? CarrefourClient)?.productDetail(p.ean) }.getOrNull()
+            // Garde les infos de la recherche (prix au drive) et complète avec la fiche.
+            if (productSheet.value is ProductSheet.Loading) productSheet.value = ProductSheet.Loaded(p, detail)
+        }
+    }
+
+    fun closeProduct() { productSheet.value = null }
+
+    // ---------- Indisponibles du panier ----------
+
+    /** Demande au drive les articles du panier qu'il ne pourra pas servir, et cherche des remplaçants. */
+    fun checkUnavailable() = viewModelScope.launch {
+        val eans = runCatching { c.backend().unavailableInCart() }.getOrDefault(emptyList())
+        if (eans.isEmpty()) { _state.update { it.copy(toReplace = emptyList()) }; return@launch }
+        val cart = _state.value.cart ?: runCatching { c.backend().cart() }.getOrNull()
+        val replacements = eans.map { ean ->
+            val inCart = cart?.lines?.firstOrNull { it.ean == ean }
+            val sent = _state.value.lines.firstOrNull { it.product?.ean == ean }
+            val name = inCart?.name ?: sent?.product?.name ?: ean
+            val query = sent?.item?.let { CartPlanner.searchQuery(it, c.settings.current.preferOrganic) } ?: name
+            val alternatives = runCatching { c.backend().search(query, 6) }.getOrDefault(emptyList())
+                .filter { it.ean != ean && it.available }.take(3)
+            Replacement(ean, name, inCart?.quantity ?: sent?.quantity ?: 1, alternatives)
+        }
+        _state.update { it.copy(toReplace = replacements) }
+    }
+
+    /** Remplace un article indisponible : quantité 0 pour l'ancien, ajout du nouveau. */
+    fun replace(r: Replacement, product: Product) = viewModelScope.launch {
+        try {
+            val backend = c.backend()
+            backend.setQuantity(r.ean, 0)
+            backend.addToCart(product, r.quantity)
+            _state.update { s -> s.copy(toReplace = s.toReplace.map { if (it.ean == r.ean) it.copy(done = true) else it }) }
+            loadInfo()
+        } catch (e: Exception) {
+            fail(e)
+        }
     }
 
     /** Coche dans la liste de courses les articles envoyés au panier. */

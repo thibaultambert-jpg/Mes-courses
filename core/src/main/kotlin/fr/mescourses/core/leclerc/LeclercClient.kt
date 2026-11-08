@@ -56,11 +56,15 @@ class LeclercClient(
 
     override suspend fun sessionProbe(): Cart? = cart()
 
-    override suspend fun search(query: String, limit: Int): List<Product> {
+    override suspend fun search(query: String, limit: Int): List<Product> =
+        searchWithUnavailable(query, Int.MAX_VALUE).filter { it.available }.take(limit)
+
+    /** Garde les produits en rupture (stock 0, `available = false`) pour que le panier les signale. */
+    override suspend fun searchWithUnavailable(query: String, limit: Int): List<Product> {
         val s = currentStore()
         val key = s.id + "|" + query.trim().lowercase()
         cacheLock.withLock { searchCache[key]?.takeIf { now() - it.at < cacheTtlMs }?.let { return it.value.take(limit) } }
-        val products = LeclercParsers.parseSearch(storePage(LeclercRoutes.search(s, query))).filter { it.available }
+        val products = LeclercParsers.parseSearch(storePage(LeclercRoutes.search(s, query)))
         cacheLock.withLock { searchCache[key] = Cached(now(), products) }
         return products.take(limit)
     }

@@ -40,6 +40,10 @@ class FakeTransport(private val responder: (method: String, path: String, body: 
     }
 }
 
+private object ProductParserForTest {
+    fun parse(json: String): String? = fr.mescourses.core.carrefour.ProductParser.parse(json).firstOrNull()?.imageUrl
+}
+
 private fun ok(body: String, headers: Map<String, String> = emptyMap()) = HttpResponse(200, headers, body)
 
 class CarrefourTest {
@@ -263,5 +267,112 @@ class CarrefourTest {
         val second = CartPlanner.propose(client, items, memory = memory, pauseMs = 0).toList().single()
         assertTrue(second.remembered)
         assertEquals(searchesBefore, t.calls.count { it.second.startsWith("/s?") }) // pas de nouvelle recherche
+    }
+
+    // ---------- Indisponibles ----------
+
+    private val rupture = fixture("search.json").replace(
+        "\"0001-150-1\": {\"attributes\": {\"price\": {\"price\": 1.15",
+        "\"0001-150-1\": {\"attributes\": {\"availability\": {\"purchasable\": false}, \"price\": {\"price\": 1.15",
+    )
+
+    @Test fun disponibilite_lue_dans_l_offre() = runTest {
+        assertTrue("purchasable\": false" in rupture)
+        val p = CarrefourParsers.parseSearch(rupture)
+        assertEquals(listOf(true, false), p.map { it.available })
+        // La recherche ne propose jamais un produit en rupture.
+        val client = CarrefourClient(FakeTransport { _, _, _ -> ok(rupture) })
+        assertEquals(listOf("3560070000011"), client.search("lait", 5).map { it.ean })
+    }
+
+    @Test fun choix_habituel_indisponible_remplace() = runTest {
+        val habitual = Product(id = "3560070000028", name = "Lait entier 1L", identifiers = mapOf("ean" to "3560070000028"))
+        val memory = object : ProductMemory {
+            override suspend fun get(key: String) = habitual
+            override suspend fun remember(key: String, product: Product) {}
+        }
+        val t = FakeTransport { m, path, _ ->
+            when {
+                m == "POST" && path == CarrefourRoutes.PRODUCTS_BY_GTINS -> ok(rupture) // le n°28 est en rupture
+                path.startsWith("/s?") -> ok(fixture("search.json"))
+                else -> ok("{}")
+            }
+        }
+        val line = CartPlanner.propose(CarrefourClient(t), listOf(ShoppingItem(name = "Lait")), memory = memory, pauseMs = 0).toList().single()
+        assertTrue(!line.remembered)
+        assertTrue(line.candidates.none { it.ean == "3560070000028" })
+        assertEquals("3560070000011", line.product?.ean)
+        assertTrue(line.note!!.contains("indisponible"))
+    }
+
+    @Test fun produit_en_rupture_visible_mais_jamais_preselectionne() = runTest {
+        // « Lait entier » (n°28) correspond mieux à l'article mais il est en rupture.
+        val client = CarrefourClient(FakeTransport { _, _, _ -> ok(rupture) })
+        val line = CartPlanner.searchLine(client, ShoppingItem(name = "lait entier"), preferOrganic = false)
+        assertEquals("3560070000011", line.product?.ean)
+        assertEquals(listOf(true, false), line.candidates.map { it.available })
+        assertTrue(line.note!!.contains("Lait entier 1L"), line.note)
+    }
+
+    @Test fun ligne_de_panier_indisponible() {
+        val cart = CarrefourParsers.parseCart(
+            """{"items":[
+                {"ean":"3560070000011","title":"Lait bio","quantity":1,"status":"UNAVAILABLE"},
+                {"ean":"3560070000028","title":"Lait entier","quantity":2,"availability":{"purchasable":true}},
+                {"ean":"3560070000035","title":"Beurre","quantity":1,"isSubstitutionNeeded":true}
+            ]}""",
+        )
+        assertEquals(mapOf("3560070000011" to false, "3560070000028" to true, "3560070000035" to false), cart.lines.associate { it.ean to it.available })
+    }
+
+    @Test fun session_testee_sur_une_route_securisee() = runTest {
+        // Panier invité : /api/cart répond 200, mais la route sécurisée répond 401.
+        val t = FakeTransport { _, path, _ ->
+            if (path == CarrefourRoutes.SESSION_PROBE) HttpResponse(401, emptyMap(), "") else ok(fixture("cart.json"))
+        }
+        assertFailsWith<CarrefourException.SessionExpired> { CarrefourClient(t).sessionProbe() }
+        val logged = FakeTransport { _, _, _ -> ok(fixture("cart.json")) }
+        assertNotNull(CarrefourClient(logged).sessionProbe())
+        assertEquals(CarrefourRoutes.SESSION_PROBE, logged.calls.first().second)
+    }
+
+    @Test fun images_relatives_et_autres_formes() {
+        fun img(attrs: String) = ProductParserForTest.parse("""{"type":"product","id":"1","attributes":{"ean":"3560070000011","title":"Lait",$attrs}}""")
+        assertEquals("https://www.carrefour.fr/images/lait.jpg", img(""""images":[{"path":"/images/lait.jpg"}]"""))
+        assertEquals("https://media.carrefour.fr/lait.webp", img(""""image":"//media.carrefour.fr/lait.webp""""))
+        assertEquals("https://cdn.exemple/lait.png", img(""""media":{"main":{"url":"https://cdn.exemple/lait.png"}}"""))
+    }
+
+    @Test fun articles_du_panier_a_remplacer() = runTest {
+        val body = """{"data":{"count":1,"unavailableProducts":[{"gtin":"3560070000011"}],"available":["3560070000028"]}}"""
+        assertEquals(listOf("3560070000011"), CarrefourParsers.parseSimulation(body))
+        val t = FakeTransport { _, path, _ -> ok(if (path == CarrefourRoutes.CART) "{\"cart\":{}}" else body) }
+        val client = CarrefourClient(t, storeRef = { "0678" })
+        assertEquals(listOf("3560070000011"), client.unavailableInCart())
+        assertTrue(t.calls.any { it.second == "/api/cart/simulate?storeRef=0678" })
+    }
+
+    // ---------- Vraie réponse Carrefour (recherche « lait ») ----------
+
+    @Test fun vraie_reponse_recherche() {
+        val p = CarrefourParsers.parseSearch(fixture("search_reel.json")).single()
+        assertEquals("3428274200273", p.ean)
+        assertEquals("LACTEL", p.brand)
+        assertEquals(11.89, p.price)
+        assertEquals("0.99 € / L", p.unitPrice)
+        assertEquals("0697-150-1107", p.offerServiceId)
+        assertTrue(p.available)
+        // Le modèle d'adresse « p_FORMAT » est rempli avec une vraie taille.
+        assertEquals(
+            "https://media.carrefour.fr/medias/da433fbba1023dce94dc3080183349c8/p_540x540/03428274200273-c1l1-s01.jpg",
+            p.imageUrl,
+        )
+    }
+
+    @Test fun offre_suspendue_indisponible() {
+        val suspended = fixture("search_reel.json").replace("\"suspended\":false", "\"suspended\":true")
+        assertEquals(false, CarrefourParsers.parseSearch(suspended).single().available)
+        val stopped = fixture("search_reel.json").replace("\"stopped\":false", "\"stopped\":true")
+        assertEquals(false, CarrefourParsers.parseSearch(stopped).single().available)
     }
 }

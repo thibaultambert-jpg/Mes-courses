@@ -92,7 +92,7 @@ fun StoreScreen(retailer: Retailer, onBack: () -> Unit, onOpenSite: (String) -> 
         // Nouveau drive : l'ancien contexte (identifiant de panier, recherches en cache) ne vaut plus.
         c.backend(retailer).forgetContext()
         when (retailer) {
-            Retailer.CARREFOUR -> c.settings.update { it.copy(storeId = store.id, storeName = store.name, basketServiceId = "", facilityServiceId = "") }
+            Retailer.CARREFOUR -> c.settings.update { it.copy(storeId = store.id, storeName = store.name, storeRef = store.ref.orEmpty(), basketServiceId = "", facilityServiceId = "") }
             Retailer.LECLERC -> LeclercClient.storeOf(store)?.let { s ->
                 c.settings.update { it.copy(leclercStoreId = s.id, leclercNoPR = s.noPR, leclercHost = s.host, leclercStoreName = s.name) }
             }

@@ -12,6 +12,7 @@ import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
@@ -190,7 +191,13 @@ fun DiscoverContent(
                 item(span = { GridItemSpan(2) }) {
                     Row(Modifier.padding(vertical = 24.dp), verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        Text(if (popular) "Recettes populaires du moment…" else "Recherche sur les sites…", Modifier.padding(start = 12.dp))
+                        Text(
+                            when {
+                                popular -> "Recettes populaires du moment…"
+                                else -> "Recherche sur les sites…"
+                            },
+                            Modifier.padding(start = 12.dp),
+                        )
                     }
                 }
             }
@@ -238,7 +245,11 @@ fun DiscoverContent(
 }
 
 @Composable
-private fun IdleDiscover(ideas: List<String>, onIdea: (String) -> Unit, onBrowse: (String) -> Unit) {
+private fun IdleDiscover(
+    ideas: List<String>,
+    onIdea: (String) -> Unit,
+    onBrowse: (String) -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 8.dp)) {
         if (ideas.isNotEmpty()) {
             SectionHeader("De saison en ce moment", emoji = "🍂")
@@ -255,13 +266,13 @@ private fun IdleDiscover(ideas: List<String>, onIdea: (String) -> Unit, onBrowse
         }
         SectionHeader("Parcourir un site", emoji = "🧭")
         Text(
-            "Navigue sur le site dans l'app : dès qu'une page contient une recette, un bandeau te propose de l'ajouter à tes favoris.",
+            "Navigue sur le site dans l'app : chaque recette ouverte s'affiche en version simplifiée, prête à ajouter à tes favoris.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             RecipeSites.all.forEach { site ->
-                OutlinedButton(onClick = { onBrowse(site.homeUrl) }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
+                OutlinedButton(onClick = { onBrowse(site.browsePage) }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
                     Text(site.name)
                 }
             }
@@ -432,15 +443,13 @@ private fun configureLikeChrome(wv: WebView) {
         domStorageEnabled = true
         @Suppress("DEPRECATION")
         databaseEnabled = true
-        useWideViewPort = true
-        loadWithOverviewMode = true
         mediaPlaybackRequiresUserGesture = true
         javaScriptCanOpenWindowsAutomatically = true
         // Les liens « nouvelle fenêtre » s'ouvrent dans la même vue.
         setSupportMultipleWindows(false)
         builtInZoomControls = true
         displayZoomControls = false
-        userAgentString = userAgentString.replace("; wv", "")
+        userAgentString = chromeUserAgent(userAgentString)
     }
     CookieManager.getInstance().setAcceptCookie(true)
     // Bandeaux de consentement (Didomi, Sourcepoint…) servis depuis un autre domaine.
@@ -455,6 +464,9 @@ private fun configureLikeChrome(wv: WebView) {
         }
     }
 }
+
+/** User-Agent identique à Chrome pour Android (voir [RecipeSites.chromeUserAgent]). */
+fun chromeUserAgent(webViewUa: String): String = RecipeSites.chromeUserAgent(webViewUa)
 
 private const val READ_JSON_LD =
     "JSON.stringify(Array.prototype.map.call(document.querySelectorAll('script[type=\"application/ld+json\"]'),function(s){return s.textContent;}))"
@@ -475,6 +487,16 @@ fun RecipeBrowserScreen(startUrl: String, onClose: () -> Unit, onOpenRecipe: (Lo
     var currentUrl by remember { mutableStateOf(startUrl) }
     LaunchedEffect(message) { message?.let { snackbar.showSnackbar(it); vm.messages.value = null } }
     LaunchedEffect(Unit) { vm.clear() }
+
+    fun isRecipe(url: String) = RecipeSites.forUrl(url)?.isRecipeUrl(url) == true
+    var lastSimplified by remember { mutableStateOf<Pair<String, Long>?>(null) }
+    fun simplify(url: String) {
+        // Évite d'ouvrir deux fois le même aperçu (deux événements pour une même navigation).
+        val now = System.currentTimeMillis()
+        if (lastSimplified?.let { it.first == url && now - it.second < 2_000 } == true) return
+        lastSimplified = url to now
+        onSimplify(url)
+    }
 
     fun scan(v: WebView) {
         val url = v.url ?: return
@@ -516,7 +538,22 @@ fun RecipeBrowserScreen(startUrl: String, onClose: () -> Unit, onOpenRecipe: (Lo
                         WebView(ctx).also { wv ->
                             configureLikeChrome(wv)
                             wv.webViewClient = object : WebViewClient() {
+                                // Toute recette ouverte depuis le site s'affiche en version simplifiée (aperçu de l'app).
+                                // La page de départ, elle, reste visible si on a demandé explicitement le site.
+                                override fun shouldOverrideUrlLoading(v: WebView?, request: WebResourceRequest?): Boolean {
+                                    val url = request?.url?.toString() ?: return false
+                                    if (!request.isForMainFrame || url == startUrl || !isRecipe(url)) return false
+                                    simplify(url)
+                                    return true
+                                }
+
                                 override fun onPageStarted(v: WebView?, url: String?, favicon: Bitmap?) {
+                                    // Changement de page par JavaScript (location.href) vers une recette : on reste sur la liste.
+                                    if (url != null && url != startUrl && isRecipe(url)) {
+                                        v?.stopLoading()
+                                        simplify(url)
+                                        return
+                                    }
                                     loading = true
                                     url?.let { currentUrl = it }
                                 }
@@ -530,15 +567,27 @@ fun RecipeBrowserScreen(startUrl: String, onClose: () -> Unit, onOpenRecipe: (Lo
                                 }
 
                                 override fun doUpdateVisitedHistory(v: WebView?, url: String?, isReload: Boolean) {
+                                    // Navigation interne du site (sans rechargement) vers une recette : version simplifiée,
+                                    // et le navigateur revient à la liste pour le retour arrière.
+                                    if (url != null && url != startUrl && isRecipe(url)) {
+                                        if (v?.canGoBack() == true) v.goBack()
+                                        simplify(url)
+                                        return
+                                    }
                                     url?.let { currentUrl = it }
                                     v?.let { w -> scope.launch { delay(800); scan(w) } }
                                 }
                             }
-                            wv.loadUrl(startUrl)
+                            // Retour depuis une recette simplifiée : on restaure l'historique au lieu de repartir de la page de départ.
+                            val saved = vm.webState
+                            if (saved == null || wv.restoreState(saved) == null) wv.loadUrl(startUrl)
                             view = wv
                         }
                     },
-                    onRelease = { it.destroy() },
+                    onRelease = { wv ->
+                        vm.webState = android.os.Bundle().also { wv.saveState(it) }
+                        wv.destroy()
+                    },
                 )
             }
             val r = detected

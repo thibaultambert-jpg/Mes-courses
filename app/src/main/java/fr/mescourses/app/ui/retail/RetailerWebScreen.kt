@@ -66,13 +66,13 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
     /** Réponse attendue du test de session lancé DANS la WebView visible. */
     val probe = remember { AtomicReference<CompletableDeferred<Int>?>(null) }
 
-    /** GET /api/cart depuis la page visible (mêmes cookies que l'utilisateur) : renvoie le code HTTP, 0 si échec. */
+    /** Route sécurisée (compte connecté) depuis la page visible (mêmes cookies que l'utilisateur) : renvoie le code HTTP, 0 si échec. */
     suspend fun probeVisible(): Int {
         val v = view ?: return 0
         val d = CompletableDeferred<Int>()
         probe.set(d)
         v.evaluateJavascript(
-            "fetch('${CarrefourRoutes.CART}',{credentials:'include',headers:{'accept':'application/json, text/plain, */*','x-requested-with':'XMLHttpRequest'}})" +
+            "fetch('${CarrefourRoutes.SESSION_PROBE}',{credentials:'include',headers:{'accept':'application/json, text/plain, */*','x-requested-with':'XMLHttpRequest'}})" +
                 ".then(function(r){MesCoursesLogin.onStatus(r.headers.get('cf-mitigated')?-1:r.status);})" +
                 ".catch(function(){MesCoursesLogin.onStatus(0);});",
             null,
@@ -85,7 +85,7 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
         closing = true
         scope.launch {
             if (isCarrefour && mode == WebMode.LOGIN && session != SessionState.CONNECTE && view?.url?.startsWith(CarrefourRoutes.ORIGIN) == true) {
-                if (probeVisible() == 200) retailerSession.markConnected()
+                if (retailerSession.isLoggedInStatus(probeVisible())) retailerSession.markConnected()
             }
             retailerSession.onVisibleSiteClosed()
             if (mode == WebMode.LOGIN) {
@@ -171,7 +171,7 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
                                 if (isCarrefour && mode == WebMode.LOGIN && visitedLogin && url?.startsWith(CarrefourRoutes.ORIGIN) == true) {
                                     scope.launch {
                                         CookieManager.getInstance().flush()
-                                        if (probeVisible() == 200) retailerSession.markConnected()
+                                        if (retailerSession.isLoggedInStatus(probeVisible())) retailerSession.markConnected()
                                     }
                                 }
                                 // Leclerc : le drive ouvert sur le site devient le drive de l'application.

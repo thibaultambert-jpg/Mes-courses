@@ -101,13 +101,32 @@ object CarrefourParsers {
                 val product = ProductParser.parse(e).firstOrNull()
                 if (qty != null && product != null && product.ean.length >= 8) {
                     val subtotal = listOf("totalItemPrice", "subtotal", "lineTotal", "totalPrice").firstNotNullOfOrNull { k -> num(e[k]) }
-                    out.putIfAbsent(product.ean, CartLineItem(product.ean, product.name, qty, subtotal))
+                    out.putIfAbsent(product.ean, CartLineItem(product.ean, product.name, qty, subtotal, product.available && !lineUnavailable(e), product.imageUrl))
                 } else {
                     e.values.forEach { collectCartLines(it, out, depth + 1) }
                 }
             }
             else -> Unit
         }
+    }
+
+    private val unavailableWords = Regex("""unavailable|out_of_stock|outofstock|rupture|indisponible|not_available|sold_out""", RegexOption.IGNORE_CASE)
+
+    /** Ligne de panier marquée indisponible / à remplacer par le drive (plusieurs formes possibles). */
+    fun lineUnavailable(e: JsonObject, depth: Int = 0): Boolean {
+        if (depth > 3) return false
+        for ((k, v) in e) {
+            val key = k.lowercase()
+            val bool = (v as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull()
+            when {
+                bool == false && key in setOf("available", "isavailable", "purchasable", "ispurchasable", "instock") -> return true
+                bool == true && ("unavailable" in key || "substitution" in key || "toreplace" in key || "outofstock" in key) -> return true
+                (key == "status" || key == "availability" || key == "stockstatus" || key == "state") &&
+                    (v as? JsonPrimitive)?.contentOrNull?.let { unavailableWords.containsMatchIn(it) } == true -> return true
+                v is JsonObject && (key == "availability" || key == "attributes" || key == "stock" || key == "offer") -> if (lineUnavailable(v, depth + 1)) return true
+            }
+        }
+        return false
     }
 
     private fun num(e: JsonElement?): Double? = when (e) {
@@ -233,7 +252,33 @@ object CarrefourParsers {
         val product: Product,
         val ingredients: String? = null,
         val allergens: String? = null,
+        val description: String? = null,
     )
+
+    /**
+     * Réponse de `/api/cart/simulate` : EAN des articles indisponibles au drive. Lecture tolérante :
+     * toute liste sous une clé contenant « unavailable », « gtin » ou « ean », ou tout objet marqué indisponible.
+     */
+    fun parseSimulation(body: String): List<String> {
+        val root = parseJson(body) ?: return emptyList()
+        val out = LinkedHashSet<String>()
+        val eanPattern = Regex("""^\d{8,14}$""")
+        fun walk(e: JsonElement, unavailableZone: Boolean, depth: Int) {
+            if (depth > 15) return
+            when (e) {
+                is JsonArray -> e.forEach { walk(it, unavailableZone, depth + 1) }
+                is JsonObject -> e.forEach { (k, v) ->
+                    val key = k.lowercase()
+                    val zone = unavailableZone || "unavailable" in key || "indisponible" in key || "missing" in key
+                    if (zone && v is JsonPrimitive) text(v)?.takeIf { eanPattern.matches(it) }?.let(out::add)
+                    walk(v, zone, depth + 1)
+                }
+                is JsonPrimitive -> if (unavailableZone) text(e)?.takeIf { eanPattern.matches(it) }?.let(out::add)
+            }
+        }
+        walk(root, false, 0)
+        return out.toList()
+    }
 
     /** Page produit HTML (JSON-LD) ou réponse JSON de /products. */
     fun parseProductDetail(body: String): ProductDetail? {
@@ -245,6 +290,7 @@ object CarrefourParsers {
                 p,
                 ingredients = findValue(root, "ingredients") ?: findValue(root, "composition"),
                 allergens = findValue(root, "allergens") ?: findValue(root, "allergenes"),
+                description = p.description ?: findValue(root, "description"),
             )
         }
         val doc = Jsoup.parse(body)
@@ -266,6 +312,7 @@ object CarrefourParsers {
                     identifiers = mapOf("ean" to ean),
                 ),
                 ingredients = (extractNuxtData(body)?.let { findValue(it, "ingredients") }),
+                description = text(obj["description"]),
             )
         }
         return null

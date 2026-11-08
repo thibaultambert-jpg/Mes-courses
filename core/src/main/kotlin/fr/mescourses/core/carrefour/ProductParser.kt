@@ -30,6 +30,7 @@ data class Product(
      * ajouter au panier. Lu dans `offers.{ean}.{offerServiceId}` des résultats de recherche.
      */
     val offerServiceId: String? = null,
+    val description: String? = null,
 ) {
     val ean: String get() = identifiers["ean"] ?: identifiers["gtin13"] ?: identifiers["gtin"] ?: id
     val organic: Boolean get() = Regex("""\bbio\b""", RegexOption.IGNORE_CASE).containsMatchIn(name + " " + (brand ?: ""))
@@ -53,6 +54,7 @@ object ProductParser {
     private val unitPriceKeys = listOf("perUnitLabel", "unit_price", "unitPrice", "price_per_unit", "pricePerUnit", "prixAuKilo", "unitPriceLabel")
     private val packagingKeys = listOf("packaging", "format", "conditionnement", "quantity_label", "size", "weight")
     private val availabilityKeys = listOf("available", "in_stock", "inStock", "isAvailable", "disponible")
+    private val offerAvailabilityKeys = listOf("purchasable", "isPurchasable", "available", "isAvailable", "inStock")
 
     /** Analyse un texte (JSON ou JSON précédé d'une phrase). */
     fun parse(text: String, structured: JsonObject? = null): List<Product> {
@@ -126,8 +128,16 @@ object ProductParser {
         val ids = idKeys.mapNotNull { k -> (obj[k] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }?.let { k to it } }.toMap()
         val id = ids["ean"] ?: ids["gtin13"] ?: ids.values.firstOrNull() ?: return null
         val name = obj.first(nameKeys).text() ?: return null
-        val available = (obj.first(availabilityKeys) as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() ?: true
         val offers = obj["offers"]
+        // Disponibilité : au niveau du produit, sinon dans l'offre du drive (offers…attributes.availability.purchasable).
+        val available = (obj.first(availabilityKeys) as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull()
+            ?: offers?.let { o ->
+                // Offre arrêtée ou suspendue au drive = rupture, même si « purchasable » est vrai.
+                val blocked = deep(o, listOf("stopped", "suspended"), { e -> (e as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull()?.takeIf { it } }) as? Boolean
+                if (blocked == true) false
+                else deep(o, offerAvailabilityKeys, { e -> (e as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() }) as? Boolean
+            }
+            ?: true
         return Product(
             id = id,
             name = name,
@@ -139,12 +149,55 @@ object ProductParser {
             available = available,
             nutriscore = (obj["nutriscore"] as? JsonObject)?.get("value").text() ?: (obj["nutriscore"] as? JsonPrimitive).text(),
             promo = (obj["promotion"] as? JsonObject)?.get("label").text(),
-            imageUrl = (obj["images"] as? JsonArray)?.firstOrNull()?.let { img ->
-                (img as? JsonObject)?.let { (it["medium"] ?: it["large"] ?: it["url"]).text() } ?: (img as? JsonPrimitive).text()
-            } ?: (obj["image"] as? JsonPrimitive).text(),
+            imageUrl = imageOf(obj),
             identifiers = ids,
             offerServiceId = offerServiceId(offers),
+            description = obj.first(listOf("description", "shortDescription", "marketingDescription")).text(),
         )
+    }
+
+    private val imageKeys = listOf("images", "image", "imageUrl", "image_url", "thumbnail", "picture", "media", "visual", "photos")
+    private val imageFields = listOf("paths", "medium", "large", "url", "src", "path", "pattern", "withFormats", "href", "main", "default", "small", "zoom", "original")
+    private val imageExt = Regex("""\.(jpe?g|png|webp|gif)(\?.*)?$""", RegexOption.IGNORE_CASE)
+
+    /**
+     * Photo du produit, quelle que soit la forme : `images[]` (objets ou chaînes), `image`, `imageUrl`, `media`…
+     * Les adresses relatives (« /images/… », « //media… ») deviennent absolues.
+     */
+    private fun imageOf(obj: JsonObject): String? {
+        fun pick(e: JsonElement?, depth: Int = 0): String? {
+            if (e == null || depth > 4) return null
+            return when (e) {
+                is JsonPrimitive -> e.contentOrNull?.takeIf { it.isNotBlank() && (imageExt.containsMatchIn(it) || it.startsWith("http") || it.startsWith("/")) }
+                is JsonArray -> e.firstNotNullOfOrNull { pick(it, depth + 1) }
+                is JsonObject -> imageFields.firstNotNullOfOrNull { pick(e[it], depth + 1) }
+                    ?: e.values.firstNotNullOfOrNull { v -> (v as? JsonPrimitive)?.contentOrNull?.takeIf { imageExt.containsMatchIn(it) } }
+                    ?: e.values.firstNotNullOfOrNull { v -> if (v !is JsonPrimitive) pick(v, depth + 1) else null }
+            }
+        }
+        val raw = imageKeys.firstNotNullOfOrNull { pick(obj[it]) } ?: return null
+        return absoluteImage(withFormat(raw, obj["images"]))
+    }
+
+    /**
+     * Carrefour renvoie un modèle d'adresse : `…/p_FORMAT/…jpg`. On remplace `FORMAT` par une taille proposée
+     * (540x540 de préférence, sinon `formats.largest`, sinon la plus grande de `common`).
+     */
+    private fun withFormat(url: String, images: JsonElement?): String {
+        if (!url.contains("FORMAT")) return url
+        val formats = (images as? JsonObject)?.get("formats") as? JsonObject
+        val common = (formats?.get("common") as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty()
+        val size = when {
+            "540x540" in common || common.isEmpty() -> "540x540"
+            else -> (formats?.get("largest") as? JsonPrimitive)?.contentOrNull ?: common.last()
+        }
+        return url.replace("FORMAT", size)
+    }
+
+    fun absoluteImage(url: String): String = when {
+        url.startsWith("//") -> "https:$url"
+        url.startsWith("/") -> CarrefourRoutes.ORIGIN + url
+        else -> url
     }
 
     private val serviceIdPattern = Regex("""^\d+-\d+-\d+$""")
