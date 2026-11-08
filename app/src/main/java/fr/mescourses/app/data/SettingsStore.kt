@@ -8,6 +8,8 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import fr.mescourses.core.carrefour.DriveContext
+import fr.mescourses.core.leclerc.LeclercStore
+import fr.mescourses.core.retail.Retailer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -28,6 +30,15 @@ data class Settings(
     val childFactor: Double = 0.5,
     val preferOrganic: Boolean = true,
     val preferences: String = "",
+    /** Enseigne préférée : utilisée par défaut pour le panier et l'assistant (nom de [Retailer]). */
+    val retailer: String = Retailer.CARREFOUR.name,
+    /** Drive E.Leclerc choisi : numéro, point de retrait, hôte des courses (fdN-courses.leclercdrive.fr) et nom. */
+    val leclercStoreId: String = "",
+    val leclercNoPR: String = "",
+    val leclercHost: String = "",
+    val leclercStoreName: String = "",
+    /** Magasin Auchan, lu dans le panier (le drive se choisit sur auchan.fr). */
+    val auchanStoreName: String = "",
     /** Drive Carrefour choisi dans l'app. */
     val storeId: String = "",
     val storeName: String = "",
@@ -38,6 +49,18 @@ data class Settings(
     /** Debug : WebView présentée comme un Chrome normal (sans « ; wv » dans le User-Agent). */
     val uaWithoutWv: Boolean = false,
 ) {
+    val preferredRetailer: Retailer get() = Retailer.parse(retailer)
+
+    fun leclercStore(): LeclercStore? = if (leclercStoreId.isBlank() || leclercHost.isBlank()) null
+        else LeclercStore(leclercStoreId, leclercNoPR.ifBlank { leclercStoreId }, leclercHost, leclercStoreName)
+
+    /** Nom du drive choisi pour une enseigne (vide si aucun). */
+    fun storeName(r: Retailer): String = when (r) {
+        Retailer.CARREFOUR -> storeName
+        Retailer.LECLERC -> leclercStoreName.ifBlank { leclercStoreId.takeIf { it.isNotBlank() }?.let { "Drive $it" }.orEmpty() }
+        Retailer.AUCHAN -> auchanStoreName
+    }
+
     fun driveContext(): DriveContext? = basketServiceId.takeIf { it.isNotBlank() }?.let {
         DriveContext(it, subBasketType.ifBlank { fr.mescourses.core.carrefour.CarrefourRoutes.DEFAULT_SUB_BASKET }, facilityServiceId.ifBlank { null })
     }
@@ -60,6 +83,12 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
         val subBasket = stringPreferencesKey("cf_sub_basket")
         val facility = stringPreferencesKey("cf_facility_service")
         val uaWithoutWv = booleanPreferencesKey("cf_ua_without_wv")
+        val retailer = stringPreferencesKey("retailer")
+        val lcStore = stringPreferencesKey("lc_store_id")
+        val lcNoPR = stringPreferencesKey("lc_store_nopr")
+        val lcHost = stringPreferencesKey("lc_host")
+        val lcName = stringPreferencesKey("lc_store_name")
+        val auName = stringPreferencesKey("au_store_name")
     }
 
     private fun Preferences.toSettings() = Settings(
@@ -78,6 +107,12 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
         subBasketType = this[K.subBasket].orEmpty(),
         facilityServiceId = this[K.facility].orEmpty(),
         uaWithoutWv = this[K.uaWithoutWv] ?: false,
+        retailer = this[K.retailer] ?: Retailer.CARREFOUR.name,
+        leclercStoreId = this[K.lcStore].orEmpty(),
+        leclercNoPR = this[K.lcNoPR].orEmpty(),
+        leclercHost = this[K.lcHost].orEmpty(),
+        leclercStoreName = this[K.lcName].orEmpty(),
+        auchanStoreName = this[K.auName].orEmpty(),
     )
 
     val state: StateFlow<Settings> = context.dataStore.data
@@ -104,6 +139,12 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
             prefs[K.subBasket] = s.subBasketType
             prefs[K.facility] = s.facilityServiceId
             prefs[K.uaWithoutWv] = s.uaWithoutWv
+            prefs[K.retailer] = s.retailer
+            prefs[K.lcStore] = s.leclercStoreId
+            prefs[K.lcNoPR] = s.leclercNoPR
+            prefs[K.lcHost] = s.leclercHost
+            prefs[K.lcName] = s.leclercStoreName
+            prefs[K.auName] = s.auchanStoreName
         }
     }
 }

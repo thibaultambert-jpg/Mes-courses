@@ -54,6 +54,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import fr.mescourses.app.AppContainer
+import fr.mescourses.app.retail.SessionState
+import fr.mescourses.app.ui.retail.RetailerChips
+import fr.mescourses.app.ui.retail.RetailerDot
+import fr.mescourses.core.retail.Retailer
+import androidx.compose.runtime.collectAsState
 import fr.mescourses.app.data.Settings
 import fr.mescourses.app.llm.DownloadState
 import fr.mescourses.app.llm.ModelCatalog
@@ -89,19 +94,18 @@ class SettingsViewModel(val c: AppContainer) : ViewModel() {
         if (settings.value.modelPath == file.absolutePath) update { it.copy(modelPath = "") }
     }
 
-    val session = c.session.state
+    fun session(r: Retailer) = c.session(r).state
 
-    fun logout() = c.session.logout()
+    fun logout() = c.logoutAll()
 }
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onLogin: () -> Unit, onChooseStore: () -> Unit, onDebug: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStore: (Retailer) -> Unit, onDebug: () -> Unit) {
     val vm = containerViewModel { SettingsViewModel(it) }
     val s by vm.settings.collectAsStateWithLifecycle()
     val download by vm.download.collectAsStateWithLifecycle()
     val installed by vm.installed.collectAsStateWithLifecycle()
     val testResult by vm.testResult.collectAsStateWithLifecycle()
-    val session by vm.session.collectAsStateWithLifecycle()
     var versionTaps by remember { mutableStateOf(0) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::import) }
 
@@ -187,30 +191,37 @@ fun SettingsScreen(onBack: () -> Unit, onLogin: () -> Unit, onChooseStore: () ->
             }
 
             SectionCard {
-                SectionHeader("Carrefour Drive", emoji = "🛒")
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Compte", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                    StatChip(session.label, emphasized = session != fr.mescourses.app.carrefour.SessionState.CONNECTE)
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (session == fr.mescourses.app.carrefour.SessionState.CONNECTE) {
-                        OutlinedButton(onClick = vm::logout) { Text("Se déconnecter") }
-                    } else {
-                        Button(onClick = onLogin) { Text("Se connecter") }
+                SectionHeader("Mes drives", emoji = "🛒")
+                Text("Enseigne préférée", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "Utilisée par défaut pour le panier et l'assistant. Tu peux en changer pour un panier, ou comparer les prix, depuis l'écran Panier.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                RetailerChips(selected = s.preferredRetailer, preferred = null) { r -> vm.update { it.copy(retailer = r.name) } }
+                Retailer.entries.forEach { r ->
+                    val session by vm.session(r).collectAsState()
+                    HorizontalDivider()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RetailerDot(r, 32.dp)
+                        Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                            Text(r.label, style = MaterialTheme.typography.bodyLarge)
+                            Text(s.storeName(r).ifBlank { "Aucun drive choisi" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        StatChip(session.label, emphasized = session != SessionState.CONNECTE)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (session != SessionState.CONNECTE) Button(onClick = { onLogin(r) }) { Text("Se connecter") }
+                        TextButton(onClick = { onChooseStore(r) }) { Text(if (s.storeName(r).isBlank()) "Choisir le drive" else "Changer de drive") }
                     }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Drive", style = MaterialTheme.typography.bodyLarge)
-                        Text(s.storeName.ifBlank { "Aucun drive choisi" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    TextButton(onClick = onChooseStore) { Text(if (s.storeName.isBlank()) "Choisir" else "Changer") }
-                }
+                HorizontalDivider()
                 SwitchRow("Privilégier le bio", "Cherche d'abord la version bio de chaque produit", s.preferOrganic) { v ->
                     vm.update { it.copy(preferOrganic = v) }
                 }
+                OutlinedButton(onClick = vm::logout) { Text("Se déconnecter de toutes les enseignes") }
                 Text(
-                    "Intégration non officielle, pour un usage personnel. La commande, le créneau et le paiement se font toujours sur carrefour.fr.",
+                    "Intégrations non officielles, pour un usage personnel. La commande, le créneau et le paiement se font toujours sur le site de l'enseigne.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

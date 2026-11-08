@@ -1,4 +1,4 @@
-package fr.mescourses.app.ui.carrefour
+package fr.mescourses.app.ui.retail
 
 import android.content.Intent
 import androidx.compose.foundation.horizontalScroll
@@ -34,7 +34,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import fr.mescourses.app.ui.common.ScreenScaffold
 import fr.mescourses.app.ui.common.appContainer
 import fr.mescourses.app.ui.components.SectionCard
+import fr.mescourses.core.auchan.AuchanRoutes
 import fr.mescourses.core.carrefour.CarrefourRoutes
+import fr.mescourses.core.leclerc.LeclercRoutes
+import fr.mescourses.core.retail.Retailer
 import fr.mescourses.core.carrefour.HttpResponse
 import kotlinx.coroutines.launch
 
@@ -46,31 +49,45 @@ fun anonymize(text: String): String = text
 
 /** Écran de test des requêtes Carrefour (accès caché : 7 appuis sur la version, dans Réglages). */
 @Composable
-fun CarrefourDebugScreen(onBack: () -> Unit, onOpenSite: () -> Unit) {
+fun RetailerDebugScreen(onBack: () -> Unit, onOpenSite: (Retailer) -> Unit) {
     val c = appContainer()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val log by c.bridge.log.collectAsStateWithLifecycle()
+    var retailer by remember { mutableStateOf(c.activeRetailer.value) }
+    val log by c.bridge(retailer).log.collectAsStateWithLifecycle()
     val settings by c.settings.state.collectAsStateWithLifecycle()
     var method by remember { mutableStateOf("GET") }
-    var path by remember { mutableStateOf(CarrefourRoutes.CART) }
+    val presets = when (retailer) {
+        Retailer.CARREFOUR -> listOf(
+            "Panier" to CarrefourRoutes.CART,
+            "Recherche lait" to CarrefourRoutes.search("lait"),
+            "Drive favori" to CarrefourRoutes.FAVORITE_STORE,
+        )
+        Retailer.LECLERC -> settings.leclercStore()?.let { s ->
+            listOf("Panier (page)" to LeclercRoutes.cartPage(s), "Recherche lait" to LeclercRoutes.search(s, "lait"))
+        } ?: listOf("Magasins 37700" to LeclercRoutes.locatorAutocomplete("37700"))
+        Retailer.AUCHAN -> listOfNotNull(
+            "Recherche lait" to AuchanRoutes.search("lait"),
+            c.auchanTokens.current()?.consentId?.let { "Panier (API)" to AuchanRoutes.cartMine(it) },
+        )
+    }
+    var path by remember(retailer) { mutableStateOf(presets.first().second) }
     var body by remember { mutableStateOf("") }
     var result by remember { mutableStateOf<HttpResponse?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var millis by remember { mutableStateOf(0L) }
     var driveInfo by remember { mutableStateOf<String?>(null) }
 
-    ScreenScaffold(title = "Debug Carrefour", onBack = onBack) { padding ->
+    ScreenScaffold(title = "Debug ${retailer.label}", onBack = onBack) { padding ->
         Column(
             Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf(
-                    "Panier" to CarrefourRoutes.CART,
-                    "Recherche lait" to CarrefourRoutes.search("lait"),
-                    "Drive favori" to CarrefourRoutes.FAVORITE_STORE,
-                ).forEach { (label, p) -> FilterChip(selected = path == p, onClick = { method = "GET"; path = p; body = "" }, label = { Text(label) }) }
+                Retailer.entries.forEach { r -> FilterChip(selected = retailer == r, onClick = { retailer = r; result = null; error = null; driveInfo = null }, label = { Text(r.label) }) }
+            }
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                presets.forEach { (label, p) -> FilterChip(selected = path == p, onClick = { method = "GET"; path = p; body = "" }, label = { Text(label) }) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf("GET", "POST", "PATCH").forEach { m -> FilterChip(selected = method == m, onClick = { method = m }, label = { Text(m) }) }
@@ -84,7 +101,14 @@ fun CarrefourDebugScreen(onBack: () -> Unit, onOpenSite: () -> Unit) {
                     error = null; result = null
                     val start = System.currentTimeMillis()
                     try {
-                        result = c.carrefour.call(method, path, body.ifBlank { null })
+                        result = if (retailer == Retailer.CARREFOUR) {
+                            c.carrefour.call(method, path, body.ifBlank { null })
+                        } else {
+                            // Requête brute par la WebView de l'enseigne (en-têtes de l'API panier pour Auchan).
+                            val headers = if (path.startsWith(AuchanRoutes.API)) mapOf("accept" to "application/json") + (c.auchanTokens.current()?.headers ?: emptyMap())
+                                else mapOf("accept" to "application/json, text/html")
+                            c.bridge(retailer).request(method, path, headers, body.ifBlank { null })
+                        }
                     } catch (e: Exception) {
                         error = "${e::class.simpleName} : ${e.message}"
                     }
@@ -93,7 +117,22 @@ fun CarrefourDebugScreen(onBack: () -> Unit, onOpenSite: () -> Unit) {
             }) { Text("Envoyer") }
 
             // Identifiants du drive seulement (aucune donnée personnelle).
-            OutlinedButton(onClick = {
+            if (retailer == Retailer.LECLERC) Text(
+                settings.leclercStore()?.let { "Drive : ${it.id}-${it.noPR} sur ${it.host}" } ?: "Aucun drive Leclerc choisi.",
+                style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
+            )
+            if (retailer == Retailer.AUCHAN) {
+                // On dit seulement si les jetons ont été vus, jamais leur valeur.
+                val t = c.auchanTokens.current()
+                Text(
+                    "Jetons API relevés : ${t?.headers?.keys?.sorted()?.joinToString().orEmpty().ifBlank { "aucun" }}
+" +
+                        "consentId : ${if (t?.consentId != null) "oui" else "non"}
+Magasin lu : ${settings.auchanStoreName.ifBlank { "—" }}",
+                    style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
+                )
+            }
+            if (retailer == Retailer.CARREFOUR) OutlinedButton(onClick = {
                 scope.launch {
                     driveInfo = "Recherche…"
                     val ctx = c.carrefour.discoverContext()
@@ -134,7 +173,7 @@ fun CarrefourDebugScreen(onBack: () -> Unit, onOpenSite: () -> Unit) {
                     }
                     Switch(checked = settings.uaWithoutWv, onCheckedChange = { v -> scope.launch { c.settings.update { it.copy(uaWithoutWv = v) } } })
                 }
-                OutlinedButton(onClick = onOpenSite) { Text("Ouvrir la WebView visible") }
+                OutlinedButton(onClick = { onOpenSite(retailer) }) { Text("Ouvrir ${retailer.site} (WebView visible)") }
             }
 
             if (log.isNotEmpty()) {

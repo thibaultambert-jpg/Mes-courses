@@ -130,7 +130,7 @@ class RecipeDetailViewModel(private val c: AppContainer, private val id: Long) :
         messages.value = "Déplacée vers « ${status.label} »"
     }
 
-    /** Envoie les ingrédients (mis à l'échelle) à l'écran Panier Carrefour. */
+    /** Envoie les ingrédients (mis à l'échelle) à l'écran Panier. */
     fun sendToCart(r: Recipe) {
         c.pendingCart.value = fr.mescourses.app.PendingCart(
             label = r.title,
