@@ -21,9 +21,9 @@ object LeclercRoutes {
     fun isLocator(url: String) = url.startsWith(LOCATOR)
 
     /** Racine du drive, ex. https://fd9-courses.leclercdrive.fr/magasin-053701-053701 */
-    fun storeBase(store: LeclercStore) = "https://${store.host}/${store.path}"
-    /** Page du drive (stationnement de la WebView, choix du drive sur le site, connexion). */
-    fun storePage(store: LeclercStore) = storeBase(store) + "/"
+    fun storeBase(store: LeclercStore) = "https://${store.host}/${store.base}"
+    /** Page d'accueil du drive (stationnement de la WebView, choix du drive sur le site, connexion). */
+    fun storePage(store: LeclercStore) = store.homeUrl
     fun search(store: LeclercStore, query: String) = storeBase(store) + "/recherche.aspx?TexteRecherche=${enc(query)}"
     fun cartOp(store: LeclercStore) = storeBase(store) + "/panier.aspx?op=1"
     /** Recherche sans résultat : la page ne contient alors que les produits du panier. */
@@ -70,4 +70,10 @@ data class LeclercStore(
     val host: String,
     val name: String = "",
     val path: String = "magasin-$id-$noPR",
-)
+) {
+    /** Racine des pages du drive : le chemin sans « .aspx » ni « / » final (`magasin-159201-159201-colombes-michelet`). */
+    val base: String get() = path.trimEnd('/').removeSuffix(".aspx").removeSuffix(".ASPX")
+
+    /** Page d'accueil telle que donnée par le site (`…/magasin-…-colombes-michelet.aspx`), sinon `…/base/`. */
+    val homeUrl: String get() = "https://$host/" + if (path.endsWith(".aspx", ignoreCase = true)) path else "$base/"
+}

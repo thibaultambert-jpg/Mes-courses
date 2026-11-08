@@ -63,6 +63,9 @@ class RetailerSession(
                 hasSsoCookie() -> SessionState.CONNECTE
                 else -> SessionState.CONNEXION_REQUISE
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Tâche annulée (écran quitté) : pas une erreur de l'enseigne.
+            throw e
         } catch (e: Exception) {
             lastProblem = e.message ?: e.toString()
             _state.value

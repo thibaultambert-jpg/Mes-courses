@@ -146,6 +146,17 @@ class LeclercAuchanTest {
         assertEquals(1, cart?.lines?.size)
     }
 
+    @Test fun leclerc_chemin_en_aspx() {
+        // urlSiteCourse donne la page d'accueil en .aspx : les autres pages partent du chemin sans .aspx.
+        val st = LeclercStore("159201", host = "fd14-courses.leclercdrive.fr", path = "magasin-159201-159201-colombes-michelet.aspx")
+        assertEquals("https://fd14-courses.leclercdrive.fr/magasin-159201-159201-colombes-michelet/recherche.aspx?TexteRecherche=lait", LeclercRoutes.search(st, "lait"))
+        assertEquals("https://fd14-courses.leclercdrive.fr/magasin-159201-159201-colombes-michelet/panier.aspx?op=1", LeclercRoutes.cartOp(st))
+        assertEquals("https://fd14-courses.leclercdrive.fr/magasin-159201-159201-colombes-michelet.aspx", LeclercRoutes.storePage(st))
+        assertEquals("magasin-159201-159201-colombes-michelet.aspx", LeclercParsers.pathOf("https://fd14-courses.leclercdrive.fr/magasin-159201-159201-colombes-michelet.aspx"))
+        val noAspx = LeclercStore("053701", host = "fd9-courses.leclercdrive.fr")
+        assertEquals("https://fd9-courses.leclercdrive.fr/magasin-053701-053701/", LeclercRoutes.storePage(noAspx))
+    }
+
     @Test fun leclerc_page_du_drive_introuvable() = runTest {
         val e = assertFailsWith<CarrefourException.NoDrive> {
             LeclercClient(FakeTransport { _, _, _ -> ok("<html>Désolé, la page demandée n'a pas pu être trouvée.</html>") }, { store }).cart()
