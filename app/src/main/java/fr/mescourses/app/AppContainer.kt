@@ -165,7 +165,7 @@ class AppContainer(context: Context) {
         onStoreFound = { s ->
             settings.update {
                 if (it.leclercStoreId.isNotBlank()) it
-                else it.copy(leclercStoreId = s.id, leclercNoPR = s.noPR, leclercHost = s.host, leclercStoreName = s.name)
+                else it.copy(leclercStoreId = s.id, leclercNoPR = s.noPR, leclercHost = s.host, leclercStoreName = s.name, leclercPath = s.path)
             }
         },
     )

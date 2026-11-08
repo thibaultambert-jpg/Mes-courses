@@ -123,7 +123,9 @@ class LeclercAuchanTest {
         val stores = LeclercClient(transport, { null }).stores(0.0, 0.0, "37700", "")
         assertEquals(2, stores.size)
         val first = LeclercClient.storeOf(stores[0])
-        assertEquals(LeclercStore("053701", "053701", "fd9-courses.leclercdrive.fr", "La Ville-aux-Dames"), first)
+        assertEquals(LeclercStore("053701", "053701", "fd9-courses.leclercdrive.fr", "La Ville-aux-Dames", "magasin-053701-053701-La-Ville-aux-Dames"), first)
+        // Les routes gardent le nom de la ville : sans lui, certains drives répondent « page introuvable ».
+        assertEquals("https://fd9-courses.leclercdrive.fr/magasin-053701-053701-La-Ville-aux-Dames/panier.aspx?op=1", LeclercRoutes.cartOp(first!!))
         assertTrue(stores[1].name.contains("relais"))
         assertTrue(transport.calls.last().second.contains("latitude=47.36"))
     }
@@ -140,8 +142,18 @@ class LeclercAuchanTest {
         }
         val client = LeclercClient(transport, { chosen }, onStoreFound = { chosen = it })
         val cart = client.sessionProbe()
-        assertEquals(LeclercStore("092001", "092001", "fd14-courses.leclercdrive.fr", "Colombes Michelet"), chosen)
+        assertEquals(LeclercStore("092001", "092001", "fd14-courses.leclercdrive.fr", "Colombes Michelet", "magasin-092001-092001-Colombes-Michelet"), chosen)
         assertEquals(1, cart?.lines?.size)
+    }
+
+    @Test fun leclerc_page_du_drive_introuvable() = runTest {
+        val e = assertFailsWith<CarrefourException.NoDrive> {
+            LeclercClient(FakeTransport { _, _, _ -> ok("<html>Désolé, la page demandée n'a pas pu être trouvée.</html>") }, { store }).cart()
+        }
+        assertTrue(e.message!!.contains("choisis de nouveau"), e.message)
+        assertFailsWith<CarrefourException.NoDrive> {
+            LeclercClient(FakeTransport { _, _, _ -> HttpResponse(404, emptyMap(), "") }, { store }, rateLimitWaitMs = 0).cart()
+        }
     }
 
     @Test fun leclerc_sans_drive_ni_connexion() = runTest {

@@ -13,8 +13,9 @@ Légende : ✅ relevé et rejoué par la source · ⚠️ à confirmer sur le t�
 ## 0. Principe
 
 - Chaque drive a **son propre hôte** : `https://fdN-courses.leclercdrive.fr` (fd8, fd9, fd14… selon le magasin) et
-  son chemin `magasin-{noPL}-{noPR}` (les deux numéros sont égaux pour un drive ; le nom de ville qui suit dans les
-  adresses du site est décoratif). ✅
+  son chemin `magasin-{noPL}-{noPR}-{Ville}` (les deux numéros sont égaux pour un drive). ⚠️ **Le nom de la ville
+  n'est pas décoratif pour tous les drives** : sans lui, `fd14-courses…/magasin-159201-159201/` répond « page introuvable »
+  (relevé sur le téléphone le 08/11/2026). L'app garde le chemin exact donné par `urlSiteCourse` ou par l'adresse du site.
 - Protection **DataDome** : un client HTTP natif reçoit `403`. Les requêtes partent donc d'une **page du drive** dans la
   WebView invisible (même hôte, cookies du navigateur). ✅
 - **Rythme** : des écritures envoyées en rafale déclenchent DataDome (403 sur tout). L'app envoie une requête à la fois,

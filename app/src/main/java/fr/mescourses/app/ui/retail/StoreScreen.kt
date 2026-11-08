@@ -95,7 +95,7 @@ fun StoreScreen(retailer: Retailer, onBack: () -> Unit, onOpenSite: (String) -> 
         when (retailer) {
             Retailer.CARREFOUR -> c.settings.update { it.copy(storeId = store.id, storeName = store.name, storeRef = store.ref.orEmpty(), basketServiceId = "", facilityServiceId = "") }
             Retailer.LECLERC -> LeclercClient.storeOf(store)?.let { s ->
-                c.settings.update { it.copy(leclercStoreId = s.id, leclercNoPR = s.noPR, leclercHost = s.host, leclercStoreName = s.name) }
+                c.settings.update { it.copy(leclercStoreId = s.id, leclercNoPR = s.noPR, leclercHost = s.host, leclercStoreName = s.name, leclercPath = s.path) }
                 // La session suit le drive ouvert dans le navigateur : on ouvre ce drive dans la WebView, puis on vérifie.
                 runCatching { c.bridge(retailer).reloadAndWait() }
                 c.session(retailer).check()

@@ -52,13 +52,22 @@ class LeclercClient(
     private fun currentStore(): LeclercStore = store() ?: throw CarrefourException.NoDrive(who)
 
     /** Page HTML d'un drive, vérifiée : un 200 sans contenu de drive = anti-robot ou session expirée. */
+    /** Adresse du drive refusée par le site (enregistrée sans le nom de la ville, ou drive fermé) : drive à rechoisir. */
+    private fun notFound() = CarrefourException.NoDrive(who, "page du drive introuvable (${store()?.path}) : choisis de nouveau ton drive")
+
     /**
      * Page HTML du drive, vérifiée. Une page « session expirée » vient souvent d'une session liée à un autre drive :
      * on recharge une fois la page du drive dans la WebView ([rebind]) pour y relier la session, puis on réessaie.
      */
     private suspend fun storePage(url: String, allowRebind: Boolean = true): String {
-        val html = http.call("GET", url, LeclercRoutes.HTML_HEADERS).body
+        val response = try {
+            http.call("GET", url, LeclercRoutes.HTML_HEADERS)
+        } catch (e: CarrefourException.Http) {
+            if (e.status == 404) throw notFound() else throw e
+        }
+        val html = response.body
         if (LeclercParsers.isStorePage(html)) return html
+        if (LeclercParsers.isNotFoundPage(html)) throw notFound()
         if (LeclercParsers.isExpiredPage(html)) {
             if (allowRebind) {
                 rebind()
@@ -150,7 +159,9 @@ class LeclercClient(
         fun storeOf(s: Store): LeclercStore? {
             val parts = s.ref?.split('|') ?: return null
             val host = parts.getOrNull(0)?.takeIf { it.isNotBlank() } ?: return null
-            return LeclercStore(s.id, parts.getOrNull(1)?.ifBlank { null } ?: s.id, host, s.name)
+            val noPR = parts.getOrNull(1)?.ifBlank { null } ?: s.id
+            val path = parts.getOrNull(2)?.ifBlank { null } ?: "magasin-${s.id}-$noPR"
+            return LeclercStore(s.id, noPR, host, s.name, path)
         }
     }
 }

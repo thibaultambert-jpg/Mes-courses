@@ -37,6 +37,8 @@ data class Settings(
     val leclercNoPR: String = "",
     val leclercHost: String = "",
     val leclercStoreName: String = "",
+    /** Segment exact de l'adresse du drive Leclerc (`magasin-159201-159201-Colombes-Michelet`). */
+    val leclercPath: String = "",
     /** Magasin Auchan, lu dans le panier (le drive se choisit sur auchan.fr). */
     val auchanStoreName: String = "",
     /** Leclerc : WebView présentée comme Chrome (true) ou avec son User-Agent d'origine. */
@@ -56,7 +58,9 @@ data class Settings(
     val preferredRetailer: Retailer get() = Retailer.parse(retailer)
 
     fun leclercStore(): LeclercStore? = if (leclercStoreId.isBlank() || leclercHost.isBlank()) null
-        else LeclercStore(leclercStoreId, leclercNoPR.ifBlank { leclercStoreId }, leclercHost, leclercStoreName)
+        else leclercNoPR.ifBlank { leclercStoreId }.let { noPR ->
+            LeclercStore(leclercStoreId, noPR, leclercHost, leclercStoreName, leclercPath.ifBlank { "magasin-$leclercStoreId-$noPR" })
+        }
 
     /** Nom du drive choisi pour une enseigne (vide si aucun). */
     fun storeName(r: Retailer): String = when (r) {
@@ -93,6 +97,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
         val lcNoPR = stringPreferencesKey("lc_store_nopr")
         val lcHost = stringPreferencesKey("lc_host")
         val lcName = stringPreferencesKey("lc_store_name")
+        val lcPath = stringPreferencesKey("lc_store_path")
         val auName = stringPreferencesKey("au_store_name")
         val lcChrome = booleanPreferencesKey("lc_chrome_ua")
     }
@@ -119,6 +124,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
         leclercNoPR = this[K.lcNoPR].orEmpty(),
         leclercHost = this[K.lcHost].orEmpty(),
         leclercStoreName = this[K.lcName].orEmpty(),
+        leclercPath = this[K.lcPath].orEmpty(),
         auchanStoreName = this[K.auName].orEmpty(),
         leclercChromeUa = this[K.lcChrome] ?: true,
     )
@@ -153,6 +159,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
             prefs[K.lcNoPR] = s.leclercNoPR
             prefs[K.lcHost] = s.leclercHost
             prefs[K.lcName] = s.leclercStoreName
+            prefs[K.lcPath] = s.leclercPath
             prefs[K.auName] = s.auchanStoreName
             prefs[K.lcChrome] = s.leclercChromeUa
         }

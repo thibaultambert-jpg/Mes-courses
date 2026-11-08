@@ -101,6 +101,7 @@ object LeclercParsers {
     /** Est-ce une vraie page de drive ? Sinon : page anti-robot (DataDome) ou « session expirée ». */
     fun isStorePage(html: String) = html.contains(LeclercRoutes.STORE_PAGE_MARKER)
     fun isExpiredPage(html: String) = Regex("(?i)session a expir|sessionexpiree").containsMatchIn(html)
+    fun isNotFoundPage(html: String) = Regex("(?i)page demand(?:é|&#233;|&eacute;|e)e n.a pas pu|page introuvable").containsMatchIn(html)
 
     /** Premier lieu proposé par l'autocomplétion : (id Woosmap, code postal, ville). */
     fun parsePlace(body: String): Triple<String, String?, String?>? {
@@ -141,7 +142,7 @@ object LeclercParsers {
                 address = listOfNotNull(p.str("address"), p.str("postalCode")).joinToString(" ").ifBlank { null },
                 city = p.str("city") ?: city,
                 distanceKm = p.num("distance"),
-                ref = "$host|${p.str("noPR") ?: id}",
+                ref = "$host|${p.str("noPR") ?: id}|${pathOf(p.str("urlSiteCourse") ?: p.str("urlBase")).orEmpty()}",
             )
         }
     }
@@ -156,11 +157,17 @@ object LeclercParsers {
     fun storeFromUrl(url: String?): LeclercStore? {
         val m = storeUrl.find(url ?: return null)?.takeIf { it.range.first == 0 } ?: return null
         val (host, id, noPR, slug) = m.destructured
-        return LeclercStore(id, noPR, host, Scrape.decodeEntities(slug.replace('-', ' ')).trim())
+        return LeclercStore(
+            id, noPR, host, Scrape.decodeEntities(slug.replace('-', ' ')).trim(),
+            path = "magasin-$id-$noPR" + if (slug.isNotBlank()) "-$slug" else "",
+        )
     }
 
     /** Premier lien vers un drive trouvé dans une page (le drive du compte, sur la page d'accueil connectée). */
     fun storeInPage(html: String): LeclercStore? = storeUrl.find(html)?.let { storeFromUrl(it.value) }
+
+    /** Segment `magasin-…` d'une adresse de drive (avec le nom de la ville quand il y est). */
+    fun pathOf(url: String?): String? = url?.let { Regex("""/(magasin-\d+-\d+[^/?#"'\s<>]*)""").find(it)?.groupValues?.get(1) }
 
     private fun hostOf(url: String?): String? = url?.let { Regex("^https?://([^/]+)").find(it)?.groupValues?.get(1) }
 }

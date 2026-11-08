@@ -123,7 +123,7 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
         c.leclerc.forgetContext()
         c.settings.update {
             it.copy(
-                leclercStoreId = found.id, leclercNoPR = found.noPR, leclercHost = found.host,
+                leclercStoreId = found.id, leclercNoPR = found.noPR, leclercHost = found.host, leclercPath = found.path,
                 leclercStoreName = found.name.ifBlank { "Drive ${found.id}" },
             )
         }
@@ -369,7 +369,11 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
                             when {
                                 current == null -> { scope.launch { useLeclercStore(found) } }
                                 current.id != found.id || current.host != found.host -> { siteStore = found }
-                                else -> { siteStore = null }
+                                // Même drive : on complète son adresse exacte (avec le nom de la ville) si elle manquait.
+                                else -> {
+                                    siteStore = null
+                                    if (found.path != current.path) scope.launch { c.settings.update { it.copy(leclercPath = found.path) } }
+                                }
                             }
                             Unit
                         }

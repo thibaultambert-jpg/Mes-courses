@@ -21,7 +21,7 @@ object LeclercRoutes {
     fun isLocator(url: String) = url.startsWith(LOCATOR)
 
     /** Racine du drive, ex. https://fd9-courses.leclercdrive.fr/magasin-053701-053701 */
-    fun storeBase(store: LeclercStore) = "https://${store.host}/magasin-${store.id}-${store.noPR}"
+    fun storeBase(store: LeclercStore) = "https://${store.host}/${store.path}"
     /** Page du drive (stationnement de la WebView, choix du drive sur le site, connexion). */
     fun storePage(store: LeclercStore) = storeBase(store) + "/"
     fun search(store: LeclercStore, query: String) = storeBase(store) + "/recherche.aspx?TexteRecherche=${enc(query)}"
@@ -59,5 +59,15 @@ object LeclercRoutes {
     private fun enc(v: String) = URLEncoder.encode(v, Charsets.UTF_8).replace("+", "%20")
 }
 
-/** Drive Leclerc choisi : numéro (noPL), point de retrait (noPR, égal pour un drive) et hôte des courses. */
-data class LeclercStore(val id: String, val noPR: String = id, val host: String, val name: String = "")
+/**
+ * Drive Leclerc choisi : numéro (noPL), point de retrait (noPR, égal pour un drive), hôte des courses, nom, et
+ * `path`, le segment exact de l'adresse (`magasin-159201-159201-Colombes-Michelet`) : sans le nom de la ville,
+ * certains drives répondent « page introuvable ».
+ */
+data class LeclercStore(
+    val id: String,
+    val noPR: String = id,
+    val host: String,
+    val name: String = "",
+    val path: String = "magasin-$id-$noPR",
+)
