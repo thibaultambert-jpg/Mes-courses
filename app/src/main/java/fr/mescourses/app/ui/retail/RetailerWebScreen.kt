@@ -40,6 +40,9 @@ import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.os.Message
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.jsonPrimitive
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.webkit.ConsoleMessage
@@ -63,6 +66,15 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicReference
 
 enum class WebMode { LOGIN, SITE }
+
+private val prettyJson = Json { prettyPrint = true }
+
+/** Diagnostic d'une page blanche : élément au centre, iframes, styles, champs (jamais leurs valeurs). */
+private const val DIAG_JS = """(function(){function d(e){if(!e)return null;var s=getComputedStyle(e),r=e.getBoundingClientRect(),o={tag:e.tagName.toLowerCase(),taille:Math.round(r.width)+'x'+Math.round(r.height),position:s.position,display:s.display,visibility:s.visibility,opacity:s.opacity,z:s.zIndex,fond:s.backgroundColor};if(e.id)o.id=e.id;var c=typeof e.className==='string'?e.className:'';if(c)o.classes=c.slice(0,80);if(e.tagName==='IFRAME'){try{var u=new URL(e.src,location.href);o.src=u.host+u.pathname}catch(x){o.src='?'}}return o;}var w=innerWidth,h=innerHeight,centre=[],e=document.elementFromPoint(w/2,h/2);for(var i=0;e&&i<6;i++){centre.push(d(e));e=e.parentElement;}var ifr=[];document.querySelectorAll('iframe').forEach(function(f){var x=d(f),r=f.getBoundingClientRect();x.couvre=r.width>=w*0.8&&r.height>=h*0.8;ifr.push(x);});var f=document.forms[0],vis=0,cach=0,act=null;if(f){Array.prototype.forEach.call(f.elements,function(el){var r=el.getBoundingClientRect();if(r.width>0&&r.height>0&&getComputedStyle(el).visibility!=='hidden')vis++;else cach++;});try{act=new URL(f.action,location.href).host}catch(x){}}return JSON.stringify({etat:document.readyState,ecran:w+'x'+h,page:document.documentElement.scrollWidth+'x'+document.documentElement.scrollHeight,defilement:scrollX+','+scrollY,centre:centre,iframes:ifr,html:d(document.documentElement),body:d(document.body),champsVisibles:vis,champsCaches:cach,action:act,texte:(document.body?document.body.innerText:'').replace(/\s+/g,' ').slice(0,150)});})()"""
+
+/** Masque les calques plein écran vides (sans texte), sauf le captcha et ce qui contient le formulaire. */
+private const val UNVEIL_JS = """(function(){var w=innerWidth,h=innerHeight,n=0;document.querySelectorAll('body *').forEach(function(e){if(e.tagName==='IFRAME'&&/hcaptcha/.test(e.src))return;var s=getComputedStyle(e);if(s.position!=='fixed'&&s.position!=='absolute')return;var r=e.getBoundingClientRect();if(r.width<w*0.8||r.height<h*0.8)return;if((e.innerText||'').trim().length>20)return;if(e.querySelector('iframe[src*=hcaptcha], form, input'))return;e.style.setProperty('display','none','important');n++;});document.documentElement.style.overflow='auto';if(document.body)document.body.style.overflow='auto';return n;})()"""
+
 
 /**
  * Le site d'une enseigne dans une WebView VISIBLE : connexion (captcha, code e-mail… saisis par l'utilisateur,
@@ -91,14 +103,14 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
     val jsErrors = remember { mutableStateListOf<String>() }
     var menuOpen by remember { mutableStateOf(false) }
     var diagnostic by remember { mutableStateOf<String?>(null) }
+    /** Adresses hCaptcha chargées et leurs erreurs (relevées hors du fil principal, d'où la liste synchronisée). */
+    val hcaptchaLog = remember { java.util.Collections.synchronizedList(mutableListOf<String>()) }
     val settingsState by c.settings.state.collectAsStateWithLifecycle()
 
     /** Rassemble ce qu'il faut pour comprendre une page blanche (jamais de cookie ni de contenu de formulaire). */
     fun runDiagnostic() {
         val v = popup ?: view ?: return
-        val js = "(function(){var h=[];document.querySelectorAll('iframe').forEach(function(i){try{h.push(new URL(i.src,location.href).host)}catch(e){h.push('?')}});" +
-            "return JSON.stringify({etat:document.readyState,titre:document.title.slice(0,80),texte:document.body?document.body.innerText.length:0," +
-            "elements:document.getElementsByTagName('*').length,formulaires:document.forms.length,champs:document.querySelectorAll('input').length,iframes:h});})()"
+        val js = DIAG_JS
         diagnostic = "Analyse de la page…"
         v.evaluateJavascript(js) { result ->
             diagnostic = buildString {
@@ -108,7 +120,12 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
                 appendLine("WebView : ${WebView.getCurrentWebViewPackage()?.let { "${it.packageName} ${it.versionName}" } ?: "?"}")
                 appendLine("Cookies tiers : ${if (CookieManager.getInstance().acceptThirdPartyCookies(v)) "acceptés" else "refusés"}")
                 appendLine("Erreur de chargement : ${loadError ?: "aucune"}")
-                appendLine("Contenu : ${result?.trim('"')?.replace("\\\"", "\"") ?: "?"}")
+                // evaluateJavascript rend une chaîne JSON encodée : on la décode puis on l'indente.
+                val raw = runCatching { Json.parseToJsonElement(result ?: "").jsonPrimitive.content }.getOrNull()
+                val pretty = raw?.let { r -> runCatching { prettyJson.encodeToString(JsonElement.serializer(), Json.parseToJsonElement(r)) }.getOrNull() ?: r }
+                appendLine("Contenu : ${pretty ?: result ?: "?"}")
+                appendLine("Ressources hCaptcha (${hcaptchaLog.size}) :")
+                synchronized(hcaptchaLog) { if (hcaptchaLog.isEmpty()) appendLine("  aucune") else hcaptchaLog.takeLast(15).forEach { appendLine("  $it") } }
                 appendLine("Erreurs JS (${jsErrors.size}) :")
                 if (jsErrors.isEmpty()) appendLine("  aucune") else jsErrors.forEach { appendLine("  $it") }
             }.trimEnd()
@@ -196,6 +213,13 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
                             },
                         )
                     }
+                    DropdownMenuItem(text = { Text("Afficher la page sans calque") }, onClick = {
+                        menuOpen = false
+                        // Masque les calques plein écran vides qui couvriraient le formulaire (jamais le captcha ni le formulaire).
+                        (popup ?: view)?.evaluateJavascript(UNVEIL_JS) { n ->
+                            Toast.makeText(context, "Calques masqués : ${n ?: "0"}", Toast.LENGTH_SHORT).show()
+                        }
+                    })
                     DropdownMenuItem(text = { Text("Diagnostic") }, onClick = { menuOpen = false; runDiagnostic() })
                 }
             }
@@ -229,6 +253,13 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
             /** Clients communs à la page et aux fenêtres qu'elle ouvre. */
             fun setup(wv: WebView, isPopup: Boolean) {
                 bridge.configure(wv)
+                // Les cadres du captcha (hCaptcha) peuvent rester blancs en rendu logiciel.
+                wv.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
+                if (retailer == Retailer.LECLERC) {
+                    // Viewport normal : avec un viewport élargi, le défi plein écran peut sortir de la zone affichée.
+                    wv.settings.useWideViewPort = false
+                    wv.settings.loadWithOverviewMode = false
+                }
                 // Le site peut ouvrir de vraies fenêtres (connexion) : on les gère au lieu de perdre le lien avec la page.
                 wv.settings.setSupportMultipleWindows(true)
                 wv.webChromeClient = object : WebChromeClient() {
@@ -285,10 +316,12 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
 
                     override fun onReceivedError(v: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
                         if (request?.isForMainFrame == true) loadError = "${error?.description ?: "erreur"} (${request.url.host})"
+                        else if (request?.url?.host?.contains("hcaptcha") == true) hcaptchaLog += "⚠ ${error?.description} ${request.url.host}${request.url.path}"
                     }
 
                     override fun onReceivedHttpError(v: WebView?, request: WebResourceRequest?, errorResponse: WebResourceResponse?) {
                         if (request?.isForMainFrame == true) loadError = "HTTP ${errorResponse?.statusCode} (${request.url.host})"
+                        else if (request?.url?.host?.contains("hcaptcha") == true) hcaptchaLog += "⚠ HTTP ${errorResponse?.statusCode} ${request.url.host}${request.url.path}"
                     }
 
                     override fun onPageFinished(v: WebView?, url: String?) {
@@ -317,6 +350,10 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
                     // Auchan : les jetons de l'API panier sont relevés aussi sur la page visible.
                     override fun shouldInterceptRequest(v: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                         bridge.observe(request)
+                        request?.url?.takeIf { it.host?.contains("hcaptcha") == true }?.let { u ->
+                            hcaptchaLog += "${request.method} ${u.host}${u.path}"
+                            synchronized(hcaptchaLog) { while (hcaptchaLog.size > 40) hcaptchaLog.removeAt(0) }
+                        }
                         return null
                     }
                 }
