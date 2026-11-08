@@ -309,10 +309,11 @@ private fun ProductThumb(p: Product, size: Int) {
         Modifier.size(size.dp).clip(RoundedCornerShape(10.dp)).background(Color.White),
         contentAlignment = Alignment.Center,
     ) {
-        var failed by remember(p.imageUrl) { mutableStateOf(false) }
-        if (p.imageUrl != null && !failed) {
+        val imageUrl = p.imageUrl
+        var failed by remember(imageUrl) { mutableStateOf(false) }
+        if (imageUrl != null && !failed) {
             AsyncImage(
-                model = carrefourImage(p.imageUrl),
+                model = carrefourImage(imageUrl),
                 contentDescription = p.name,
                 contentScale = ContentScale.Fit,
                 onError = { failed = true },
