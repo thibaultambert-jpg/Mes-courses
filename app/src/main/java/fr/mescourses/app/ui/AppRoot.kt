@@ -43,6 +43,8 @@ import fr.mescourses.app.ui.retail.WriteConfirmationDialog
 import fr.mescourses.app.ui.cart.CartScreen
 import fr.mescourses.app.ui.cart.CompareScreen
 import fr.mescourses.core.retail.Retailer
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.key
 import fr.mescourses.app.ui.cookbook.CookbookScreen
 import fr.mescourses.app.ui.cookbook.RecipeDetailScreen
@@ -119,7 +121,10 @@ fun AppRoot(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
                 AndroidView(
                     factory = { ctx -> container.bridge(r).createWebView(ctx) },
                     onRelease = { container.bridge(r).detach(it) },
-                    modifier = Modifier.size(1.dp).alpha(0.01f),
+                    // Leclerc et Auchan : taille d'écran réaliste (hors de l'écran, sans toucher) pour que leurs pages
+                    // ne soient pas mises en page avec une hauteur nulle. Carrefour : inchangé.
+                    modifier = if (r == Retailer.CARREFOUR) Modifier.size(1.dp).alpha(0.01f)
+                        else Modifier.offset(x = (-3000).dp).requiredSize(400.dp, 800.dp).alpha(0f),
                 )
             }
         }

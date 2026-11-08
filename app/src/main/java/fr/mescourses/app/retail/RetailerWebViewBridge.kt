@@ -145,7 +145,7 @@ class RetailerWebViewBridge(
         webView = view
         val start = site.parking()
         target = start
-        view.loadUrl(start)
+        fr.mescourses.app.ui.retail.loadWhenSized(view, start)
     }
 
     fun detach(view: WebView) {
