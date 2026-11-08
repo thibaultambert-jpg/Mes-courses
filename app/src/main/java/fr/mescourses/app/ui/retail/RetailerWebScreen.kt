@@ -83,7 +83,7 @@ fun loadWhenSized(wv: WebView, url: String) {
 private val prettyJson = Json { prettyPrint = true }
 
 /** Diagnostic d'une page blanche : élément au centre, iframes, styles, champs (jamais leurs valeurs). */
-private const val DIAG_JS = """(function(){function d(e){if(!e)return null;var s=getComputedStyle(e),r=e.getBoundingClientRect(),o={tag:e.tagName.toLowerCase(),taille:Math.round(r.width)+'x'+Math.round(r.height),haut:Math.round(r.top),hauteurEnLigne:e.style.height||undefined,overflow:s.overflow,transform:s.transform==='none'?undefined:s.transform,position:s.position,display:s.display,visibility:s.visibility,opacity:s.opacity,z:s.zIndex,fond:s.backgroundColor};if(e.id)o.id=e.id;var c=typeof e.className==='string'?e.className:'';if(c)o.classes=c.slice(0,80);if(e.tagName==='IFRAME'){try{var u=new URL(e.src,location.href);o.src=u.host+u.pathname}catch(x){o.src='?'}}return o;}var w=innerWidth,h=innerHeight,centre=[],e=document.elementFromPoint(w/2,h/2);for(var i=0;e&&i<6;i++){centre.push(d(e));e=e.parentElement;}var ifr=[];document.querySelectorAll('iframe').forEach(function(f){var x=d(f),r=f.getBoundingClientRect();x.couvre=r.width>=w*0.8&&r.height>=h*0.8;ifr.push(x);});var f=document.forms[0],vis=0,cach=0,act=null;if(f){Array.prototype.forEach.call(f.elements,function(el){var r=el.getBoundingClientRect();if(r.width>0&&r.height>0&&getComputedStyle(el).visibility!=='hidden')vis++;else cach++;});try{act=new URL(f.action,location.href).host}catch(x){}}var champ=null,pc=[];document.querySelectorAll('input').forEach(function(el){var r=el.getBoundingClientRect();if(!champ&&el.type!=='hidden'&&r.width>0)champ=el;});for(var p=champ,k=0;p&&k<9;k++){pc.push(d(p));p=p.parentElement;}return JSON.stringify({etat:document.readyState,fenetre:innerWidth+'x'+innerHeight+' (outer '+outerWidth+'x'+outerHeight+')',parentsDuChamp:pc,ecran:w+'x'+h,page:document.documentElement.scrollWidth+'x'+document.documentElement.scrollHeight,defilement:scrollX+','+scrollY,centre:centre,iframes:ifr,html:d(document.documentElement),body:d(document.body),champsVisibles:vis,champsCaches:cach,action:act,texte:(document.body?document.body.innerText:'').replace(/\s+/g,' ').slice(0,150)});})()"""
+private const val DIAG_JS = """(function(){function d(e){if(!e)return null;var s=getComputedStyle(e),r=e.getBoundingClientRect(),o={tag:e.tagName.toLowerCase(),taille:Math.round(r.width)+'x'+Math.round(r.height),haut:Math.round(r.top),hauteurEnLigne:e.style.height||undefined,overflow:s.overflow,transform:s.transform==='none'?undefined:s.transform,position:s.position,display:s.display,visibility:s.visibility,opacity:s.opacity,z:s.zIndex,fond:s.backgroundColor};if(e.id)o.id=e.id;var c=typeof e.className==='string'?e.className:'';if(c)o.classes=c.slice(0,80);if(e.tagName==='IFRAME'){try{var u=new URL(e.src,location.href);o.src=u.host+u.pathname}catch(x){o.src='?'}}return o;}var w=innerWidth,h=innerHeight,centre=[],e=document.elementFromPoint(w/2,h/2);for(var i=0;e&&i<6;i++){centre.push(d(e));e=e.parentElement;}var ifr=[];document.querySelectorAll('iframe').forEach(function(f){var x=d(f),r=f.getBoundingClientRect();x.couvre=r.width>=w*0.8&&r.height>=h*0.8;ifr.push(x);});var f=document.forms[0],vis=0,cach=0,act=null;if(f){Array.prototype.forEach.call(f.elements,function(el){var r=el.getBoundingClientRect();if(r.width>0&&r.height>0&&getComputedStyle(el).visibility!=='hidden')vis++;else cach++;});try{act=new URL(f.action,location.href).host}catch(x){}}var modales=[];document.querySelectorAll('.modal').forEach(function(m){var r=m.getBoundingClientRect();modales.push((m.className||'').toString().slice(0,60)+' '+Math.round(r.width)+'x'+Math.round(r.height)+(m.getAttribute('data-mc-fix')?' corrigée':''));});var champ=null,pc=[];document.querySelectorAll('input').forEach(function(el){var r=el.getBoundingClientRect();if(!champ&&el.type!=='hidden'&&r.width>0)champ=el;});for(var p=champ,k=0;p&&k<9;k++){pc.push(d(p));p=p.parentElement;}return JSON.stringify({etat:document.readyState,correctifInstalle:!!window.__mcModalFix,modales:modales,fenetre:innerWidth+'x'+innerHeight+' (outer '+outerWidth+'x'+outerHeight+')',parentsDuChamp:pc,ecran:w+'x'+h,page:document.documentElement.scrollWidth+'x'+document.documentElement.scrollHeight,defilement:scrollX+','+scrollY,centre:centre,iframes:ifr,html:d(document.documentElement),body:d(document.body),champsVisibles:vis,champsCaches:cach,action:act,texte:(document.body?document.body.innerText:'').replace(/\s+/g,' ').slice(0,150)});})()"""
 
 
 
@@ -114,8 +114,6 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
     val jsErrors = remember { mutableStateListOf<String>() }
     var menuOpen by remember { mutableStateOf(false) }
     var diagnostic by remember { mutableStateOf<String?>(null) }
-    /** Rechargement de secours déjà fait (une seule fois, pour ne jamais boucler). */
-    var autoReloaded by remember { mutableStateOf(false) }
     /** Adresses hCaptcha chargées et leurs erreurs (relevées hors du fil principal, d'où la liste synchronisée). */
     val hcaptchaLog = remember { java.util.Collections.synchronizedList(mutableListOf<String>()) }
     val settingsState by c.settings.state.collectAsStateWithLifecycle()
@@ -326,12 +324,10 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
                     }
 
                     override fun onPageFinished(v: WebView?, url: String?) {
-                        // Secours : page mise en page avec une hauteur nulle alors que la vue a sa taille → un seul rechargement.
-                        if (v != null && !isPopup && !autoReloaded) v.postDelayed({
-                            if (v.height > 0 && !autoReloaded) v.evaluateJavascript("document.documentElement.getBoundingClientRect().height") { h ->
-                                if (h?.toDoubleOrNull() == 0.0 && !autoReloaded) { autoReloaded = true; v.reload() }
-                            }
-                        }, 1500)
+                        // Leclerc : la fenêtre de connexion aurait une hauteur nulle dans la WebView (page blanche).
+                        if (retailer == Retailer.LECLERC && url?.contains("leclercdrive.fr") == true) {
+                            v?.evaluateJavascript(fr.mescourses.core.leclerc.LeclercRoutes.MODAL_FIX_JS, null)
+                        }
                         // Carrefour : retour sur la boutique après la page de connexion, on teste la session dans cette page.
                         if (!isPopup && isCarrefour && mode == WebMode.LOGIN && visitedLogin && url?.startsWith(CarrefourRoutes.ORIGIN) == true) {
                             scope.launch {

@@ -41,6 +41,13 @@ object LeclercRoutes {
         "x-requested-with" to "XMLHttpRequest",
     )
 
+    /**
+     * Dans une WebView, la fenêtre de connexion (`div.modal.divModalConnexion.modal-active`) prend sa hauteur sur
+     * `html`/`body`, qui y valent 0 px : tout est rogné et la page paraît blanche. Ce script met en plein écran toute
+     * fenêtre active de hauteur nulle, et recommence à chaque ouverture (la connexion s'ouvre sans changer de page).
+     */
+    const val MODAL_FIX_JS = """(function(){if(window.__mcModalFix)return;window.__mcModalFix=1;function fix(){document.querySelectorAll('.modal.modal-active').forEach(function(m){if(m.getBoundingClientRect().height>=50)return;var s=m.style;[['position','fixed'],['top','0'],['bottom','0'],['left','0'],['right','0'],['height','auto'],['max-height','none'],['overflow-y','auto']].forEach(function(p){s.setProperty(p[0],p[1],'important');});m.setAttribute('data-mc-fix','1');m.scrollTop=0;});}fix();new MutationObserver(fix).observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['class','style']});})()"""
+
     /** Jamais appelées : commande, paiement, réservation de créneau. */
     val FORBIDDEN = listOf("/commande", "/paiement", "/validation", "/creneau")
 
