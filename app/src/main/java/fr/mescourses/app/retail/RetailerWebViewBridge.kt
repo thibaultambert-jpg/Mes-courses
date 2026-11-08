@@ -52,8 +52,8 @@ class RetailerWebViewBridge(
     private val appContext: Context,
     val site: RetailerSite,
     private val uaWithoutWv: () -> Boolean,
-    /** Leclerc : se présenter comme Chrome (sinon, User-Agent d'origine de la WebView). */
-    private val leclercChrome: () -> Boolean = { true },
+    /** Leclerc : navigateur annoncé (« ordinateur », « mobile » ou « webview »). */
+    private val leclercUaMode: () -> String = { "ordinateur" },
     /** Requêtes faites par la page elle-même (URL + en-têtes), pour relever des jetons (Auchan). Jamais journalisé. */
     private val onRequestSeen: ((url: String, headers: Map<String, String>) -> Unit)? = null,
 ) : HttpTransport {
@@ -61,6 +61,9 @@ class RetailerWebViewBridge(
     private val who = site.retailer.label
     private val debug = (appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
     @Volatile private var webView: WebView? = null
+    /** Page où la WebView invisible a réellement atterri (après redirections). */
+    @Volatile var landedUrl: String? = null
+        private set
     /** Dernière page demandée à la WebView invisible. */
     @Volatile private var target: String? = null
     private val ready = MutableStateFlow(false)
@@ -93,6 +96,11 @@ class RetailerWebViewBridge(
         view.settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
         view.settings.mediaPlaybackRequiresUserGesture = false
         view.settings.userAgentString = userAgent()
+        if (site.retailer == Retailer.LECLERC && leclercUaMode() == "ordinateur") {
+            // Site ordinateur dans un écran de téléphone : vue d'ensemble et zoom au doigt.
+            view.settings.builtInZoomControls = true
+            view.settings.displayZoomControls = false
+        }
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(view, true)
     }
@@ -106,9 +114,19 @@ class RetailerWebViewBridge(
         val base = WebSettings.getDefaultUserAgent(appContext)
         return when (site.retailer) {
             Retailer.AUCHAN -> RecipeSites.chromeUserAgent(base)
-            Retailer.LECLERC -> if (leclercChrome()) RecipeSites.chromeUserAgent(base) else base
+            Retailer.LECLERC -> when (leclercUaMode()) {
+                "mobile" -> RecipeSites.chromeUserAgent(base)
+                "webview" -> base
+                else -> desktopUserAgent(base)
+            }
             Retailer.CARREFOUR -> if (uaWithoutWv()) base.replace("; wv", "") else base
         }
+    }
+
+    /** Chrome Windows, de la même version que la WebView : Leclerc sert alors son site ordinateur (fdN-courses). */
+    private fun desktopUserAgent(base: String): String {
+        val version = Regex("Chrome/([\\d.]+)").find(base)?.groupValues?.get(1) ?: "130.0.0.0"
+        return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$version Safari/537.36"
     }
 
     /** Applique le User-Agent courant à la WebView invisible et recharge sa page (après un changement de réglage). */
@@ -133,7 +151,9 @@ class RetailerWebViewBridge(
             }
 
             override fun onPageFinished(v: WebView?, url: String?) {
-                ready.value = url != null && sameHost(url, target)
+                // Une redirection vers un autre hôte (ex. site mobile) ne doit pas bloquer les requêtes 20 s.
+                ready.value = url?.startsWith("http") == true
+                landedUrl = url
                 url?.let { pageFinished.tryEmit(it) }
             }
 
@@ -179,7 +199,7 @@ class RetailerWebViewBridge(
         if (webView == null) return
         val page = site.parking()
         coroutineScope {
-            val done = async { withTimeoutOrNull(20_000) { pageFinished.first { sameHost(it, page) } } }
+            val done = async { withTimeoutOrNull(20_000) { pageFinished.first { it.startsWith("http") } } }
             load(page)
             done.await()
         }
@@ -240,7 +260,10 @@ class RetailerWebViewBridge(
             } catch (e: Exception) {
                 record(method, path, null, System.currentTimeMillis() - start)
                 if (e is CarrefourException) throw e
-                throw CarrefourException.Network(e.message ?: e.toString(), who)
+                val msg = e.message ?: e.toString()
+                // « Failed to fetch » : requête bloquée par le navigateur (la page n'est pas sur le bon site, ou CORS).
+                val where = landedUrl?.let { android.net.Uri.parse(it).host }
+                throw CarrefourException.Network(if ("Failed to fetch" in msg && where != null) "$msg (page de départ : $where)" else msg, who)
             } finally {
                 pending.remove(id)
             }

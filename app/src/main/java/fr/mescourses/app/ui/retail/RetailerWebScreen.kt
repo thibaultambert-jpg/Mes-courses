@@ -225,19 +225,20 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
                         (popup ?: view)?.reload()
                     })
                     if (retailer == Retailer.LECLERC) {
-                        val chrome = settingsState.leclercChromeUa
-                        DropdownMenuItem(
-                            text = { Text(if (chrome) "Navigateur : WebView d'origine" else "Navigateur : Chrome") },
-                            onClick = {
-                                menuOpen = false
-                                scope.launch {
-                                    c.settings.update { it.copy(leclercChromeUa = !chrome) }
-                                    // Même navigateur pour la page visible et la WebView invisible (cookies de l'anti-robot).
-                                    view?.let { v -> v.settings.userAgentString = bridge.userAgent(); jsErrors.clear(); v.reload() }
-                                    bridge.refreshUserAgent()
-                                }
-                            },
-                        )
+                        // Même navigateur pour la page visible et la WebView invisible (cookies de l'anti-robot).
+                        listOf("ordinateur" to "Ordinateur (conseillé)", "mobile" to "Mobile Chrome", "webview" to "WebView d'origine").forEach { (mode, label) ->
+                            DropdownMenuItem(
+                                text = { Text("Navigateur : $label" + if (settingsState.leclercUaMode == mode) " ✓" else "") },
+                                onClick = {
+                                    menuOpen = false
+                                    scope.launch {
+                                        c.settings.update { it.copy(leclercUaMode = mode) }
+                                        view?.let { v -> bridge.configure(v); v.settings.setSupportMultipleWindows(true); jsErrors.clear(); v.reload() }
+                                        bridge.refreshUserAgent()
+                                    }
+                                },
+                            )
+                        }
                     }
                     DropdownMenuItem(text = { Text("Diagnostic") }, onClick = { menuOpen = false; runDiagnostic() })
                 }
@@ -281,6 +282,13 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
                 }
             }
 
+            /** Leclerc : redonne une hauteur à html/body et aux fenêtres du site (sans effet ailleurs). */
+            fun fixLayout(v: WebView?) {
+                if (retailer == Retailer.LECLERC && v?.url?.contains("leclercdrive.fr") == true) {
+                    v.evaluateJavascript(fr.mescourses.core.leclerc.LeclercRoutes.LAYOUT_FIX_JS, null)
+                }
+            }
+
             /** Clients communs à la page et aux fenêtres qu'elle ouvre. */
             fun setup(wv: WebView, isPopup: Boolean) {
                 bridge.configure(wv)
@@ -301,6 +309,7 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
 
                     override fun onProgressChanged(v: WebView?, newProgress: Int) {
                         loading = newProgress < 100
+                        if (newProgress == 100) fixLayout(v)
                     }
 
                     override fun onCreateWindow(v: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
@@ -328,6 +337,11 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
                     }
                 }
                 wv.webViewClient = object : WebViewClient() {
+                    // Le site change de page sans recharger (application web) : on réinstalle le correctif.
+                    override fun doUpdateVisitedHistory(v: WebView?, url: String?, isReload: Boolean) {
+                        fixLayout(v)
+                    }
+
                     // Seules les pages web sont chargées ; une adresse « intent: », « mailto: »… viderait la page.
                     override fun shouldOverrideUrlLoading(v: WebView?, request: WebResourceRequest?): Boolean {
                         val scheme = request?.url?.scheme?.lowercase()
@@ -372,7 +386,7 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
                                 // Même drive : on complète son adresse exacte (avec le nom de la ville) si elle manquait.
                                 else -> {
                                     siteStore = null
-                                    if (found.path != current.path) scope.launch { c.settings.update { it.copy(leclercPath = found.path) } }
+                                    if (!found.path.equals(current.path, ignoreCase = true)) scope.launch { c.settings.update { it.copy(leclercPath = found.path) } }
                                 }
                             }
                             Unit

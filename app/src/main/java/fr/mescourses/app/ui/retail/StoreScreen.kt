@@ -45,6 +45,7 @@ import fr.mescourses.core.retail.Retailer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 
 /**
@@ -79,7 +80,10 @@ fun StoreScreen(retailer: Retailer, onBack: () -> Unit, onOpenSite: (String) -> 
             }
             // Leclerc retrouve lui-même les coordonnées du code postal ; Carrefour a besoin du Geocoder.
             if (address == null && retailer == Retailer.CARREFOUR) error("Code postal introuvable")
-            stores = c.backend(retailer).stores(address?.latitude ?: 0.0, address?.longitude ?: 0.0, postalCode, address?.locality ?: "")
+            // Délai maximal : sans réponse du site, un message plutôt qu'une roue qui tourne sans fin.
+            stores = withTimeoutOrNull(40_000) {
+                c.backend(retailer).stores(address?.latitude ?: 0.0, address?.longitude ?: 0.0, postalCode, address?.locality ?: "")
+            } ?: error("$who ne répond pas : ouvre le site une fois (bouton ci-dessous), puis réessaie.")
             if (stores.isEmpty()) error = "Aucun drive $who trouvé autour de $postalCode."
         } catch (e: Exception) {
             c.session(retailer).onError(e)

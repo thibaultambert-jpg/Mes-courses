@@ -138,7 +138,7 @@ class AppContainer(context: Context) {
             context,
             sites.getValue(r),
             uaWithoutWv = { settings.current.uaWithoutWv },
-            leclercChrome = { settings.current.leclercChromeUa },
+            leclercUaMode = { settings.current.leclercUaMode },
             onRequestSeen = if (r == Retailer.AUCHAN) auchanTokens::seen else null,
         )
     }

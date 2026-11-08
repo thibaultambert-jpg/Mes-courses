@@ -41,8 +41,11 @@ data class Settings(
     val leclercPath: String = "",
     /** Magasin Auchan, lu dans le panier (le drive se choisit sur auchan.fr). */
     val auchanStoreName: String = "",
-    /** Leclerc : WebView présentée comme Chrome (true) ou avec son User-Agent d'origine. */
-    val leclercChromeUa: Boolean = true,
+    /**
+     * Leclerc : navigateur annoncé au site. « ordinateur » (défaut) = site ordinateur fdN-courses, le seul que l'app sait
+     * lire ; « mobile » = Chrome Android (site mobile m-courses) ; « webview » = User-Agent d'origine.
+     */
+    val leclercUaMode: String = "ordinateur",
     /** Drive Carrefour choisi dans l'app. */
     val storeId: String = "",
     val storeName: String = "",
@@ -99,7 +102,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
         val lcName = stringPreferencesKey("lc_store_name")
         val lcPath = stringPreferencesKey("lc_store_path")
         val auName = stringPreferencesKey("au_store_name")
-        val lcChrome = booleanPreferencesKey("lc_chrome_ua")
+        val lcUaMode = stringPreferencesKey("lc_ua_mode")
     }
 
     private fun Preferences.toSettings() = Settings(
@@ -126,7 +129,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
         leclercStoreName = this[K.lcName].orEmpty(),
         leclercPath = this[K.lcPath].orEmpty(),
         auchanStoreName = this[K.auName].orEmpty(),
-        leclercChromeUa = this[K.lcChrome] ?: true,
+        leclercUaMode = this[K.lcUaMode] ?: "ordinateur",
     )
 
     val state: StateFlow<Settings> = context.dataStore.data
@@ -161,7 +164,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
             prefs[K.lcName] = s.leclercStoreName
             prefs[K.lcPath] = s.leclercPath
             prefs[K.auName] = s.auchanStoreName
-            prefs[K.lcChrome] = s.leclercChromeUa
+            prefs[K.lcUaMode] = s.leclercUaMode
         }
     }
 }
