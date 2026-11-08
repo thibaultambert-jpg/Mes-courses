@@ -65,6 +65,7 @@ import androidx.compose.ui.Alignment
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicReference
 
 enum class WebMode { LOGIN, SITE }
@@ -174,35 +175,49 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
         return withTimeoutOrNull(10_000) { d.await() } ?: 0
     }
 
+    /**
+     * Ferme l'écran TOUT DE SUITE ; le rechargement de la WebView invisible et la vérification de session se font
+     * ensuite en arrière-plan (ils pouvaient bloquer l'écran jusqu'à 20 s, et Retour paraissait sans effet).
+     */
     fun close(manual: Boolean) {
         if (closing) return
         closing = true
+        val appContext = context.applicationContext
         scope.launch {
+            // Carrefour : test rapide dans la page visible avant qu'elle disparaisse (3 s au plus).
             if (isCarrefour && mode == WebMode.LOGIN && session != SessionState.CONNECTE && view?.url?.startsWith(CarrefourRoutes.ORIGIN) == true) {
-                if (retailerSession.isLoggedInStatus(probeVisible())) retailerSession.markConnected()
-            }
-            retailerSession.onVisibleSiteClosed()
-            if (mode == WebMode.LOGIN) {
-                val who = retailer.label
-                val msg = when {
-                    retailerSession.state.value == SessionState.CONNECTE -> "Connecté à $who ✅"
-                    manual -> "Pas encore connecté à $who : " + (retailerSession.lastProblem
-                        ?: if (retailerSession.hasSsoCookie()) "session reçue mais pas encore active, réessaie dans un instant." else "connexion non terminée.")
-                    else -> null
-                }
-                msg?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
+                withTimeoutOrNull(3_000) { if (retailerSession.isLoggedInStatus(probeVisible())) retailerSession.markConnected() }
             }
             onClose()
+            c.appScope.launch {
+                retailerSession.onVisibleSiteClosed()
+                if (mode == WebMode.LOGIN) {
+                    val who = retailer.label
+                    val msg = when {
+                        retailerSession.state.value == SessionState.CONNECTE -> "Connecté à $who ✅"
+                        manual -> "Pas encore connecté à $who : " + (retailerSession.lastProblem
+                            ?: if (retailerSession.hasSsoCookie()) "session reçue mais pas encore active, réessaie dans un instant." else "connexion non terminée.")
+                        else -> null
+                    }
+                    msg?.let { withContext(kotlinx.coroutines.Dispatchers.Main) { Toast.makeText(appContext, it, Toast.LENGTH_LONG).show() } }
+                }
+            }
         }
     }
+
+    /** Dernier appui sur Retour : un 2ᵉ appui rapproché ferme l'écran (sortie des boucles de redirection du site). */
+    var lastBack by remember { mutableStateOf(0L) }
 
     BackHandler {
         val p = popup
         val v = view
+        val now = System.currentTimeMillis()
+        val quick = now - lastBack < 1_500
+        lastBack = now
         when {
-            p != null && p.canGoBack() -> p.goBack()
+            p != null && p.canGoBack() && !quick -> p.goBack()
             p != null -> popup = null
-            v != null && v.canGoBack() -> v.goBack()
+            v != null && v.canGoBack() && !quick -> v.goBack()
             else -> close(manual = true)
         }
     }
@@ -286,6 +301,7 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
             fun fixLayout(v: WebView?) {
                 if (retailer == Retailer.LECLERC && v?.url?.contains("leclercdrive.fr") == true) {
                     v.evaluateJavascript(fr.mescourses.core.leclerc.LeclercRoutes.LAYOUT_FIX_JS, null)
+                    if (settingsState.leclercUaMode == "ordinateur") v.evaluateJavascript(fr.mescourses.core.leclerc.LeclercRoutes.DESKTOP_VIEWPORT_JS, null)
                 }
             }
 

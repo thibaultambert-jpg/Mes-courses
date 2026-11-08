@@ -59,6 +59,7 @@ import fr.mescourses.app.ui.retail.RetailerChips
 import fr.mescourses.app.ui.retail.RetailerDot
 import fr.mescourses.core.retail.Retailer
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.DisposableEffect
 import fr.mescourses.app.data.Settings
 import fr.mescourses.app.llm.DownloadState
 import fr.mescourses.app.llm.ModelCatalog
@@ -99,6 +100,18 @@ class SettingsViewModel(val c: AppContainer) : ViewModel() {
     }
 
     fun session(r: Retailer) = c.session(r).state
+
+    /** Vérifie la session des trois enseignes (leurs WebViews sont chargées le temps de l'écran). */
+    fun startChecks() {
+        c.checkingRetailers.value = Retailer.entries.toSet()
+        Retailer.entries.forEach { r -> viewModelScope.launch { c.session(r).check() } }
+    }
+
+    fun stopChecks() {
+        c.checkingRetailers.value = emptySet()
+    }
+
+    override fun onCleared() = stopChecks()
     fun problem(r: Retailer): String? = c.session(r).lastProblem
 
     fun logout() = c.logoutAll()
@@ -107,6 +120,11 @@ class SettingsViewModel(val c: AppContainer) : ViewModel() {
 @Composable
 fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStore: (Retailer) -> Unit, onDebug: () -> Unit) {
     val vm = containerViewModel { SettingsViewModel(it) }
+    // État de connexion juste dès l'ouverture, sans attendre une comparaison des prix.
+    DisposableEffect(Unit) {
+        vm.startChecks()
+        onDispose { vm.stopChecks() }
+    }
     val s by vm.settings.collectAsStateWithLifecycle()
     val download by vm.download.collectAsStateWithLifecycle()
     val installed by vm.installed.collectAsStateWithLifecycle()

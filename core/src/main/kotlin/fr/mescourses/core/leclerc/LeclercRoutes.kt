@@ -49,6 +49,13 @@ object LeclercRoutes {
      */
     const val LAYOUT_FIX_JS = """(function(){if(window.__mcLayoutFix)return;window.__mcLayoutFix=1;var st=document.createElement('style');st.id='mc-layout-fix';st.textContent='html,body{height:100%!important;min-height:100%!important}';(document.head||document.documentElement).appendChild(st);function fix(){document.querySelectorAll('.modal.modal-active').forEach(function(m){if(m.getBoundingClientRect().height>=50)return;var s=m.style;[['position','fixed'],['top','0'],['bottom','0'],['left','0'],['right','0'],['height','auto'],['max-height','none'],['overflow-y','auto']].forEach(function(p){s.setProperty(p[0],p[1],'important');});m.setAttribute('data-mc-fix','1');m.scrollTop=0;});}fix();new MutationObserver(fix).observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['class','style']});})()"""
 
+    /**
+     * Mode « ordinateur » : `www.leclercdrive.fr` est adaptative et choisit sa version mobile d'après la largeur de
+     * l'écran (`meta viewport` = largeur de l'appareil), quel que soit le navigateur annoncé. On impose une largeur de
+     * bureau pour obtenir la version ordinateur (vue d'ensemble et zoom au doigt dans la WebView).
+     */
+    const val DESKTOP_VIEWPORT_JS = """(function(){var m=document.querySelector('meta[name=viewport]');if(!m){m=document.createElement('meta');m.name='viewport';(document.head||document.documentElement).appendChild(m);}if(m.getAttribute('content')!=='width=1280')m.setAttribute('content','width=1280');})()"""
+
     /** Jamais appelées : commande, paiement, réservation de créneau. */
     val FORBIDDEN = listOf("/commande", "/paiement", "/validation", "/creneau")
 

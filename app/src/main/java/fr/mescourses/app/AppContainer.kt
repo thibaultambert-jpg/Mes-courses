@@ -209,7 +209,10 @@ class AppContainer(context: Context) {
     /** Enseignes dont la WebView invisible doit être attachée à l'activité. */
     /** Enseigne testée dans l'écran de debug (sa WebView doit être chargée). */
     val debugRetailer = MutableStateFlow<Retailer?>(null)
-    val attachedRetailers: StateFlow<Set<Retailer>> = combine(activeRetailer, comparing, debugRetailer) { a, c, d -> c + a + setOfNotNull(d) }
+    /** Enseignes vérifiées par l'écran des Réglages (leurs WebViews doivent être chargées pour répondre). */
+    val checkingRetailers = MutableStateFlow<Set<Retailer>>(emptySet())
+    val attachedRetailers: StateFlow<Set<Retailer>> =
+        combine(activeRetailer, comparing, debugRetailer, checkingRetailers) { a, c, d, k -> c + a + setOfNotNull(d) + k }
         .stateIn(appScope, SharingStarted.Eagerly, setOf(Retailer.CARREFOUR))
 
     init {

@@ -17,6 +17,8 @@ enum class SessionState(val label: String) {
     CONNEXION_REQUISE("Connexion requise"),
     VERIFICATION("Vérification anti-robot requise"),
     DRIVE_REQUIS("Drive à choisir"),
+    /** La vérification n'a pas pu aboutir (page non chargée, réseau) : on ne sait pas, ce n'est pas « non connecté ». */
+    NON_VERIFIE("Non vérifié"),
 }
 
 /**
@@ -68,7 +70,8 @@ class RetailerSession(
             throw e
         } catch (e: Exception) {
             lastProblem = e.message ?: e.toString()
-            _state.value
+            // Erreur réseau, page non chargée… : on garde un état connu, sinon « Non vérifié » (jamais « Connexion requise »).
+            if (_state.value == SessionState.INCONNU) SessionState.NON_VERIFIE else _state.value
         }
         return _state.value
     }
@@ -90,7 +93,6 @@ class RetailerSession(
         if (_state.value == SessionState.VERIFICATION || _state.value == SessionState.DRIVE_REQUIS) return false
         val refresh = refresher
         if (refresh != null && refresh() && check() == SessionState.CONNECTE) return true
-        if (_state.value == SessionState.INCONNU) _state.value = SessionState.CONNEXION_REQUISE
         return false
     }
 

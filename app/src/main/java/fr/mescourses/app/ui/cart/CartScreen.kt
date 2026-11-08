@@ -450,7 +450,7 @@ private fun AccountCard(retailer: Retailer, session: SessionState, storeName: St
             StatChip(session.label, emphasized = session != SessionState.CONNECTE)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (session == SessionState.CONNEXION_REQUISE || session == SessionState.INCONNU) Button(onClick = onLogin) { Text("Se connecter") }
+            if (session == SessionState.CONNEXION_REQUISE || session == SessionState.INCONNU || session == SessionState.NON_VERIFIE) Button(onClick = onLogin) { Text("Se connecter") }
             OutlinedButton(onClick = onChooseStore) { Text(if (storeName.isBlank()) "Choisir mon drive" else "Changer de drive") }
         }
     }
