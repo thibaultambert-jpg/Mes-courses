@@ -140,6 +140,10 @@ class LeclercAuchanTest {
         assertEquals("O1", lait.identifiers["offerId"])
         assertEquals("S1", lait.identifiers["sellerId"])
         assertTrue(!p.first { it.id == "P2" }.available)
+        // Images chargées en différé : data-src, puis <source srcset> ; jamais l'image vide ni le remplaçant.
+        assertEquals("https://cdn.auchan.fr/media/lait_540.jpg", lait.imageUrl)
+        assertEquals("https://cdn.auchan.fr/media/oeufs_320.webp", p.first { it.id == "P3" }.imageUrl)
+        assertNull(p.first { it.id == "P2" }.imageUrl)
     }
 
     @Test fun auchan_panier() {
@@ -247,5 +251,17 @@ class LeclercAuchanTest {
         assertEquals("Connecte-toi", updates.last().problem)
         assertEquals(LineStatus.A_CHERCHER, updates.last().lines.single().status)
         assertNull(PriceComparison.cheapest(updates))
+    }
+}
+
+class DebugReaderTest {
+    @Test fun resume_leclerc_et_auchan() {
+        val l = fr.mescourses.core.retail.DebugReader.summarize(Retailer.LECLERC, res("/leclerc/search.html"))
+        assertTrue(l.contains("Page de drive reconnue"), l)
+        assertTrue(l.contains("2 produit(s) lu(s), dont 1 en rupture"), l)
+        val a = fr.mescourses.core.retail.DebugReader.summarize(Retailer.AUCHAN, res("/auchan/search.html"))
+        assertTrue(a.contains("photo : https://cdn.auchan.fr/media/lait_540.jpg"), a)
+        val blocked = fr.mescourses.core.retail.DebugReader.summarize(Retailer.LECLERC, "<html>captcha</html>")
+        assertTrue(blocked.contains("anti-robot"), blocked)
     }
 }

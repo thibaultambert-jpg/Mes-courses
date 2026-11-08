@@ -16,6 +16,8 @@ import fr.mescourses.core.carrefour.CarrefourException
 import fr.mescourses.core.carrefour.HttpResponse
 import fr.mescourses.core.carrefour.HttpTransport
 import fr.mescourses.core.auchan.AuchanRoutes
+import fr.mescourses.core.recipes.RecipeSites
+import fr.mescourses.core.retail.Retailer
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -80,7 +82,13 @@ class RetailerWebViewBridge(
         // Les liens « nouvelle fenêtre » du site s'ouvrent dans la même vue au lieu d'être ignorés.
         view.settings.setSupportMultipleWindows(false)
         view.settings.javaScriptCanOpenWindowsAutomatically = true
-        if (uaWithoutWv()) view.settings.userAgentString = view.settings.userAgentString.replace("; wv", "")
+        // Leclerc et Auchan (DataDome) : présentés comme Chrome, dans les deux vues (cookies liés au navigateur).
+        // Carrefour : réglage du debug (« se présenter comme Chrome »).
+        if (site.retailer != Retailer.CARREFOUR) {
+            view.settings.userAgentString = RecipeSites.chromeUserAgent(view.settings.userAgentString)
+        } else if (uaWithoutWv()) {
+            view.settings.userAgentString = view.settings.userAgentString.replace("; wv", "")
+        }
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(view, true)
     }

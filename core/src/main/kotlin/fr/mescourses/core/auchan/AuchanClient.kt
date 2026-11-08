@@ -103,10 +103,11 @@ class AuchanClient(
     }
 
     private suspend fun names(): Map<String, String> = lock.withLock { seen.mapValues { it.value.name } }
+    private suspend fun images(): Map<String, String> = lock.withLock { seen.mapNotNull { (k, v) -> v.imageUrl?.let { k to it } }.toMap() }
 
     override suspend fun sessionProbe(): Cart? = cart()
 
-    override suspend fun cart(): Cart = rawCart().toCart(names())
+    override suspend fun cart(): Cart = rawCart().toCart(names(), images())
 
     override suspend fun search(query: String, limit: Int): List<Product> =
         searchWithUnavailable(query, Int.MAX_VALUE).filter { it.available }.take(limit)
@@ -130,7 +131,7 @@ class AuchanClient(
         val raw = rawCart()
         val line = raw.lines.firstOrNull { it.productId == ean }
         if (line != null) return updateLine(raw, line, quantity)
-        if (quantity == 0) return raw.toCart(names())
+        if (quantity == 0) return raw.toCart(names(), images())
         val product = lock.withLock { seen[ean] } ?: throw CarrefourException.NotFound("Ce produit (cherche-le d'abord)", who)
         return add(raw, product, quantity)
     }
@@ -185,7 +186,7 @@ class AuchanClient(
             })
         }.toString()
         val response = api("POST", { AuchanRoutes.cartItems(cartId, it.consentId!!) }, body)
-        return AuchanParsers.parseCart(response.body)?.takeIf { it.id != null }?.also { c -> c.store?.let(onStore) }?.toCart(names()) ?: cart()
+        return AuchanParsers.parseCart(response.body)?.takeIf { it.id != null }?.also { c -> c.store?.let(onStore) }?.toCart(names(), images()) ?: cart()
     }
 
     /** Les créneaux Auchan ne sont pas encore relevés : ils se choisissent sur le site. */

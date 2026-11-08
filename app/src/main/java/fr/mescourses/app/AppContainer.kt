@@ -194,7 +194,9 @@ class AppContainer(context: Context) {
     /** Enseignes interrogées par une comparaison des prix en cours. */
     val comparing = MutableStateFlow<Set<Retailer>>(emptySet())
     /** Enseignes dont la WebView invisible doit être attachée à l'activité. */
-    val attachedRetailers: StateFlow<Set<Retailer>> = combine(activeRetailer, comparing) { a, c -> c + a }
+    /** Enseigne testée dans l'écran de debug (sa WebView doit être chargée). */
+    val debugRetailer = MutableStateFlow<Retailer?>(null)
+    val attachedRetailers: StateFlow<Set<Retailer>> = combine(activeRetailer, comparing, debugRetailer) { a, c, d -> c + a + setOfNotNull(d) }
         .stateIn(appScope, SharingStarted.Eagerly, setOf(Retailer.CARREFOUR))
 
     init {

@@ -17,9 +17,13 @@ import org.jsoup.Jsoup
 data class AuchanCartLine(val lineId: String, val productId: String, val offerId: String?, val name: String?, val quantity: Int, val unitPrice: Double?)
 
 data class AuchanCart(val id: String?, val store: String?, val lines: List<AuchanCartLine>) {
-    fun toCart(names: Map<String, String>): Cart {
+    fun toCart(names: Map<String, String>, images: Map<String, String> = emptyMap()): Cart {
         val items = lines.map { l ->
-            CartLineItem(l.productId, l.name ?: names[l.productId] ?: "Produit ${l.productId}", l.quantity, l.unitPrice?.let { Math.round(it * l.quantity * 100) / 100.0 })
+            CartLineItem(
+                l.productId, l.name ?: names[l.productId] ?: "Produit ${l.productId}", l.quantity,
+                l.unitPrice?.let { Math.round(it * l.quantity * 100) / 100.0 },
+                imageUrl = images[l.productId],
+            )
         }
         val total = items.mapNotNull { it.subtotal }.takeIf { it.isNotEmpty() }?.sum()?.let { Math.round(it * 100) / 100.0 }
         return Cart(items, total, null)
@@ -46,8 +50,7 @@ object AuchanParsers {
             val unitText = a.selectFirst("span[data-product-id]")?.text()?.trim()
             val promo = a.select("[class*=promo], [class*=flap], [class*=sticker], [class*=discount]")
                 .map { it.text().trim() }.firstOrNull { it.isNotBlank() && it.length < 80 && !it.contains("cagnott", true) }
-            val img: org.jsoup.nodes.Element? = a.selectFirst("img")
-            val image: String? = img?.let { e -> val src: String = e.absUrl("src"); src.ifBlank { e.absUrl("data-src") } }?.ifBlank { null }
+            val image: String? = imageOf(a)
             val sponsored = a.attr("data-list").startsWith("KAMINO")
             sponsored to Product(
                 id = id,
@@ -66,6 +69,35 @@ object AuchanParsers {
             )
         }
         return (all.filterNot { it.first } + all.filter { it.first }).map { it.second }.distinctBy { it.id }
+    }
+
+    /**
+     * Photo d'une fiche : le site charge ses images en différé (`src` = image vide ou de remplacement), la vraie
+     * adresse est dans `data-src`, `srcset`, `<source srcset>`… On prend la première adresse utilisable.
+     */
+    fun imageOf(card: org.jsoup.nodes.Element): String? {
+        val candidates = mutableListOf<String>()
+        card.select("picture source[srcset], picture source[data-srcset]").forEach { s ->
+            candidates += firstOfSrcset(s.attr("data-srcset")); candidates += firstOfSrcset(s.attr("srcset"))
+        }
+        card.select("img").forEach { img ->
+            listOf("data-src", "data-lazy-src", "data-original").forEach { candidates += img.attr(it) }
+            candidates += firstOfSrcset(img.attr("data-srcset"))
+            candidates += firstOfSrcset(img.attr("srcset"))
+            candidates += img.attr("src")
+        }
+        return candidates.map { it.trim() }.firstOrNull(::usableImage)?.let(::absolute)
+    }
+
+    private fun firstOfSrcset(v: String): String = v.split(',').firstOrNull()?.trim()?.substringBefore(' ').orEmpty()
+
+    private fun usableImage(u: String): Boolean =
+        u.isNotBlank() && !u.startsWith("data:") && !Regex("(?i)placeholder|lazy|blank|spacer|transparent").containsMatchIn(u.substringAfterLast('/'))
+
+    private fun absolute(u: String): String = when {
+        u.startsWith("//") -> "https:$u"
+        u.startsWith("/") -> AuchanRoutes.ORIGIN + u
+        else -> u
     }
 
     private fun JsonObject.obj(key: String) = this[key] as? JsonObject

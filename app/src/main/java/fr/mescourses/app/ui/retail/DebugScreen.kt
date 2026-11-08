@@ -20,6 +20,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.core.content.FileProvider
+import fr.mescourses.core.retail.DebugReader
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,13 +51,20 @@ fun anonymize(text: String): String = text
     .replace(Regex("""(?<!\d)(?:\+33|0)[1-9](?:[ .-]?\d{2}){4}(?!\d)"""), "0600000000")
     .replace(Regex(""""(firstName|lastName|firstname|lastname|name_on_card|customerName|email|phone|mobile|address1|address2|street|birthDate)"\s*:\s*"[^"]*""""), "\"$1\":\"***\"")
 
-/** Écran de test des requêtes Carrefour (accès caché : 7 appuis sur la version, dans Réglages). */
+/** Écran de test des requêtes des enseignes (accès caché : 7 appuis sur la version, dans Réglages). */
 @Composable
 fun RetailerDebugScreen(onBack: () -> Unit, onOpenSite: (Retailer) -> Unit) {
     val c = appContainer()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var retailer by remember { mutableStateOf(c.activeRetailer.value) }
+    var sending by remember { mutableStateOf(false) }
+    var summary by remember { mutableStateOf<String?>(null) }
+    // La WebView de l'enseigne testée doit être chargée, même si ce n'est pas l'enseigne active.
+    DisposableEffect(retailer) {
+        c.debugRetailer.value = retailer
+        onDispose { c.debugRetailer.value = null }
+    }
     val log by c.bridge(retailer).log.collectAsStateWithLifecycle()
     val settings by c.settings.state.collectAsStateWithLifecycle()
     var method by remember { mutableStateOf("GET") }
@@ -100,9 +111,9 @@ fun RetailerDebugScreen(onBack: () -> Unit, onOpenSite: (Retailer) -> Unit) {
             if (method != "GET") {
                 OutlinedTextField(body, { body = it }, label = { Text("Corps JSON") }, minLines = 3, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp))
             }
-            Button(onClick = {
+            Button(enabled = !sending, onClick = {
                 scope.launch {
-                    error = null; result = null
+                    error = null; result = null; summary = null; sending = true
                     val start = System.currentTimeMillis()
                     try {
                         result = if (retailer == Retailer.CARREFOUR) {
@@ -117,8 +128,10 @@ fun RetailerDebugScreen(onBack: () -> Unit, onOpenSite: (Retailer) -> Unit) {
                         error = "${e::class.simpleName} : ${e.message}"
                     }
                     millis = System.currentTimeMillis() - start
+                    sending = false
                 }
-            }) { Text("Envoyer") }
+            }) { Text(if (sending) "Envoi… (chargement de ${retailer.site})" else "Envoyer") }
+            if (sending) LinearProgressIndicator(Modifier.fillMaxWidth())
 
             // Identifiants du drive seulement (aucune donnée personnelle).
             if (retailer == Retailer.LECLERC) Text(
@@ -155,15 +168,26 @@ fun RetailerDebugScreen(onBack: () -> Unit, onOpenSite: (Retailer) -> Unit) {
                     SelectionContainer {
                         Text(r.body.take(3000), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                     }
-                    OutlinedButton(onClick = {
-                        val text = "$method ${path.substringBefore('?')}\nstatut ${r.status}\n\n" + anonymize(r.body)
-                        context.startActivity(
-                            Intent.createChooser(
-                                Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text),
-                                "Exporter la réponse (anonymisée)",
-                            ),
-                        )
-                    }) { Text("Exporter (anonymisé)") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { summary = DebugReader.summarize(retailer, r.body) }) { Text("Lire avec l'app") }
+                        OutlinedButton(onClick = {
+                            // Réponse complète dans un fichier : une page de drive dépasse la taille permise pour un texte partagé.
+                            val text = "${retailer.label} $method ${path.substringBefore('?')}\nstatut ${r.status}\n\n" + anonymize(r.body)
+                            val dir = java.io.File(context.cacheDir, "debug").apply { mkdirs() }
+                            val file = java.io.File(dir, "${retailer.name.lowercase()}-${System.currentTimeMillis()}.txt").apply { writeText(text) }
+                            val uri = FileProvider.getUriForFile(context, context.packageName + ".fichiers", file)
+                            context.startActivity(
+                                Intent.createChooser(
+                                    Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_STREAM, uri)
+                                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                                    "Exporter la réponse (anonymisée)",
+                                ),
+                            )
+                        }) { Text("Exporter (fichier)") }
+                    }
+                    summary?.let { sm ->
+                        SelectionContainer { Text(sm, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
+                    }
                 }
             }
 

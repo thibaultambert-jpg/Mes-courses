@@ -36,8 +36,16 @@ import fr.mescourses.app.ui.common.appContainer
 import fr.mescourses.app.ui.components.InfoBanner
 import fr.mescourses.core.carrefour.CarrefourRoutes
 import fr.mescourses.core.retail.Retailer
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.os.Message
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.key
+import androidx.compose.ui.Alignment
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -63,6 +71,11 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
     var visitedLogin by remember { mutableStateOf(false) }
     var closing by remember { mutableStateOf(false) }
     var view by remember { mutableStateOf<WebView?>(null) }
+    /** Fenêtre ouverte par le site (connexion dans une fenêtre à part), affichée par-dessus la page. */
+    var popup by remember { mutableStateOf<WebView?>(null) }
+    /** Diagnostic : hôte de la page affichée et dernière erreur de chargement (page principale). */
+    var pageHost by remember { mutableStateOf<String?>(null) }
+    var loadError by remember { mutableStateOf<String?>(null) }
     /** Réponse attendue du test de session lancé DANS la WebView visible. */
     val probe = remember { AtomicReference<CompletableDeferred<Int>?>(null) }
 
@@ -103,8 +116,14 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
     }
 
     BackHandler {
+        val p = popup
         val v = view
-        if (v != null && v.canGoBack()) v.goBack() else close(manual = true)
+        when {
+            p != null && p.canGoBack() -> p.goBack()
+            p != null -> popup = null
+            v != null && v.canGoBack() -> v.goBack()
+            else -> close(manual = true)
+        }
     }
 
     // Connexion constatée : on ferme tout seul (inutile d'agir dans la page).
@@ -132,75 +151,135 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
                 )
             }
             if (loading || closing) LinearProgressIndicator(Modifier.fillMaxWidth())
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { ctx ->
-                    WebView(ctx).also { wv ->
-                        bridge.configure(wv)
-                        // Seule méthode exposée : le code HTTP du test de session.
-                        wv.addJavascriptInterface(
-                            object {
-                                @JavascriptInterface
-                                fun onStatus(status: Int) {
-                                    probe.getAndSet(null)?.complete(status)
-                                }
-                            },
-                            "MesCoursesLogin",
-                        )
-                        wv.webChromeClient = object : WebChromeClient() {
-                            override fun onProgressChanged(v: WebView?, newProgress: Int) {
-                                loading = newProgress < 100
-                            }
-
-                            // Le site demande la position (choix du magasin) : refus explicite, sinon la page reste bloquée.
-                            override fun onGeolocationPermissionsShowPrompt(origin: String?, callback: GeolocationPermissions.Callback?) {
-                                callback?.invoke(origin, false, false)
-                            }
-
-                            override fun onPermissionRequest(request: PermissionRequest?) {
-                                request?.deny()
-                            }
-                        }
-                        wv.webViewClient = object : WebViewClient() {
-                            override fun onPageStarted(v: WebView?, url: String?, favicon: Bitmap?) {
-                                if (isCarrefour && url?.startsWith(CarrefourRoutes.IAM_ORIGIN) == true) visitedLogin = true
-                            }
-
-                            override fun onPageFinished(v: WebView?, url: String?) {
-                                // Carrefour : retour sur la boutique après la page de connexion, on teste la session dans cette page.
-                                if (isCarrefour && mode == WebMode.LOGIN && visitedLogin && url?.startsWith(CarrefourRoutes.ORIGIN) == true) {
-                                    scope.launch {
-                                        CookieManager.getInstance().flush()
-                                        if (retailerSession.isLoggedInStatus(probeVisible())) retailerSession.markConnected()
-                                    }
-                                }
-                                // Leclerc : le drive ouvert sur le site devient le drive de l'application.
-                                if (retailer == Retailer.LECLERC) RetailerSites.leclercStoreFromUrl(url)?.let { found ->
-                                    val current = c.settings.current.leclercStore()
-                                    if (current == null || current.id != found.id || current.host != found.host) scope.launch {
-                                        c.leclerc.forgetContext()
-                                        c.settings.update {
-                                            it.copy(
-                                                leclercStoreId = found.id, leclercNoPR = found.noPR, leclercHost = found.host,
-                                                leclercStoreName = found.name.ifBlank { it.leclercStoreName.takeIf { _ -> current?.id == found.id }.orEmpty() },
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Auchan : les jetons de l'API panier sont relevés aussi sur la page visible.
-                            override fun shouldInterceptRequest(v: WebView?, request: WebResourceRequest?): WebResourceResponse? {
-                                bridge.observe(request)
-                                return null
-                            }
-                        }
-                        wv.loadUrl(startUrl)
-                        view = wv
-                    }
-                },
-                onRelease = { it.destroy() },
+            // Diagnostic discret : utile si une page reste blanche (hôte, erreur de chargement).
+            Text(
+                listOfNotNull(pageHost, loadError?.let { "⚠ $it" }).joinToString("  ·  "),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (loadError != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
             )
+
+            /** Clients communs à la page et aux fenêtres qu'elle ouvre. */
+            fun setup(wv: WebView, isPopup: Boolean) {
+                bridge.configure(wv)
+                // Le site peut ouvrir de vraies fenêtres (connexion) : on les gère au lieu de perdre le lien avec la page.
+                wv.settings.setSupportMultipleWindows(true)
+                wv.webChromeClient = object : WebChromeClient() {
+                    override fun onProgressChanged(v: WebView?, newProgress: Int) {
+                        loading = newProgress < 100
+                    }
+
+                    override fun onCreateWindow(v: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
+                        val parent = v ?: return false
+                        val msg = resultMsg ?: return false
+                        val child = WebView(parent.context)
+                        setup(child, isPopup = true)
+                        popup = child
+                        (msg.obj as? WebView.WebViewTransport)?.webView = child
+                        msg.sendToTarget()
+                        return true
+                    }
+
+                    override fun onCloseWindow(window: WebView?) {
+                        if (window != null && window === popup) popup = null
+                    }
+
+                    // Le site demande la position (choix du magasin) : refus explicite, sinon la page reste bloquée.
+                    override fun onGeolocationPermissionsShowPrompt(origin: String?, callback: GeolocationPermissions.Callback?) {
+                        callback?.invoke(origin, false, false)
+                    }
+
+                    override fun onPermissionRequest(request: PermissionRequest?) {
+                        request?.deny()
+                    }
+                }
+                wv.webViewClient = object : WebViewClient() {
+                    // Seules les pages web sont chargées ; une adresse « intent: », « mailto: »… viderait la page.
+                    override fun shouldOverrideUrlLoading(v: WebView?, request: WebResourceRequest?): Boolean {
+                        val scheme = request?.url?.scheme?.lowercase()
+                        return scheme != null && scheme != "http" && scheme != "https"
+                    }
+
+                    override fun onPageStarted(v: WebView?, url: String?, favicon: Bitmap?) {
+                        pageHost = url?.let { android.net.Uri.parse(it).host }
+                        loadError = null
+                        if (isCarrefour && url?.startsWith(CarrefourRoutes.IAM_ORIGIN) == true) visitedLogin = true
+                    }
+
+                    override fun onReceivedError(v: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                        if (request?.isForMainFrame == true) loadError = "${error?.description ?: "erreur"} (${request.url.host})"
+                    }
+
+                    override fun onReceivedHttpError(v: WebView?, request: WebResourceRequest?, errorResponse: WebResourceResponse?) {
+                        if (request?.isForMainFrame == true) loadError = "HTTP ${errorResponse?.statusCode} (${request.url.host})"
+                    }
+
+                    override fun onPageFinished(v: WebView?, url: String?) {
+                        // Carrefour : retour sur la boutique après la page de connexion, on teste la session dans cette page.
+                        if (!isPopup && isCarrefour && mode == WebMode.LOGIN && visitedLogin && url?.startsWith(CarrefourRoutes.ORIGIN) == true) {
+                            scope.launch {
+                                CookieManager.getInstance().flush()
+                                if (retailerSession.isLoggedInStatus(probeVisible())) retailerSession.markConnected()
+                            }
+                        }
+                        // Leclerc : le drive ouvert sur le site devient le drive de l'application.
+                        if (retailer == Retailer.LECLERC) RetailerSites.leclercStoreFromUrl(url)?.let { found ->
+                            val current = c.settings.current.leclercStore()
+                            if (current == null || current.id != found.id || current.host != found.host) scope.launch {
+                                c.leclerc.forgetContext()
+                                c.settings.update {
+                                    it.copy(
+                                        leclercStoreId = found.id, leclercNoPR = found.noPR, leclercHost = found.host,
+                                        leclercStoreName = found.name.ifBlank { it.leclercStoreName.takeIf { _ -> current?.id == found.id }.orEmpty() },
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Auchan : les jetons de l'API panier sont relevés aussi sur la page visible.
+                    override fun shouldInterceptRequest(v: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                        bridge.observe(request)
+                        return null
+                    }
+                }
+            }
+
+            Box(Modifier.fillMaxSize()) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { ctx ->
+                        WebView(ctx).also { wv ->
+                            setup(wv, isPopup = false)
+                            // Seule méthode exposée : le code HTTP du test de session.
+                            wv.addJavascriptInterface(
+                                object {
+                                    @JavascriptInterface
+                                    fun onStatus(status: Int) {
+                                        probe.getAndSet(null)?.complete(status)
+                                    }
+                                },
+                                "MesCoursesLogin",
+                            )
+                            wv.loadUrl(startUrl)
+                            view = wv
+                        }
+                    },
+                    onRelease = { it.destroy() },
+                )
+                popup?.let { child ->
+                    key(child) {
+                        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Fenêtre du site", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                                TextButton(onClick = { popup = null }) { Text("Fermer") }
+                            }
+                            AndroidView(factory = { child }, modifier = Modifier.fillMaxSize(), onRelease = { it.destroy() })
+                        }
+                    }
+                }
+            }
         }
     }
 }
