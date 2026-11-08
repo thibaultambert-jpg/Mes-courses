@@ -93,13 +93,20 @@ object CartPlanner {
 
     /** Recherche des produits pour une ligne (aussi utilisée pour « autres choix » d'un produit mémorisé). */
     suspend fun searchLine(backend: RetailerBackend, item: ShoppingItem, preferOrganic: Boolean): CartLine = try {
-        var found = backend.search(searchQuery(item, preferOrganic))
-        // Pas de version bio au drive : on se rabat sur le produit classique.
-        if (found.isEmpty() && preferOrganic) found = backend.search(searchQuery(item))
-        // Jamais de produit indisponible en présélection.
-        val products = rank(item, found, preferOrganic).sortedBy { !it.available }.filter { it.available }
-        if (products.isEmpty()) CartLine(item, status = LineStatus.INTROUVABLE, included = false)
-        else CartLine(item, products, status = LineStatus.PROPOSE)
+        var found = backend.searchWithUnavailable(searchQuery(item, preferOrganic))
+        // Pas de version bio disponible au drive : on se rabat sur le produit classique.
+        if (found.none { it.available } && preferOrganic) found = backend.searchWithUnavailable(searchQuery(item))
+        val ranked = rank(item, found, preferOrganic)
+        val available = ranked.filter { it.available }
+        // Les produits en rupture restent visibles dans « autres choix » (marqués), jamais présélectionnés.
+        val products = available + ranked.filterNot { it.available }
+        val skipped = ranked.firstOrNull()?.takeIf { !it.available }
+        when {
+            available.isEmpty() && ranked.isNotEmpty() ->
+                CartLine(item, products, status = LineStatus.INTROUVABLE, included = false, note = "Tous les produits trouvés sont indisponibles au drive")
+            available.isEmpty() -> CartLine(item, status = LineStatus.INTROUVABLE, included = false)
+            else -> CartLine(item, products, status = LineStatus.PROPOSE, note = skipped?.let { "« ${it.name} » indisponible : remplacé par le suivant" })
+        }
     } catch (e: Exception) {
         CartLine(item, status = LineStatus.ERREUR, included = false, message = e.message)
     }

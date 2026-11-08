@@ -10,7 +10,11 @@ import fr.mescourses.core.carrefour.TimeSlot
  */
 interface RetailerBackend {
     val label: String
+    /** Produits disponibles au drive. */
     suspend fun search(query: String, limit: Int = 5): List<Product>
+
+    /** Comme [search], mais garde les produits en rupture (marqués `available = false`) pour les signaler. */
+    suspend fun searchWithUnavailable(query: String, limit: Int = 8): List<Product> = search(query, limit)
     suspend fun cart(): Cart
     /** Ajoute `quantity` unités à ce qui est déjà dans le panier. */
     suspend fun addToCart(product: Product, quantity: Int): Cart

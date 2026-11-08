@@ -70,6 +70,10 @@ fun CarrefourDebugScreen(onBack: () -> Unit, onOpenSite: () -> Unit) {
                     "Panier" to CarrefourRoutes.CART,
                     "Recherche lait" to CarrefourRoutes.search("lait"),
                     "Drive favori" to CarrefourRoutes.FAVORITE_STORE,
+                    "Session" to CarrefourRoutes.SESSION_PROBE,
+                    "Simulation panier" to CarrefourRoutes.cartSimulate(
+                        c.settings.current.storeRef.ifBlank { c.settings.current.basketServiceId.substringBefore('-') }.ifBlank { "0" },
+                    ),
                 ).forEach { (label, p) -> FilterChip(selected = path == p, onClick = { method = "GET"; path = p; body = "" }, label = { Text(label) }) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

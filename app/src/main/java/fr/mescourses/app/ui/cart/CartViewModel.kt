@@ -59,7 +59,8 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
     private var job: Job? = null
 
     init {
-        viewModelScope.launch { c.session.ensureSession() }
+        // À l'ouverture de l'onglet : session, puis panier et articles à remplacer.
+        viewModelScope.launch { if (c.session.ensureSession()) loadInfo() }
         // Envoi demandé depuis une recette ou la liste de courses.
         viewModelScope.launch {
             c.pendingCart.collect { pending ->
@@ -121,7 +122,6 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
                 val failures = _state.value.lines.count { it.status == LineStatus.ERREUR }
                 _state.update { it.copy(phase = Phase.TERMINE, error = if (failures > 0) "$failures article(s) en erreur" else null) }
                 loadInfo()
-                checkUnavailable()
             } catch (e: Exception) {
                 fail(e)
                 _state.update { it.copy(phase = Phase.VALIDATION) }
@@ -136,6 +136,8 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
             val cart = c.carrefour.cart()
             val slots = runCatching { c.carrefour.timeslots(5) }.getOrNull()
             _state.update { it.copy(cart = cart, slots = slots) }
+            // Le drive signale-t-il des articles à remplacer ?
+            checkUnavailable()
         } catch (e: Exception) {
             fail(e)
         } finally {

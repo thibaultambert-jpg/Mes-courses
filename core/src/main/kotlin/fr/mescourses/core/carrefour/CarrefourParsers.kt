@@ -101,13 +101,32 @@ object CarrefourParsers {
                 val product = ProductParser.parse(e).firstOrNull()
                 if (qty != null && product != null && product.ean.length >= 8) {
                     val subtotal = listOf("totalItemPrice", "subtotal", "lineTotal", "totalPrice").firstNotNullOfOrNull { k -> num(e[k]) }
-                    out.putIfAbsent(product.ean, CartLineItem(product.ean, product.name, qty, subtotal))
+                    out.putIfAbsent(product.ean, CartLineItem(product.ean, product.name, qty, subtotal, product.available && !lineUnavailable(e), product.imageUrl))
                 } else {
                     e.values.forEach { collectCartLines(it, out, depth + 1) }
                 }
             }
             else -> Unit
         }
+    }
+
+    private val unavailableWords = Regex("""unavailable|out_of_stock|outofstock|rupture|indisponible|not_available|sold_out""", RegexOption.IGNORE_CASE)
+
+    /** Ligne de panier marquée indisponible / à remplacer par le drive (plusieurs formes possibles). */
+    fun lineUnavailable(e: JsonObject, depth: Int = 0): Boolean {
+        if (depth > 3) return false
+        for ((k, v) in e) {
+            val key = k.lowercase()
+            val bool = (v as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull()
+            when {
+                bool == false && key in setOf("available", "isavailable", "purchasable", "ispurchasable", "instock") -> return true
+                bool == true && ("unavailable" in key || "substitution" in key || "toreplace" in key || "outofstock" in key) -> return true
+                (key == "status" || key == "availability" || key == "stockstatus" || key == "state") &&
+                    (v as? JsonPrimitive)?.contentOrNull?.let { unavailableWords.containsMatchIn(it) } == true -> return true
+                v is JsonObject && (key == "availability" || key == "attributes" || key == "stock" || key == "offer") -> if (lineUnavailable(v, depth + 1)) return true
+            }
+        }
+        return false
     }
 
     private fun num(e: JsonElement?): Double? = when (e) {

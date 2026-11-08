@@ -237,6 +237,12 @@ class RecipeBrowserViewModel(private val c: AppContainer) : ViewModel() {
     val messages = MutableStateFlow<String?>(null)
     val saving = MutableStateFlow(false)
 
+    /**
+     * Historique et page courante du navigateur, gardés pendant que la version simplifiée d'une recette
+     * est affichée (la WebView est alors détruite) : au retour, on reprend exactement là où on était.
+     */
+    var webState: android.os.Bundle? = null
+
     /** Appelé avec le contenu des balises JSON-LD de la page. */
     fun onPage(url: String, jsonLdBlocks: List<String>) {
         val recipe = RecipeJsonLdExtractor.extractFromJsonLd(jsonLdBlocks, url)

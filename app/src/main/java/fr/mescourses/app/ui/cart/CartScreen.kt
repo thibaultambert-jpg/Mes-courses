@@ -2,6 +2,9 @@
 
 package fr.mescourses.app.ui.cart
 
+import android.webkit.WebSettings
+import androidx.compose.ui.platform.LocalContext
+import coil.request.ImageRequest
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
@@ -246,10 +249,18 @@ fun CartScreen(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 if (i == line.selected) { Icon(Icons.Filled.CheckCircle, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.size(4.dp)) }
                                 if (p.organic) { BioBadge(); Spacer(Modifier.size(4.dp)) }
-                                Text(p.name, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    p.name, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                    color = if (p.available) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                         },
-                        supportingContent = { Text(listOfNotNull(p.brand, p.packaging, p.unitPrice, p.nutriscore?.let { "Nutri-Score $it" }, p.promo).joinToString(" · ")) },
+                        supportingContent = {
+                            Column {
+                                if (!p.available) Text("⛔ Indisponible au drive", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+                                Text(listOfNotNull(p.brand, p.packaging, p.unitPrice, p.nutriscore?.let { "Nutri-Score $it" }, p.promo).joinToString(" · "))
+                            }
+                        },
                         trailingContent = {
                             Column(horizontalAlignment = Alignment.End) {
                                 p.price?.let { Text(euros(it), style = MaterialTheme.typography.titleSmall) }
@@ -257,7 +268,10 @@ fun CartScreen(
                             }
                         },
                         leadingContent = { ProductThumb(p, 56) },
-                        modifier = Modifier.clickable { vm.updateLine(index) { it.copy(selected = i) }; alternativesFor = null },
+                        modifier = Modifier.clickable(enabled = p.available) {
+                            vm.updateLine(index) { it.copy(selected = i, status = LineStatus.PROPOSE, included = true) }
+                            alternativesFor = null
+                        },
                     )
                 }
                 Spacer(Modifier.size(24.dp))
@@ -270,6 +284,24 @@ fun CartScreen(
     if (chatOpen) ShoppingChatSheet(onDismiss = { chatOpen = false })
 }
 
+/**
+ * Requête d'image comme depuis carrefour.fr (Referer + User-Agent de Chrome) : le serveur d'images peut
+ * refuser les requêtes qui ne viennent pas d'un navigateur sur le site.
+ */
+@Composable
+private fun carrefourImage(url: String): ImageRequest {
+    val context = LocalContext.current
+    val ua = remember { fr.mescourses.core.recipes.RecipeSites.chromeUserAgent(WebSettings.getDefaultUserAgent(context)) }
+    return remember(url) {
+        ImageRequest.Builder(context)
+            .data(url)
+            .addHeader("Referer", CarrefourRoutes.ORIGIN + "/")
+            .addHeader("User-Agent", ua)
+            .crossfade(true)
+            .build()
+    }
+}
+
 /** Vignette d'un produit (photo Carrefour, sinon emoji). */
 @Composable
 private fun ProductThumb(p: Product, size: Int) {
@@ -277,8 +309,16 @@ private fun ProductThumb(p: Product, size: Int) {
         Modifier.size(size.dp).clip(RoundedCornerShape(10.dp)).background(Color.White),
         contentAlignment = Alignment.Center,
     ) {
-        if (p.imageUrl != null) {
-            AsyncImage(model = p.imageUrl, contentDescription = p.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().padding(2.dp))
+        val imageUrl = p.imageUrl
+        var failed by remember(imageUrl) { mutableStateOf(false) }
+        if (imageUrl != null && !failed) {
+            AsyncImage(
+                model = carrefourImage(imageUrl),
+                contentDescription = p.name,
+                contentScale = ContentScale.Fit,
+                onError = { failed = true },
+                modifier = Modifier.fillMaxSize().padding(2.dp),
+            )
         } else {
             Text("🛒", fontSize = (size / 2.5).sp)
         }
@@ -298,7 +338,7 @@ private fun ProductDetailSheet(sheet: ProductSheet, onDismiss: () -> Unit) {
         ) {
             if (image != null) {
                 Box(Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(20.dp)).background(Color.White), contentAlignment = Alignment.Center) {
-                    AsyncImage(model = image, contentDescription = p.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().padding(8.dp))
+                    AsyncImage(model = carrefourImage(image), contentDescription = p.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().padding(8.dp))
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {

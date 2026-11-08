@@ -578,11 +578,16 @@ fun RecipeBrowserScreen(startUrl: String, onClose: () -> Unit, onOpenRecipe: (Lo
                                     v?.let { w -> scope.launch { delay(800); scan(w) } }
                                 }
                             }
-                            wv.loadUrl(startUrl)
+                            // Retour depuis une recette simplifiée : on restaure l'historique au lieu de repartir de la page de départ.
+                            val saved = vm.webState
+                            if (saved == null || wv.restoreState(saved) == null) wv.loadUrl(startUrl)
                             view = wv
                         }
                     },
-                    onRelease = { it.destroy() },
+                    onRelease = { wv ->
+                        vm.webState = android.os.Bundle().also { wv.saveState(it) }
+                        wv.destroy()
+                    },
                 )
             }
             val r = detected
