@@ -1,0 +1,6 @@
+{"id":"CART1","items":[
+ {"id":"L1","productId":"P1","offerId":"O1","desiredQuantity":2,"product":{"name":"Lait demi-écrémé bio 1L"},
+  "offering":{"actualQuantity":2,"prices":{"price":{"amount":122}},"context":{"seller":{"name":"Auchan Drive Test"}}}},
+ {"id":"L2","productId":"P2","offerId":"O2","desiredQuantity":1,
+  "offering":{"actualQuantity":1,"prices":{"price":{"amount":210}}}}
+]}
