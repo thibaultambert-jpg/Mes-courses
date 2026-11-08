@@ -156,7 +156,19 @@ class AppContainer(context: Context) {
             }
         },
     )
-    val leclerc = LeclercClient(bridges.getValue(Retailer.LECLERC), store = { settings.current.leclercStore() })
+    val leclerc = LeclercClient(
+        bridges.getValue(Retailer.LECLERC),
+        store = { settings.current.leclercStore() },
+        // La session Leclerc est liée au drive ouvert dans le navigateur : on y ouvre la page du drive choisi.
+        rebind = { bridges.getValue(Retailer.LECLERC).reloadAndWait() },
+        // Aucun drive choisi : on reprend celui du compte, lu sur la page d'accueil connectée.
+        onStoreFound = { s ->
+            settings.update {
+                if (it.leclercStoreId.isNotBlank()) it
+                else it.copy(leclercStoreId = s.id, leclercNoPR = s.noPR, leclercHost = s.host, leclercStoreName = s.name)
+            }
+        },
+    )
     val auchan = AuchanClient(
         bridges.getValue(Retailer.AUCHAN),
         auth = { auchanTokens.current() },

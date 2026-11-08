@@ -24,6 +24,10 @@ class LeclercClient(
     transport: HttpTransport,
     /** Drive choisi dans l'app (null = pas encore choisi). */
     private val store: () -> LeclercStore?,
+    /** Recharge la page du drive dans la WebView, pour relier la session au drive choisi. */
+    private val rebind: suspend () -> Unit = {},
+    /** Drive du compte trouvé sur la page d'accueil (aucun drive n'était choisi). */
+    private val onStoreFound: suspend (LeclercStore) -> Unit = {},
     private val now: () -> Long = System::currentTimeMillis,
     rateLimitWaitMs: Long = 3_000,
 ) : RetailerBackend {
@@ -48,13 +52,37 @@ class LeclercClient(
     private fun currentStore(): LeclercStore = store() ?: throw CarrefourException.NoDrive(who)
 
     /** Page HTML d'un drive, vérifiée : un 200 sans contenu de drive = anti-robot ou session expirée. */
-    private suspend fun storePage(url: String): String {
+    /**
+     * Page HTML du drive, vérifiée. Une page « session expirée » vient souvent d'une session liée à un autre drive :
+     * on recharge une fois la page du drive dans la WebView ([rebind]) pour y relier la session, puis on réessaie.
+     */
+    private suspend fun storePage(url: String, allowRebind: Boolean = true): String {
         val html = http.call("GET", url, LeclercRoutes.HTML_HEADERS).body
         if (LeclercParsers.isStorePage(html)) return html
-        throw if (LeclercParsers.isExpiredPage(html)) CarrefourException.SessionExpired(who) else CarrefourException.ChallengeRequired(who)
+        if (LeclercParsers.isExpiredPage(html)) {
+            if (allowRebind) {
+                rebind()
+                return storePage(url, allowRebind = false)
+            }
+            throw CarrefourException.SessionExpired(who, "page « session expirée » du drive ${currentStore().id}")
+        }
+        throw CarrefourException.ChallengeRequired(who, "la page reçue n'est pas une page de drive")
     }
 
-    override suspend fun sessionProbe(): Cart? = cart()
+    /**
+     * Sans drive choisi : la page d'accueil dit si le compte est connecté. Connecté → on reprend le drive du compte
+     * s'il y figure, sinon « drive à choisir » ; pas connecté → connexion requise.
+     */
+    override suspend fun sessionProbe(): Cart? {
+        if (store() == null) {
+            val home = http.call("GET", LeclercRoutes.HOME, LeclercRoutes.HTML_HEADERS).body
+            if (!LeclercParsers.isLoggedInHome(home)) throw CarrefourException.SessionExpired(who, "non connecté sur leclercdrive.fr")
+            val found = LeclercParsers.storeInPage(home) ?: throw CarrefourException.NoDrive(who)
+            onStoreFound(found)
+            if (store() == null) throw CarrefourException.NoDrive(who)
+        }
+        return cart()
+    }
 
     override suspend fun search(query: String, limit: Int): List<Product> =
         searchWithUnavailable(query, Int.MAX_VALUE).filter { it.available }.take(limit)

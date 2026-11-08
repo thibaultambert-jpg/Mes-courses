@@ -99,6 +99,7 @@ class SettingsViewModel(val c: AppContainer) : ViewModel() {
     }
 
     fun session(r: Retailer) = c.session(r).state
+    fun problem(r: Retailer): String? = c.session(r).lastProblem
 
     fun logout() = c.logoutAll()
 }
@@ -214,8 +215,13 @@ fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStor
                         }
                         StatChip(session.label, emphasized = session != SessionState.CONNECTE)
                     }
+                    // Raison du dernier refus (ex. « page session expirée du drive 053701 »), pour comprendre sans debug.
+                    if (session != SessionState.CONNECTE) vm.problem(r)?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (session != SessionState.CONNECTE) Button(onClick = { onLogin(r) }) { Text("Se connecter") }
+                        // « Drive à choisir » : on est connecté, il manque seulement le drive.
+                        if (session != SessionState.CONNECTE && session != SessionState.DRIVE_REQUIS) Button(onClick = { onLogin(r) }) { Text("Se connecter") }
                         TextButton(onClick = { onChooseStore(r) }) { Text(if (s.storeName(r).isBlank()) "Choisir le drive" else "Changer de drive") }
                     }
                 }

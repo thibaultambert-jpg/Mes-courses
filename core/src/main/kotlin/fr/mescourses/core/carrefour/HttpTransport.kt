@@ -18,8 +18,10 @@ fun interface HttpTransport {
  * pour l'utilisateur et pour Gemma. `who` = nom de l'enseigne. Le nom historique est gardé pour limiter les changements.
  */
 sealed class CarrefourException(val code: String, message: String) : Exception(message) {
-    class SessionExpired(who: String = "Carrefour") : CarrefourException("session_expiree", "L'utilisateur doit se reconnecter à $who.")
-    class ChallengeRequired(who: String = "Carrefour") : CarrefourException("verification_requise", "$who demande une vérification anti-robot : ouvre le site dans l'app.")
+    class SessionExpired(who: String = "Carrefour", detail: String? = null) :
+        CarrefourException("session_expiree", "L'utilisateur doit se reconnecter à $who." + (detail?.let { " ($it)" } ?: ""))
+    class ChallengeRequired(who: String = "Carrefour", detail: String? = null) :
+        CarrefourException("verification_requise", "$who demande une vérification anti-robot : ouvre le site dans l'app." + (detail?.let { " ($it)" } ?: ""))
     class RateLimited(who: String = "Carrefour") : CarrefourException("trop_de_requetes", "$who limite les requêtes, réessaie dans un instant.")
     class NoDrive(who: String = "Carrefour") : CarrefourException("drive_non_choisi", "Aucun drive $who choisi : choisis ton magasin.")
     class Forbidden(path: String) : CarrefourException("interdit", "Route interdite par l'application : $path")

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -95,6 +96,9 @@ fun StoreScreen(retailer: Retailer, onBack: () -> Unit, onOpenSite: (String) -> 
             Retailer.CARREFOUR -> c.settings.update { it.copy(storeId = store.id, storeName = store.name, storeRef = store.ref.orEmpty(), basketServiceId = "", facilityServiceId = "") }
             Retailer.LECLERC -> LeclercClient.storeOf(store)?.let { s ->
                 c.settings.update { it.copy(leclercStoreId = s.id, leclercNoPR = s.noPR, leclercHost = s.host, leclercStoreName = s.name) }
+                // La session suit le drive ouvert dans le navigateur : on ouvre ce drive dans la WebView, puis on vérifie.
+                runCatching { c.bridge(retailer).reloadAndWait() }
+                c.session(retailer).check()
             }
             Retailer.AUCHAN -> Unit
         }
@@ -137,7 +141,8 @@ fun StoreScreen(retailer: Retailer, onBack: () -> Unit, onOpenSite: (String) -> 
             }
             if (loading) item { CircularProgressIndicator() }
             error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
-            items(stores, key = { it.id }) { store ->
+            // Clé unique : un même magasin peut revenir pour plusieurs services.
+            itemsIndexed(stores, key = { i, st -> "${st.id}|${st.ref}|$i" }) { _, store ->
                 val selected = store.id == currentId
                 Card(
                     onClick = { choose(store) },

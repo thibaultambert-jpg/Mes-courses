@@ -128,6 +128,37 @@ class LeclercAuchanTest {
         assertTrue(transport.calls.last().second.contains("latitude=47.36"))
     }
 
+    @Test fun leclerc_connecte_sans_drive_reprend_le_drive_du_compte() = runTest {
+        var chosen: LeclercStore? = null
+        val home = "<html>Dernière connexion le dimanche <a href=\"https://fd14-courses.leclercdrive.fr/magasin-092001-092001-Colombes-Michelet/\">Mon drive</a></html>"
+        val transport = FakeTransport { _, path, _ ->
+            when {
+                path == LeclercRoutes.HOME -> ok(home)
+                path.contains("zzzznomatchzzz") -> ok(res("/leclerc/cart.html"))
+                else -> error(path)
+            }
+        }
+        val client = LeclercClient(transport, { chosen }, onStoreFound = { chosen = it })
+        val cart = client.sessionProbe()
+        assertEquals(LeclercStore("092001", "092001", "fd14-courses.leclercdrive.fr", "Colombes Michelet"), chosen)
+        assertEquals(1, cart?.lines?.size)
+    }
+
+    @Test fun leclerc_sans_drive_ni_connexion() = runTest {
+        val client = LeclercClient(FakeTransport { _, _, _ -> ok("<html>Me connecter</html>") }, { null })
+        assertFailsWith<CarrefourException.SessionExpired> { client.sessionProbe() }
+        val logged = LeclercClient(FakeTransport { _, _, _ -> ok("<html>Dernière connexion le lundi</html>") }, { null })
+        assertFailsWith<CarrefourException.NoDrive> { logged.sessionProbe() }
+    }
+
+    @Test fun leclerc_session_reliee_au_drive_puis_reessai() = runTest {
+        var rebinds = 0
+        val transport = FakeTransport { _, _, _ -> if (rebinds == 0) ok("<html>Votre session a expiré</html>") else ok(res("/leclerc/cart.html")) }
+        val cart = LeclercClient(transport, { store }, rebind = { rebinds++ }).cart()
+        assertEquals(1, rebinds)
+        assertEquals(1, cart.lines.size)
+    }
+
     // ---------- Auchan ----------
 
     @Test fun auchan_recherche() {

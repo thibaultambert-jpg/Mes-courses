@@ -55,9 +55,5 @@ object RetailerSites {
     )
 
     /** Drive Leclerc lu dans l'adresse d'une page du site (…fd9-courses.leclercdrive.fr/magasin-053701-053701-Nom/…). */
-    fun leclercStoreFromUrl(url: String?): LeclercStore? {
-        val m = Regex("""^https://(fd\d+-courses\.leclercdrive\.fr)/magasin-(\d+)-(\d+)(?:-([^/?#]+))?""").find(url ?: return null) ?: return null
-        val (host, id, noPR, slug) = m.destructured
-        return LeclercStore(id, noPR, host, slug.replace('-', ' ').trim())
-    }
+    fun leclercStoreFromUrl(url: String?): LeclercStore? = fr.mescourses.core.leclerc.LeclercParsers.storeFromUrl(url)
 }

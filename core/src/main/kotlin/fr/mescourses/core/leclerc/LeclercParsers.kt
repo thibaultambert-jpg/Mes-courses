@@ -116,9 +116,20 @@ object LeclercParsers {
     }
 
     /** Drives proches. L'hôte des courses (fdN-courses…) est rangé dans `Store.ref`. */
+    /**
+     * Le même magasin revient souvent plusieurs fois (drive, retrait piéton, livraison) : on garde une entrée par
+     * magasin et par hôte, en préférant le service drive, puis triée par distance.
+     */
     fun parseStores(body: String, city: String?): List<Store> {
         val root = runCatching { json.parseToJsonElement(body) }.getOrNull() ?: return emptyList()
         val points: List<JsonElement> = ((root as? JsonObject)?.get("points") as? JsonArray) ?: (root as? JsonArray) ?: return emptyList()
+        return rawStores(points, city)
+            .groupBy { it.id + "|" + it.ref?.substringBefore('|') }
+            .map { (_, same) -> same.firstOrNull { !it.name.endsWith(")") } ?: same.first() }
+            .sortedBy { it.distanceKm ?: Double.MAX_VALUE }
+    }
+
+    private fun rawStores(points: List<JsonElement>, city: String?): List<Store> {
         return points.mapNotNull { e ->
             val p = e as? JsonObject ?: return@mapNotNull null
             val id = p.str("noPL") ?: return@mapNotNull null
@@ -134,6 +145,22 @@ object LeclercParsers {
             )
         }
     }
+
+    /** Page d'accueil d'un compte connecté : bandeau « Dernière connexion » ou lien de déconnexion. */
+    fun isLoggedInHome(html: String): Boolean =
+        Regex("(?i)derni(?:è|&#232;|&egrave;|e)re connexion|d(?:é|&#233;|&eacute;|e)connexion").containsMatchIn(html)
+
+    private val storeUrl = Regex("""https://(fd\d+-courses\.leclercdrive\.fr)/magasin-(\d+)-(\d+)(?:-([^/"'?#\s<>]+))?""")
+
+    /** Drive lu dans une adresse (…fd9-courses.leclercdrive.fr/magasin-053701-053701-Nom/…). */
+    fun storeFromUrl(url: String?): LeclercStore? {
+        val m = storeUrl.find(url ?: return null)?.takeIf { it.range.first == 0 } ?: return null
+        val (host, id, noPR, slug) = m.destructured
+        return LeclercStore(id, noPR, host, Scrape.decodeEntities(slug.replace('-', ' ')).trim())
+    }
+
+    /** Premier lien vers un drive trouvé dans une page (le drive du compte, sur la page d'accueil connectée). */
+    fun storeInPage(html: String): LeclercStore? = storeUrl.find(html)?.let { storeFromUrl(it.value) }
 
     private fun hostOf(url: String?): String? = url?.let { Regex("^https?://([^/]+)").find(it)?.groupValues?.get(1) }
 }

@@ -40,6 +40,8 @@ import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.os.Message
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.material3.Button
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.jsonPrimitive
@@ -114,6 +116,19 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
     val jsErrors = remember { mutableStateListOf<String>() }
     var menuOpen by remember { mutableStateOf(false) }
     var diagnostic by remember { mutableStateOf<String?>(null) }
+    /** Drive Leclerc affiché par le site, différent de celui de l'app (proposé dans un bandeau). */
+    var siteStore by remember { mutableStateOf<fr.mescourses.core.leclerc.LeclercStore?>(null) }
+
+    suspend fun useLeclercStore(found: fr.mescourses.core.leclerc.LeclercStore) {
+        c.leclerc.forgetContext()
+        c.settings.update {
+            it.copy(
+                leclercStoreId = found.id, leclercNoPR = found.noPR, leclercHost = found.host,
+                leclercStoreName = found.name.ifBlank { "Drive ${found.id}" },
+            )
+        }
+        siteStore = null
+    }
     /** Adresses hCaptcha chargées et leurs erreurs (relevées hors du fil principal, d'où la liste synchronisée). */
     val hcaptchaLog = remember { java.util.Collections.synchronizedList(mutableListOf<String>()) }
     val settingsState by c.settings.state.collectAsStateWithLifecycle()
@@ -254,6 +269,18 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
             )
 
+            siteStore?.let { found ->
+                InfoBanner(
+                    "🏪",
+                    "Le site est sur le drive « ${found.name.ifBlank { found.id }} », l'app sur « ${settingsState.storeName(Retailer.LECLERC)} ».",
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                )
+                Row(Modifier.padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { scope.launch { useLeclercStore(found) } }) { Text("Utiliser ce drive") }
+                    TextButton(onClick = { siteStore = null }) { Text("Garder celui de l'app") }
+                }
+            }
+
             /** Clients communs à la page et aux fenêtres qu'elle ouvre. */
             fun setup(wv: WebView, isPopup: Boolean) {
                 bridge.configure(wv)
@@ -326,7 +353,7 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
                     override fun onPageFinished(v: WebView?, url: String?) {
                         // Leclerc : la fenêtre de connexion aurait une hauteur nulle dans la WebView (page blanche).
                         if (retailer == Retailer.LECLERC && url?.contains("leclercdrive.fr") == true) {
-                            v?.evaluateJavascript(fr.mescourses.core.leclerc.LeclercRoutes.MODAL_FIX_JS, null)
+                            v?.evaluateJavascript(fr.mescourses.core.leclerc.LeclercRoutes.LAYOUT_FIX_JS, null)
                         }
                         // Carrefour : retour sur la boutique après la page de connexion, on teste la session dans cette page.
                         if (!isPopup && isCarrefour && mode == WebMode.LOGIN && visitedLogin && url?.startsWith(CarrefourRoutes.ORIGIN) == true) {
@@ -335,18 +362,16 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
                                 if (retailerSession.isLoggedInStatus(probeVisible())) retailerSession.markConnected()
                             }
                         }
-                        // Leclerc : le drive ouvert sur le site devient le drive de l'application.
+                        // Leclerc : drive ouvert sur le site. Repris d'office seulement si aucun drive n'est choisi ;
+                        // sinon on propose de l'utiliser (le site renvoie souvent vers l'ancien drive du compte).
                         if (retailer == Retailer.LECLERC) RetailerSites.leclercStoreFromUrl(url)?.let { found ->
                             val current = c.settings.current.leclercStore()
-                            if (current == null || current.id != found.id || current.host != found.host) scope.launch {
-                                c.leclerc.forgetContext()
-                                c.settings.update {
-                                    it.copy(
-                                        leclercStoreId = found.id, leclercNoPR = found.noPR, leclercHost = found.host,
-                                        leclercStoreName = found.name.ifBlank { it.leclercStoreName.takeIf { _ -> current?.id == found.id }.orEmpty() },
-                                    )
-                                }
+                            when {
+                                current == null -> { scope.launch { useLeclercStore(found) } }
+                                current.id != found.id || current.host != found.host -> { siteStore = found }
+                                else -> { siteStore = null }
                             }
+                            Unit
                         }
                     }
 
