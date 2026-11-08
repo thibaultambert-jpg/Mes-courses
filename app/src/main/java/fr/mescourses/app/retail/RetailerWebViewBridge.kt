@@ -10,6 +10,7 @@ import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import fr.mescourses.core.carrefour.CarrefourException
@@ -51,6 +52,8 @@ class RetailerWebViewBridge(
     private val appContext: Context,
     val site: RetailerSite,
     private val uaWithoutWv: () -> Boolean,
+    /** Leclerc : se présenter comme Chrome (sinon, User-Agent d'origine de la WebView). */
+    private val leclercChrome: () -> Boolean = { true },
     /** Requêtes faites par la page elle-même (URL + en-têtes), pour relever des jetons (Auchan). Jamais journalisé. */
     private val onRequestSeen: ((url: String, headers: Map<String, String>) -> Unit)? = null,
 ) : HttpTransport {
@@ -82,15 +85,35 @@ class RetailerWebViewBridge(
         // Les liens « nouvelle fenêtre » du site s'ouvrent dans la même vue au lieu d'être ignorés.
         view.settings.setSupportMultipleWindows(false)
         view.settings.javaScriptCanOpenWindowsAutomatically = true
-        // Leclerc et Auchan (DataDome) : présentés comme Chrome, dans les deux vues (cookies liés au navigateur).
-        // Carrefour : réglage du debug (« se présenter comme Chrome »).
-        if (site.retailer != Retailer.CARREFOUR) {
-            view.settings.userAgentString = RecipeSites.chromeUserAgent(view.settings.userAgentString)
-        } else if (uaWithoutWv()) {
-            view.settings.userAgentString = view.settings.userAgentString.replace("; wv", "")
-        }
+        // Réglages qu'a Chrome et que la WebView n'active pas d'office (sites récents).
+        @Suppress("DEPRECATION")
+        view.settings.databaseEnabled = true
+        view.settings.loadWithOverviewMode = true
+        view.settings.useWideViewPort = true
+        view.settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        view.settings.mediaPlaybackRequiresUserGesture = false
+        view.settings.userAgentString = userAgent()
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(view, true)
+    }
+
+    /**
+     * User-Agent de l'enseigne, toujours calculé depuis celui d'origine d'Android :
+     * Leclerc (au choix) et Auchan présentés comme Chrome (anti-robot DataDome, cookies liés au navigateur) ;
+     * Carrefour selon le réglage du debug (« se présenter comme Chrome »).
+     */
+    fun userAgent(): String {
+        val base = WebSettings.getDefaultUserAgent(appContext)
+        return when (site.retailer) {
+            Retailer.AUCHAN -> RecipeSites.chromeUserAgent(base)
+            Retailer.LECLERC -> if (leclercChrome()) RecipeSites.chromeUserAgent(base) else base
+            Retailer.CARREFOUR -> if (uaWithoutWv()) base.replace("; wv", "") else base
+        }
+    }
+
+    /** Applique le User-Agent courant à la WebView invisible et recharge sa page (après un changement de réglage). */
+    suspend fun refreshUserAgent() = withContext(Dispatchers.Main) {
+        webView?.let { it.settings.userAgentString = userAgent(); it.reload() }
     }
 
     /** Relève les requêtes de la page (Auchan : jetons de l'API panier). À appeler aussi depuis la WebView visible. */

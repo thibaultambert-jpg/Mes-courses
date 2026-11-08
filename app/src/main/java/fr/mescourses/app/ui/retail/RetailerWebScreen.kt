@@ -40,6 +40,17 @@ import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.os.Message
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.webkit.ConsoleMessage
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -76,6 +87,33 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
     /** Diagnostic : hôte de la page affichée et dernière erreur de chargement (page principale). */
     var pageHost by remember { mutableStateOf<String?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
+    /** Dernières erreurs et avertissements JavaScript de la page (diagnostic d'une page blanche). */
+    val jsErrors = remember { mutableStateListOf<String>() }
+    var menuOpen by remember { mutableStateOf(false) }
+    var diagnostic by remember { mutableStateOf<String?>(null) }
+    val settingsState by c.settings.state.collectAsStateWithLifecycle()
+
+    /** Rassemble ce qu'il faut pour comprendre une page blanche (jamais de cookie ni de contenu de formulaire). */
+    fun runDiagnostic() {
+        val v = popup ?: view ?: return
+        val js = "(function(){var h=[];document.querySelectorAll('iframe').forEach(function(i){try{h.push(new URL(i.src,location.href).host)}catch(e){h.push('?')}});" +
+            "return JSON.stringify({etat:document.readyState,titre:document.title.slice(0,80),texte:document.body?document.body.innerText.length:0," +
+            "elements:document.getElementsByTagName('*').length,formulaires:document.forms.length,champs:document.querySelectorAll('input').length,iframes:h});})()"
+        diagnostic = "Analyse de la page…"
+        v.evaluateJavascript(js) { result ->
+            diagnostic = buildString {
+                appendLine("Mes courses — diagnostic ${retailer.label}")
+                appendLine("Page : ${v.url?.substringBefore('?') ?: "?"}${if (popup != null) " (fenêtre du site)" else ""}")
+                appendLine("User-Agent : ${v.settings.userAgentString}")
+                appendLine("WebView : ${WebView.getCurrentWebViewPackage()?.let { "${it.packageName} ${it.versionName}" } ?: "?"}")
+                appendLine("Cookies tiers : ${if (CookieManager.getInstance().acceptThirdPartyCookies(v)) "acceptés" else "refusés"}")
+                appendLine("Erreur de chargement : ${loadError ?: "aucune"}")
+                appendLine("Contenu : ${result?.trim('"')?.replace("\\\"", "\"") ?: "?"}")
+                appendLine("Erreurs JS (${jsErrors.size}) :")
+                if (jsErrors.isEmpty()) appendLine("  aucune") else jsErrors.forEach { appendLine("  $it") }
+            }.trimEnd()
+        }
+    }
     /** Réponse attendue du test de session lancé DANS la WebView visible. */
     val probe = remember { AtomicReference<CompletableDeferred<Int>?>(null) }
 
@@ -134,7 +172,35 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
     ScreenScaffold(
         title = if (mode == WebMode.LOGIN) "Connexion ${retailer.label}" else retailer.site,
         onBack = { close(manual = true) },
-        actions = { TextButton(onClick = { close(manual = true) }, enabled = !closing) { Text("Terminé") } },
+        actions = {
+            Box {
+                TextButton(onClick = { menuOpen = true }) { Text("⋯") }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(text = { Text("Recharger") }, onClick = {
+                        menuOpen = false
+                        jsErrors.clear(); loadError = null
+                        (popup ?: view)?.reload()
+                    })
+                    if (retailer == Retailer.LECLERC) {
+                        val chrome = settingsState.leclercChromeUa
+                        DropdownMenuItem(
+                            text = { Text(if (chrome) "Navigateur : WebView d'origine" else "Navigateur : Chrome") },
+                            onClick = {
+                                menuOpen = false
+                                scope.launch {
+                                    c.settings.update { it.copy(leclercChromeUa = !chrome) }
+                                    // Même navigateur pour la page visible et la WebView invisible (cookies de l'anti-robot).
+                                    view?.let { v -> v.settings.userAgentString = bridge.userAgent(); jsErrors.clear(); v.reload() }
+                                    bridge.refreshUserAgent()
+                                }
+                            },
+                        )
+                    }
+                    DropdownMenuItem(text = { Text("Diagnostic") }, onClick = { menuOpen = false; runDiagnostic() })
+                }
+            }
+            TextButton(onClick = { close(manual = true) }, enabled = !closing) { Text("Terminé") }
+        },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
             if (mode == WebMode.LOGIN) {
@@ -153,7 +219,7 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
             if (loading || closing) LinearProgressIndicator(Modifier.fillMaxWidth())
             // Diagnostic discret : utile si une page reste blanche (hôte, erreur de chargement).
             Text(
-                listOfNotNull(pageHost, loadError?.let { "⚠ $it" }).joinToString("  ·  "),
+                listOfNotNull(pageHost, loadError?.let { "⚠ $it" }, jsErrors.lastOrNull()?.let { "JS (${jsErrors.size}) : $it" }).joinToString("  ·  "),
                 style = MaterialTheme.typography.labelSmall,
                 color = if (loadError != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2,
@@ -166,6 +232,16 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
                 // Le site peut ouvrir de vraies fenêtres (connexion) : on les gère au lieu de perdre le lien avec la page.
                 wv.settings.setSupportMultipleWindows(true)
                 wv.webChromeClient = object : WebChromeClient() {
+                    override fun onConsoleMessage(m: ConsoleMessage?): Boolean {
+                        val msg = m ?: return false
+                        if (msg.messageLevel() == ConsoleMessage.MessageLevel.ERROR || msg.messageLevel() == ConsoleMessage.MessageLevel.WARNING) {
+                            jsErrors += "${if (msg.messageLevel() == ConsoleMessage.MessageLevel.ERROR) "erreur" else "alerte"} : " +
+                                "${msg.message().take(200)} (${msg.sourceId()?.substringBefore('?')?.substringAfterLast('/') ?: "?"}:${msg.lineNumber()})"
+                            while (jsErrors.size > 20) jsErrors.removeAt(0)
+                        }
+                        return false
+                    }
+
                     override fun onProgressChanged(v: WebView?, newProgress: Int) {
                         loading = newProgress < 100
                     }
@@ -281,5 +357,24 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
                 }
             }
         }
+    }
+
+    diagnostic?.let { text ->
+        AlertDialog(
+            onDismissRequest = { diagnostic = null },
+            title = { Text("Diagnostic de la page") },
+            text = {
+                SelectionContainer {
+                    Text(text, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, modifier = Modifier.verticalScroll(rememberScrollState()))
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("Diagnostic", text))
+                    Toast.makeText(context, "Diagnostic copié", Toast.LENGTH_SHORT).show()
+                }) { Text("Copier") }
+            },
+            dismissButton = { TextButton(onClick = { diagnostic = null }) { Text("Fermer") } },
+        )
     }
 }
