@@ -94,8 +94,19 @@ class RecipeSearchTest {
             "https://cuisine.journaldesfemmes.fr/recette/315418-boeuf-bourguignon",
         ).forEach { url -> assertTrue(RecipeSites.forUrl(url)?.isRecipeUrl(url) == true, url) }
         // Les pages de liste, elles, ne le sont pas (on peut naviguer dedans).
-        listOf("marmiton", "750g", "jdf").map { RecipeSites.byId(it)!!.browsePage }
+        RecipeSites.all.map { it.browsePage }
             .forEach { url -> assertTrue(RecipeSites.forUrl(url)?.isRecipeUrl(url) == false, url) }
+        // Chaque site a sa page de recettes (plus la page d'accueil).
+        assertTrue(RecipeSites.all.all { it.browseUrl != null }, RecipeSites.all.filter { it.browseUrl == null }.joinToString { it.id })
+        assertEquals("https://picnic.app/fr/recettes/", RecipeSites.byId("picnic")!!.browsePage)
+        assertEquals("https://jow.fr/blog/categories/idees-recettes", RecipeSites.byId("jow")!!.browsePage)
+        // Elle : catégorie ≠ recette.
+        val elleCat = "https://www.elle.fr/Elle-a-Table/Recettes-de-cuisine/Plats"
+        val elleRecipe = "https://www.elle.fr/Elle-a-Table/Recettes-de-cuisine/Gratin-dauphinois-2971574"
+        assertTrue(RecipeSites.forUrl(elleCat)?.isRecipeUrl(elleCat) == false)
+        assertTrue(RecipeSites.forUrl(elleRecipe)?.isRecipeUrl(elleRecipe) == true)
+        val jow = "https://jow.fr/recipes/poulet-tikka-masala-5f8a1b2c3d"
+        assertTrue(RecipeSites.forUrl(jow)?.isRecipeUrl(jow) == true)
     }
 
     @Test fun recettes_populaires_du_moment() = runTest {
