@@ -82,6 +82,28 @@ class AppContainer(context: Context) {
     private val llm: LlmEngine = LiteRtLmEngine(context)
     val models = ModelManager(context, appScope)
     val model = ModelController(llm, settings)
+
+    /**
+     * Sélectionne un modèle au niveau de l'application : le choix est enregistré même si l'écran des
+     * Réglages a été quitté pendant le téléchargement.
+     */
+    fun selectModel(path: String) {
+        appScope.launch {
+            settings.update { it.copy(modelPath = path) }
+            model.refreshAvailability()
+        }
+    }
+
+    init {
+        // Aucun modèle choisi (ou fichier supprimé) mais un seul installé : on le prend d'office.
+        appScope.launch {
+            settings.update { s ->
+                val chosen = s.modelPath.takeIf { it.isNotBlank() && java.io.File(it).exists() }
+                if (chosen != null) s else models.installed().singleOrNull()?.let { s.copy(modelPath = it.absolutePath) } ?: s
+            }
+            model.refreshAvailability()
+        }
+    }
     /** Travaux longs du chef (proposition, validation), qui continuent quand on quitte l'app. */
     val chef = ChefWork(context, appScope, model, recipes) { stepsWriter() }
 
@@ -90,6 +112,7 @@ class AppContainer(context: Context) {
     val carrefour = CarrefourClient(
         bridge,
         savedContext = { settings.current.driveContext() },
+        storeRef = { settings.current.storeRef.ifBlank { null } },
         // Drive découvert (panier ou offres d'une recherche) : mémorisé pour les fois suivantes.
         onContext = { ctx, _ ->
             appScope.launch {

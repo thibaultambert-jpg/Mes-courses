@@ -17,6 +17,12 @@ interface RetailerBackend {
     /** Fixe la quantité totale (0 = retirer). */
     suspend fun setQuantity(ean: String, quantity: Int): Cart
     suspend fun timeslots(max: Int = 5): List<TimeSlot>
+
+    /** Disponibilité au drive des produits (EAN → disponible) ; EAN absent = inconnu. */
+    suspend fun availability(eans: List<String>): Map<String, Boolean> = emptyMap()
+
+    /** EAN des articles du panier que le drive ne pourra pas servir. */
+    suspend fun unavailableInCart(): List<String> = emptyList()
 }
 
 /** Mémoire des produits choisis par l'utilisateur pour chaque ingrédient (clé = ShoppingListMerger.key). */

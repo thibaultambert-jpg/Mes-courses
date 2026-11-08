@@ -21,6 +21,8 @@ data class CartLine(
     val message: String? = null,
     /** Produit repris de la mémoire des choix (pas de recherche faite). */
     val remembered: Boolean = false,
+    /** Remarque affichée (ex. « Remplace X, indisponible au drive »). */
+    val note: String? = null,
 ) {
     val product: Product? get() = candidates.getOrNull(selected)
 }
@@ -67,10 +69,21 @@ object CartPlanner {
         memory: ProductMemory? = null,
         pauseMs: Long = 600,
     ): Flow<CartLine> = flow {
+        val remembered = items.associateWith { memory?.get(ShoppingListMerger.key(it.name)) }
+        // Les choix habituels peuvent être en rupture : vérification groupée avant de les proposer.
+        val availability = remembered.values.filterNotNull().map { it.ean }.takeIf { it.isNotEmpty() }
+            ?.let { runCatching { backend.availability(it) }.getOrDefault(emptyMap()) }.orEmpty()
         for (item in items) {
-            val known = memory?.get(ShoppingListMerger.key(item.name))
-            if (known != null) {
+            val known = remembered[item]
+            if (known != null && availability[known.ean] != false) {
                 emit(CartLine(item, listOf(known), status = LineStatus.PROPOSE, remembered = true))
+                continue
+            }
+            if (known != null) {
+                // Choix habituel indisponible : on cherche un remplaçant disponible.
+                val line = searchLine(backend, item, preferOrganic)
+                emit(line.copy(candidates = line.candidates.filter { it.ean != known.ean }, note = "Remplace « ${known.name} », indisponible au drive"))
+                delay(pauseMs)
                 continue
             }
             emit(searchLine(backend, item, preferOrganic))
@@ -83,7 +96,8 @@ object CartPlanner {
         var found = backend.search(searchQuery(item, preferOrganic))
         // Pas de version bio au drive : on se rabat sur le produit classique.
         if (found.isEmpty() && preferOrganic) found = backend.search(searchQuery(item))
-        val products = rank(item, found, preferOrganic)
+        // Jamais de produit indisponible en présélection.
+        val products = rank(item, found, preferOrganic).sortedBy { !it.available }.filter { it.available }
         if (products.isEmpty()) CartLine(item, status = LineStatus.INTROUVABLE, included = false)
         else CartLine(item, products, status = LineStatus.PROPOSE)
     } catch (e: Exception) {

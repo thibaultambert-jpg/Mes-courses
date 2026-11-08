@@ -75,6 +75,16 @@ class RecipeSearchTest {
         assertNull(RecipeSearchParser.ratingOf("8/10"))
     }
 
+    @Test fun parcourir_une_categorie() = runTest {
+        val page = javaClass.getResource("/search/marmiton_like_search.html")!!.readText()
+        val asked = mutableListOf<String>()
+        val cat = RecipeSites.categories.first { it.siteId == "marmiton" }
+        val result = RecipeSearcher(PageFetcher { url -> asked += url; page }).browse(cat)
+        assertTrue(result.hits.isNotEmpty())
+        assertEquals(listOf("https://www.marmiton.org/recettes/index/categorie/plat-principal/"), asked)
+        assertEquals(setOf("marmiton", "750g", "jdf"), RecipeSites.categories.map { it.siteId }.toSet())
+    }
+
     @Test fun recettes_populaires_du_moment() = runTest {
         val page = javaClass.getResource("/search/marmiton_like_search.html")!!.readText()
         val asked = mutableListOf<String>()

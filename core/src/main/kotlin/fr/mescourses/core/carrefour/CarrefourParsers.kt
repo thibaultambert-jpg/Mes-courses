@@ -233,7 +233,33 @@ object CarrefourParsers {
         val product: Product,
         val ingredients: String? = null,
         val allergens: String? = null,
+        val description: String? = null,
     )
+
+    /**
+     * Réponse de `/api/cart/simulate` : EAN des articles indisponibles au drive. Lecture tolérante :
+     * toute liste sous une clé contenant « unavailable », « gtin » ou « ean », ou tout objet marqué indisponible.
+     */
+    fun parseSimulation(body: String): List<String> {
+        val root = parseJson(body) ?: return emptyList()
+        val out = LinkedHashSet<String>()
+        val eanPattern = Regex("""^\d{8,14}$""")
+        fun walk(e: JsonElement, unavailableZone: Boolean, depth: Int) {
+            if (depth > 15) return
+            when (e) {
+                is JsonArray -> e.forEach { walk(it, unavailableZone, depth + 1) }
+                is JsonObject -> e.forEach { (k, v) ->
+                    val key = k.lowercase()
+                    val zone = unavailableZone || "unavailable" in key || "indisponible" in key || "missing" in key
+                    if (zone && v is JsonPrimitive) text(v)?.takeIf { eanPattern.matches(it) }?.let(out::add)
+                    walk(v, zone, depth + 1)
+                }
+                is JsonPrimitive -> if (unavailableZone) text(e)?.takeIf { eanPattern.matches(it) }?.let(out::add)
+            }
+        }
+        walk(root, false, 0)
+        return out.toList()
+    }
 
     /** Page produit HTML (JSON-LD) ou réponse JSON de /products. */
     fun parseProductDetail(body: String): ProductDetail? {
@@ -245,6 +271,7 @@ object CarrefourParsers {
                 p,
                 ingredients = findValue(root, "ingredients") ?: findValue(root, "composition"),
                 allergens = findValue(root, "allergens") ?: findValue(root, "allergenes"),
+                description = p.description ?: findValue(root, "description"),
             )
         }
         val doc = Jsoup.parse(body)
@@ -266,6 +293,7 @@ object CarrefourParsers {
                     identifiers = mapOf("ean" to ean),
                 ),
                 ingredients = (extractNuxtData(body)?.let { findValue(it, "ingredients") }),
+                description = text(obj["description"]),
             )
         }
         return null

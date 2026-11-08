@@ -12,6 +12,7 @@ import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
@@ -96,6 +97,7 @@ import fr.mescourses.app.ui.components.StatChip
 import fr.mescourses.core.model.Recipe
 import fr.mescourses.core.model.RecipeStatus
 import fr.mescourses.core.recipes.RecipeHit
+import fr.mescourses.core.recipes.RecipeCategory
 import fr.mescourses.core.recipes.RecipeSites
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -121,6 +123,7 @@ fun DiscoverContent(
     val filters by vm.filters.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
     val popular by vm.popularMode.collectAsStateWithLifecycle()
+    val category by vm.category.collectAsStateWithLifecycle()
     val adding by vm.adding.collectAsStateWithLifecycle()
     val inBook by vm.favorites.byUrl.collectAsStateWithLifecycle()
     val message by vm.messages.collectAsStateWithLifecycle()
@@ -183,6 +186,8 @@ fun DiscoverContent(
                         ideas = vm.seasonIdeas,
                         onIdea = { focus.clearFocus(); vm.searchIdea(it) },
                         onBrowse = onBrowse,
+                        categories = vm.categories,
+                        onCategory = { focus.clearFocus(); vm.browse(it) },
                     )
                 }
             }
@@ -190,7 +195,14 @@ fun DiscoverContent(
                 item(span = { GridItemSpan(2) }) {
                     Row(Modifier.padding(vertical = 24.dp), verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        Text(if (popular) "Recettes populaires du moment…" else "Recherche sur les sites…", Modifier.padding(start = 12.dp))
+                        Text(
+                            when {
+                                category != null -> "Lecture de « ${category!!.label} »…"
+                                popular -> "Recettes populaires du moment…"
+                                else -> "Recherche sur les sites…"
+                            },
+                            Modifier.padding(start = 12.dp),
+                        )
                     }
                 }
             }
@@ -201,7 +213,7 @@ fun DiscoverContent(
                         val answered = r.hits.map { it.siteName }.distinct().size
                         Text(
                             if (r.hits.isEmpty()) "Aucune recette trouvée"
-                            else (if (popular) "🔥 Populaires en ce moment · " else "") +
+                            else (category?.let { cat -> "📂 ${RecipeSites.byId(cat.siteId)?.name ?: ""} · ${cat.label} · " } ?: if (popular) "🔥 Populaires en ce moment · " else "") +
                                 "${r.hits.size} recettes · $answered site${if (answered > 1) "s" else ""}",
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -238,8 +250,26 @@ fun DiscoverContent(
 }
 
 @Composable
-private fun IdleDiscover(ideas: List<String>, onIdea: (String) -> Unit, onBrowse: (String) -> Unit) {
+private fun IdleDiscover(
+    ideas: List<String>,
+    onIdea: (String) -> Unit,
+    onBrowse: (String) -> Unit,
+    categories: List<RecipeCategory>,
+    onCategory: (RecipeCategory) -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 8.dp)) {
+        if (categories.isNotEmpty()) {
+            SectionHeader("Parcourir les recettes", emoji = "📂")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                categories.forEach { cat ->
+                    FilterChip(
+                        selected = false,
+                        onClick = { onCategory(cat) },
+                        label = { Text("${RecipeSites.byId(cat.siteId)?.name ?: cat.siteId} · ${cat.label}") },
+                    )
+                }
+            }
+        }
         if (ideas.isNotEmpty()) {
             SectionHeader("De saison en ce moment", emoji = "🍂")
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -255,7 +285,7 @@ private fun IdleDiscover(ideas: List<String>, onIdea: (String) -> Unit, onBrowse
         }
         SectionHeader("Parcourir un site", emoji = "🧭")
         Text(
-            "Navigue sur le site dans l'app : dès qu'une page contient une recette, un bandeau te propose de l'ajouter à tes favoris.",
+            "Navigue sur le site dans l'app : chaque recette ouverte s'affiche en version simplifiée, prête à ajouter à tes favoris.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -476,6 +506,16 @@ fun RecipeBrowserScreen(startUrl: String, onClose: () -> Unit, onOpenRecipe: (Lo
     LaunchedEffect(message) { message?.let { snackbar.showSnackbar(it); vm.messages.value = null } }
     LaunchedEffect(Unit) { vm.clear() }
 
+    fun isRecipe(url: String) = RecipeSites.forUrl(url)?.isRecipeUrl(url) == true
+    var lastSimplified by remember { mutableStateOf<Pair<String, Long>?>(null) }
+    fun simplify(url: String) {
+        // Évite d'ouvrir deux fois le même aperçu (deux événements pour une même navigation).
+        val now = System.currentTimeMillis()
+        if (lastSimplified?.let { it.first == url && now - it.second < 2_000 } == true) return
+        lastSimplified = url to now
+        onSimplify(url)
+    }
+
     fun scan(v: WebView) {
         val url = v.url ?: return
         v.evaluateJavascript(READ_JSON_LD) { raw ->
@@ -516,6 +556,15 @@ fun RecipeBrowserScreen(startUrl: String, onClose: () -> Unit, onOpenRecipe: (Lo
                         WebView(ctx).also { wv ->
                             configureLikeChrome(wv)
                             wv.webViewClient = object : WebViewClient() {
+                                // Toute recette ouverte depuis le site s'affiche en version simplifiée (aperçu de l'app).
+                                // La page de départ, elle, reste visible si on a demandé explicitement le site.
+                                override fun shouldOverrideUrlLoading(v: WebView?, request: WebResourceRequest?): Boolean {
+                                    val url = request?.url?.toString() ?: return false
+                                    if (!request.isForMainFrame || url == startUrl || !isRecipe(url)) return false
+                                    simplify(url)
+                                    return true
+                                }
+
                                 override fun onPageStarted(v: WebView?, url: String?, favicon: Bitmap?) {
                                     loading = true
                                     url?.let { currentUrl = it }
@@ -530,6 +579,13 @@ fun RecipeBrowserScreen(startUrl: String, onClose: () -> Unit, onOpenRecipe: (Lo
                                 }
 
                                 override fun doUpdateVisitedHistory(v: WebView?, url: String?, isReload: Boolean) {
+                                    // Navigation interne du site (sans rechargement) vers une recette : version simplifiée,
+                                    // et le navigateur revient à la liste pour le retour arrière.
+                                    if (url != null && url != startUrl && isRecipe(url)) {
+                                        if (v?.canGoBack() == true) v.goBack()
+                                        simplify(url)
+                                        return
+                                    }
                                     url?.let { currentUrl = it }
                                     v?.let { w -> scope.launch { delay(800); scan(w) } }
                                 }
