@@ -80,7 +80,8 @@ class LeclercAuchanTest {
         val client = LeclercClient(transport, { store }, rateLimitWaitMs = 0)
         val cart = client.addToCart(Product(id = "2612", name = "Lait"), 1)
         val post = transport.calls.single { it.first == "POST" }
-        val payload = Json.parseToJsonElement(post.third!!).jsonObject
+        assertTrue(post.third!!.startsWith("d="), post.third)
+        val payload = Json.parseToJsonElement(URLDecoder.decode(post.third!!.removePrefix("d="), Charsets.UTF_8)).jsonObject
         // Chemin court (sans la ville) : le chemin long renvoie 404.
         assertTrue(post.second.endsWith("/magasin-053701-053701/panier.aspx?op=1"), post.second)
         assertEquals(3, payload["iQuantite"]!!.jsonPrimitive.content.toInt()) // 2 déjà au panier + 1
@@ -123,7 +124,7 @@ class LeclercAuchanTest {
             if (method == "GET") ok(res("/leclerc/cart.html")) else ok(res("/leclerc/cart_events.json"))
         }
         LeclercClient(transport, { store }, rateLimitWaitMs = 0).setQuantity("2612", 0)
-        val payload = transport.calls.single { it.first == "POST" }.third!!
+        val payload = URLDecoder.decode(transport.calls.single { it.first == "POST" }.third!!.removePrefix("d="), Charsets.UTF_8)
         assertTrue(payload.contains("\"eTypeAction\":2"))
         assertTrue(payload.contains("\"iQuantite\":0"))
     }

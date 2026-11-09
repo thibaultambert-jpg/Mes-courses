@@ -48,7 +48,7 @@ objet qui entoure chaque `"iIdProduit"`.
 | Opération | Route | Statut |
 |---|---|---|
 | Lire | aucune page panier (`GET panier.aspx` = 404). Chaque page du drive contient le panier : tableau `"lstProduits":[…]` (fiches complètes avec `iQuantitePanier`, `rTotalAPayer`) puis `"lstProduitsLight"` suivi du total `"sTotalAPayer"`. L'app lit une **recherche sans résultat** (`TexteRecherche=zzzznomatchzzz`) pour n'avoir que les produits du panier. | ✅ |
-| Ajouter / modifier / retirer | `POST https://{hôte}/magasin-{noPL}-{noPR}/panier.aspx?op=1` (chemin **court, sans la ville** : le chemin long renvoie 404), corps **JSON** `{"eTypeAction":1,"iIdProduit":"…","iQuantite":<quantité cible>,"sNoPointLivraison":"…","objContexteProvenanceArticle":{…}}` (`application/json`, `x-requested-with: XMLHttpRequest`). Réponse : tableau d'événements (`Produit…`, `Rayon…`, `Panier…` avec `sTotalAPayer`). Relevé dans Chrome, novembre 2026. | ✅ |
+| Ajouter / modifier / retirer | `POST https://{hôte}/magasin-{noPL}-{noPR}/panier.aspx?op=1` (chemin **court, sans la ville** : le chemin long renvoie 404), corps formulaire **`d=<JSON encodé>`** (`application/x-www-form-urlencoded`) — le JSON brut est refusé (page « service momentanément indisponible ») — JSON : `{"eTypeAction":1,"iIdProduit":"…","iQuantite":<quantité cible>,"sNoPointLivraison":"…","objContexteProvenanceArticle":{…}}` (`x-requested-with: XMLHttpRequest`). Réponse : tableau d'événements (`Produit…`, `Rayon…`, `Panier…` avec `sTotalAPayer`). Relevé dans Chrome, novembre 2026. | ✅ |
 
 Corps JSON : `{"eTypeAction":1,"iIdProduit":"2612","iQuantite":2,"sNoPointLivraison":"053701"}`
 - `eTypeAction` : **1** = ajouter / augmenter, **2** = diminuer / retirer.

@@ -133,8 +133,11 @@ fun CartScreen(
                 }
                 Phase.TERMINE -> BottomActionBar {
                     OutlinedButton(onClick = vm::markSentAsBought) { Text("Cocher dans la liste") }
-                    Button(onClick = { open(site.webCart()) }, modifier = Modifier.weight(1f)) {
-                        Text("Finaliser sur $who")
+                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Button(onClick = { open(site.webCart()) }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Finaliser sur $who")
+                        }
+                        RetailerAppButton(retailer)
                     }
                 }
                 else -> Unit
@@ -188,6 +191,7 @@ fun CartScreen(
                         }
                         // Liste vide ou rien à préparer : accès direct au panier du site.
                         TextButton(onClick = { open(site.webCart()) }) { Text("Ouvrir mon panier sur ${retailer.site} ↗") }
+                        RetailerAppButton(retailer)
                     }
                 }
                 Phase.TERMINE -> item {
@@ -451,6 +455,7 @@ private fun CartSummary(retailer: Retailer, cart: fr.mescourses.core.carrefour.C
             Text("Les créneaux se choisissent sur ${retailer.site}.", style = MaterialTheme.typography.bodySmall)
         }
         OutlinedButton(onClick = onOpenWebCart) { Text("🛒 Voir mon panier sur ${retailer.site}") }
+        RetailerAppButton(retailer)
     }
 }
 
@@ -724,4 +729,19 @@ private fun ChoiceRow(line: CartLine, i: Int, onPick: (Int) -> Unit, onProduct: 
         leadingContent = { ProductThumb(p, 56) },
         modifier = Modifier.clickable(enabled = p.available) { onPick(i) },
     )
+}
+
+
+/** Lance l'application officielle de l'enseigne si elle est installée (null sinon). */
+private fun retailerAppIntent(context: android.content.Context, retailer: Retailer): android.content.Intent? =
+    runCatching { context.packageManager.getLaunchIntentForPackage(retailer.appPackage) }.getOrNull()
+
+/** « Ouvrir l'app E.Leclerc » : affiché seulement quand l'app de l'enseigne est installée sur le téléphone. */
+@Composable
+private fun RetailerAppButton(retailer: Retailer) {
+    val context = LocalContext.current
+    val intent = remember(retailer) { retailerAppIntent(context, retailer) } ?: return
+    TextButton(onClick = {
+        runCatching { context.startActivity(intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
+    }) { Text("Ouvrir l'app ${retailer.label} ↗") }
 }

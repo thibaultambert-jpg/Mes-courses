@@ -26,7 +26,7 @@ object LeclercRoutes {
     fun storePage(store: LeclercStore) = store.homeUrl
     fun search(store: LeclercStore, query: String) = storeBase(store) + "/recherche.aspx?TexteRecherche=${enc(query)}"
     /**
-     * Écriture du panier : chemin court `magasin-{noPL}-{noPR}`, SANS le nom de la ville (sinon 404), corps JSON.
+     * Écriture du panier : chemin court `magasin-{noPL}-{noPR}`, SANS le nom de la ville (sinon 404), corps `d=<json>`.
      * Relevé sur le site (Chrome, novembre 2026) : POST …/magasin-159201-159201/panier.aspx?op=1.
      */
     fun cartOp(store: LeclercStore) = "https://${store.host}/magasin-${store.id}-${store.noPR}/panier.aspx?op=1"
@@ -40,14 +40,17 @@ object LeclercRoutes {
     val HTML_HEADERS = mapOf("accept" to "text/html,application/xhtml+xml")
     val JSON_HEADERS = mapOf("accept" to "application/json")
     /**
-     * Formats d'écriture du panier, dans l'ordre d'essai : JSON brut avec l'en-tête de formulaire par défaut de jQuery
-     * (le plus probable sur ce site ASP.NET), JSON déclaré comme tel, puis l'ancien formulaire `d=<json>`.
+     * Formats d'écriture du panier, dans l'ordre d'essai : formulaire `d=<json>` (celui qui marche), puis deux formats
+     * de secours si le site change (JSON brut en formulaire, JSON déclaré comme tel).
      */
     fun cartVariants(payload: String): List<Pair<Map<String, String>, String>> = listOf(
+        FORM_HEADERS to formBody(payload),
         FORM_HEADERS to payload,
         CART_HEADERS to payload,
-        FORM_HEADERS to "d=" + URLEncoder.encode(payload, Charsets.UTF_8),
     )
+
+    /** Corps accepté par le site (vérifié sur le téléphone, novembre 2026) : formulaire `d=<JSON encodé>`. */
+    fun formBody(payload: String) = "d=" + URLEncoder.encode(payload, Charsets.UTF_8)
 
     val FORM_HEADERS = mapOf(
         "accept" to "application/json, text/javascript, */*; q=0.01",

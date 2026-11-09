@@ -128,14 +128,14 @@ fun RetailerDebugScreen(onBack: () -> Unit, onOpenSite: (Retailer) -> Unit) {
                             c.carrefour.call(method, path, body.ifBlank { null })
                         } else {
                             // Requête brute par la WebView de l'enseigne (en-têtes de l'API panier pour Auchan).
-                            // Leclerc, écriture du panier : JSON brut avec l'en-tête de formulaire (1er format essayé par l'app).
+                            // Leclerc, écriture du panier : formulaire « d=<json> », comme l'app.
                             val leclercForm = retailer == Retailer.LECLERC && "panier.aspx" in path && body.trimStart().startsWith("{")
                             val headers = when {
                                 path.startsWith(AuchanRoutes.API) -> mapOf("accept" to "application/json") + (c.auchanTokens.current()?.headers ?: emptyMap())
                                 leclercForm -> LeclercRoutes.FORM_HEADERS
                                 else -> mapOf("accept" to "application/json, text/html")
                             }
-                            val sent = if (leclercForm) body.trim() else body.ifBlank { null }
+                            val sent = if (leclercForm) LeclercRoutes.formBody(body.trim()) else body.ifBlank { null }
                             c.bridge(retailer).request(method, path, headers, sent)
                         }
                     } catch (e: Exception) {
