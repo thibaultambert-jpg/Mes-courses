@@ -6,7 +6,11 @@ import fr.mescourses.app.AppContainer
 import fr.mescourses.core.model.MenuDish
 import fr.mescourses.core.model.Recipe
 import fr.mescourses.core.model.RecipeStatus
+import fr.mescourses.core.recipes.QuickIdea
+import fr.mescourses.core.recipes.RecipeFilter
+import fr.mescourses.core.recipes.RecipeFilters
 import fr.mescourses.core.recipes.RecipeHit
+import fr.mescourses.core.recipes.RecipeSort
 import fr.mescourses.core.recipes.RecipeJsonLdExtractor
 import fr.mescourses.core.recipes.RecipeSearchResult
 import fr.mescourses.core.recipes.RecipeSite
@@ -61,26 +65,24 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
         data class Done(val result: RecipeSearchResult) : State
     }
 
-    enum class Filter(val label: String, val words: String) {
-        VEGETARIEN("Végétarien", "végétarien"),
-        RAPIDE("Rapide", "rapide"),
-        LEGER("Léger", "léger"),
-    }
-
     val favorites = Favorites(c, viewModelScope)
     val query = MutableStateFlow("")
     /** Sites choisis ; vide = tous les sites avec recherche. */
     val sites = MutableStateFlow<Set<String>>(emptySet())
-    val filters = MutableStateFlow<Set<Filter>>(emptySet())
+    /** Filtres actifs (type de plat, ingrédient principal, régime, temps, envie). */
+    val filters = MutableStateFlow<Set<RecipeFilter>>(emptySet())
+    val sort = MutableStateFlow(RecipeSort.PERTINENCE)
     val state = MutableStateFlow<State>(State.Idle)
     /** Adresses en cours d'ajout aux favoris (étoile qui tourne). */
     val adding = MutableStateFlow<Set<String>>(emptySet())
     val messages = MutableStateFlow<String?>(null)
-    private var lastSearch: String? = null
     /** Mode « Populaires du moment » (au lieu d'une recherche). */
     val popularMode = MutableStateFlow(false)
+    /** Résultats bruts des sites, avant filtres et tri de l'app (pour changer le tri sans rechercher). */
+    private var raw: RecipeSearchResult? = null
 
     val seasonIdeas: List<String> = Seasonality.highlights(LocalDate.now().month).take(10)
+    val quickIdeas: List<QuickIdea> = RecipeFilters.quickIdeas
     val searchableSites: List<RecipeSite> = RecipeSites.searchable
     val otherSites: List<RecipeSite> = RecipeSites.all.filterNot { it.searchable }
 
@@ -88,16 +90,15 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
 
     fun toggleSite(id: String) {
         sites.value = if (id in sites.value) sites.value - id else sites.value + id
-        refresh()
     }
 
     fun allSites() {
         sites.value = emptySet()
-        refresh()
     }
 
-    private fun refresh() {
-        if (popularMode.value) popular() else if (lastSearch != null) search()
+    /** Relance la recherche en cours (après un changement dans la feuille de filtres). */
+    fun refresh() {
+        if (popularMode.value) popular() else search()
     }
 
     /**
@@ -108,34 +109,56 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
         if (state.value == State.Idle && !popularMode.value) return false
         job?.cancel()
         popularMode.value = false
-        lastSearch = null
         state.value = State.Idle
         return true
     }
 
-    /** Recettes populaires du moment sur les sites choisis. */
+    /** Recettes populaires du moment sur les sites choisis (filtres et tri appliqués par l'app). */
     fun popular() {
         popularMode.value = true
         val chosen = searchableSites.filter { sites.value.isEmpty() || it.id in sites.value }
         job?.cancel()
         job = viewModelScope.launch {
             state.value = State.Loading
-            state.value = State.Done(c.recipeSearch.popular(chosen))
+            show(c.recipeSearch.popular(chosen))
         }
     }
 
     fun togglePopular() {
         if (popularMode.value) {
             popularMode.value = false
-            if (lastSearch != null) search() else { job?.cancel(); state.value = State.Idle }
+            search()
         } else {
             popular()
         }
     }
 
-    fun toggleFilter(f: Filter) {
-        filters.value = if (f in filters.value) filters.value - f else filters.value + f
-        if (lastSearch != null) search()
+    /** Tuile ou puce : active / retire un filtre, puis relance (les filtres seuls suffisent pour chercher). */
+    fun toggleFilter(f: RecipeFilter) {
+        filters.value = RecipeFilters.toggle(filters.value, f)
+        refresh()
+    }
+
+    /** Dans la feuille de filtres : on change sans relancer à chaque toucher (bouton « Voir les recettes »). */
+    fun toggleFilterQuietly(f: RecipeFilter) {
+        filters.value = RecipeFilters.toggle(filters.value, f)
+    }
+
+    fun clearFilters() {
+        filters.value = emptySet()
+        refresh()
+    }
+
+    fun setSort(s: RecipeSort) {
+        sort.value = s
+        raw?.let { r -> if (state.value is State.Done) state.value = State.Done(filtered(r)) }
+    }
+
+    fun applyIdea(idea: QuickIdea) {
+        query.value = ""
+        filters.value = idea.filters
+        popularMode.value = false
+        search()
     }
 
     fun searchIdea(idea: String) {
@@ -144,21 +167,31 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     fun search() {
-        val q = (listOf(query.value.trim()) + filters.value.map { it.words }).filter { it.isNotBlank() }.joinToString(" ")
-        if (query.value.isBlank()) return
+        val q = RecipeFilters.query(query.value, filters.value)
         popularMode.value = false
-        lastSearch = q
+        if (q.isBlank()) {
+            job?.cancel()
+            state.value = State.Idle
+            return
+        }
         val chosen = searchableSites.filter { sites.value.isEmpty() || it.id in sites.value }
         job?.cancel()
         job = viewModelScope.launch {
             state.value = State.Loading
-            state.value = State.Done(c.recipeSearch.search(q, chosen))
+            show(c.recipeSearch.search(q, chosen))
         }
+    }
+
+    private fun filtered(r: RecipeSearchResult) = r.copy(hits = RecipeFilters.apply(r.hits, filters.value, sort.value))
+
+    private fun show(r: RecipeSearchResult) {
+        raw = r
+        state.value = State.Done(filtered(r))
     }
 
     /** Adresse de recherche d'un site, pour l'ouvrir dans le navigateur de l'app. */
     fun searchUrl(site: RecipeSite): String =
-        if (popularMode.value) site.popularPage else site.searchUrlFor(lastSearch ?: query.value) ?: site.homeUrl
+        if (popularMode.value) site.popularPage else site.searchUrlFor(RecipeFilters.query(query.value, filters.value).ifBlank { query.value }) ?: site.homeUrl
 
     fun addFavorite(hit: RecipeHit) {
         val existing = favorites.find(hit.url)
@@ -224,7 +257,7 @@ class RecipePreviewViewModel(private val c: AppContainer, val url: String) : Vie
 
     fun addToList(r: Recipe) = viewModelScope.launch {
         val p = c.defaultPortions()
-        c.shopping.add(ShoppingListMerger.fromRecipe(r, p.equivalent(c.settings.current.childFactor)))
+        c.shopping.add(ShoppingListMerger.fromRecipe(r, p.equivalent(c.settings.current.childFactor), c.settings.current.pantryList()))
         messages.value = "Ingrédients ajoutés à la liste (${p.label()})"
     }
 }

@@ -41,6 +41,8 @@ data class Settings(
     val leclercPath: String = "",
     /** Magasin Auchan, lu dans le panier (le drive se choisit sur auchan.fr). */
     val auchanStoreName: String = "",
+    /** Produits « toujours dans mon placard », séparés par des retours à la ligne ; vide = liste par défaut. */
+    val pantry: String = "",
     /**
      * Leclerc : navigateur annoncé au site. « ordinateur » (défaut) = site ordinateur fdN-courses, le seul que l'app sait
      * lire ; « mobile » = Chrome Android (site mobile m-courses) ; « webview » = User-Agent d'origine.
@@ -59,6 +61,15 @@ data class Settings(
     val uaWithoutWv: Boolean = false,
 ) {
     val preferredRetailer: Retailer get() = Retailer.parse(retailer)
+
+    /** Placard : liste par défaut tant que l'utilisateur ne l'a pas modifiée (« - » = placard vide). */
+    fun pantryList(): List<String> = when (pantry) {
+        "" -> fr.mescourses.core.shopping.Pantry.DEFAULTS
+        "-" -> emptyList()
+        else -> pantry.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+    }
+
+    fun withPantry(list: List<String>): Settings = copy(pantry = if (list.isEmpty()) "-" else list.joinToString("\n"))
 
     fun leclercStore(): LeclercStore? = if (leclercStoreId.isBlank() || leclercHost.isBlank()) null
         else leclercNoPR.ifBlank { leclercStoreId }.let { noPR ->
@@ -102,6 +113,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
         val lcName = stringPreferencesKey("lc_store_name")
         val lcPath = stringPreferencesKey("lc_store_path")
         val auName = stringPreferencesKey("au_store_name")
+        val pantry = stringPreferencesKey("pantry")
         val lcUaMode = stringPreferencesKey("lc_ua_mode")
     }
 
@@ -129,6 +141,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
         leclercStoreName = this[K.lcName].orEmpty(),
         leclercPath = this[K.lcPath].orEmpty(),
         auchanStoreName = this[K.auName].orEmpty(),
+        pantry = this[K.pantry].orEmpty(),
         leclercUaMode = this[K.lcUaMode] ?: "ordinateur",
     )
 
@@ -164,6 +177,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
             prefs[K.lcName] = s.leclercStoreName
             prefs[K.lcPath] = s.leclercPath
             prefs[K.auName] = s.auchanStoreName
+            prefs[K.pantry] = s.pantry
             prefs[K.lcUaMode] = s.leclercUaMode
         }
     }

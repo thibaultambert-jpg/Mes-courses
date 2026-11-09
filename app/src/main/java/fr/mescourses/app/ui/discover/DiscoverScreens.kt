@@ -96,6 +96,19 @@ import fr.mescourses.app.ui.components.SectionHeader
 import fr.mescourses.app.ui.components.StatChip
 import fr.mescourses.core.model.Recipe
 import fr.mescourses.core.model.RecipeStatus
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.InputChip
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.ui.unit.sp
+import fr.mescourses.core.recipes.FilterGroup
+import fr.mescourses.core.recipes.QuickIdea
+import fr.mescourses.core.recipes.RecipeFilter
+import fr.mescourses.core.recipes.RecipeFilters
+import fr.mescourses.core.recipes.RecipeSort
 import fr.mescourses.core.recipes.RecipeHit
 import fr.mescourses.core.recipes.RecipeSites
 import kotlinx.coroutines.delay
@@ -126,6 +139,8 @@ fun DiscoverContent(
     val inBook by vm.favorites.byUrl.collectAsStateWithLifecycle()
     val message by vm.messages.collectAsStateWithLifecycle()
     val focus = LocalFocusManager.current
+    val sort by vm.sort.collectAsStateWithLifecycle()
+    var showFilters by remember { mutableStateOf(false) }
     LaunchedEffect(message) { message?.let { snackbar.showSnackbar(it); vm.messages.value = null } }
 
     fun submit() { focus.clearFocus(); vm.search() }
@@ -138,41 +153,67 @@ fun DiscoverContent(
         modifier = modifier.fillMaxSize(),
     ) {
         item(span = { GridItemSpan(2) }) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { vm.query.value = it },
-                    leadingIcon = { Icon(Icons.Filled.Search, null) },
-                    trailingIcon = {
-                        if (query.isNotEmpty()) IconButton(onClick = { vm.query.value = "" }) { Icon(Icons.Filled.Close, "Effacer") }
-                    },
-                    placeholder = { Text("Chercher sur les sites (ex. potimarron)") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(28.dp),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { submit() }),
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        unfocusedIndicatorColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    item {
-                        FilterChip(selected = sites.isEmpty(), onClick = { vm.allSites() }, label = { Text("Tous les sites") })
-                    }
-                    items(vm.searchableSites, key = { it.id }) { s ->
-                        FilterChip(selected = s.id in sites, onClick = { vm.toggleSite(s.id) }, label = { Text(s.name) })
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // 1. Recherche + bouton Filtres (avec le nombre de filtres actifs).
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { vm.query.value = it },
+                        leadingIcon = { Icon(Icons.Filled.Search, null) },
+                        trailingIcon = {
+                            if (query.isNotEmpty()) IconButton(onClick = { vm.query.value = "" }) { Icon(Icons.Filled.Close, "Effacer") }
+                        },
+                        placeholder = { Text("Un plat, un ingrédient…") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(28.dp),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { submit() }),
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            unfocusedIndicatorColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        ),
+                        modifier = Modifier.weight(1f),
+                    )
+                    val active = filters.size + (if (sites.isNotEmpty()) 1 else 0) + (if (sort != RecipeSort.PERTINENCE) 1 else 0)
+                    BadgedBox(badge = { if (active > 0) Badge { Text("$active") } }) {
+                        FilledTonalIconButton(onClick = { focus.clearFocus(); showFilters = true }, modifier = Modifier.size(52.dp)) {
+                            Icon(Icons.Filled.Tune, "Filtres")
+                        }
                     }
                 }
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                // 2. « Je cherche… » : grandes tuiles par type de plat (une touche cherche, une 2ᵉ retire).
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(RecipeFilters.tiles, key = { it.name }) { f ->
+                        val selected = f in filters
+                        Surface(
+                            onClick = { focus.clearFocus(); vm.toggleFilter(f) },
+                            shape = RoundedCornerShape(18.dp),
+                            color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
+                            border = if (selected) androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
+                            modifier = Modifier.size(width = 78.dp, height = 74.dp),
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                                Text(f.emoji, fontSize = 26.sp)
+                                Text(f.label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                            }
+                        }
+                    }
+                }
+                // 3. Filtres actifs (supprimables) et Populaires.
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     item {
                         FilterChip(selected = popular, onClick = { focus.clearFocus(); vm.togglePopular() }, label = { Text("🔥 Populaires") })
                     }
-                    if (!popular) items(DiscoverViewModel.Filter.entries.toList()) { f ->
-                        FilterChip(selected = f in filters, onClick = { vm.toggleFilter(f) }, label = { Text(f.label) })
+                    items(filters.sortedBy { it.ordinal }.filterNot { it in RecipeFilters.tiles }, key = { it.name }) { f ->
+                        InputChip(
+                            selected = true,
+                            onClick = { vm.toggleFilter(f) },
+                            label = { Text("${f.emoji} ${f.label}") },
+                            trailingIcon = { Icon(Icons.Filled.Close, "Retirer ${f.label}", Modifier.size(16.dp)) },
+                        )
                     }
+                    if (filters.isNotEmpty()) item { TextButton(onClick = { vm.clearFilters() }) { Text("Tout effacer") } }
                 }
             }
         }
@@ -182,7 +223,9 @@ fun DiscoverContent(
                 item(span = { GridItemSpan(2) }) {
                     IdleDiscover(
                         ideas = vm.seasonIdeas,
+                        quickIdeas = vm.quickIdeas,
                         onIdea = { focus.clearFocus(); vm.searchIdea(it) },
+                        onQuickIdea = { focus.clearFocus(); vm.applyIdea(it) },
                         onBrowse = onBrowse,
                     )
                 }
@@ -209,7 +252,8 @@ fun DiscoverContent(
                         Text(
                             if (r.hits.isEmpty()) "Aucune recette trouvée"
                             else (if (popular) "🔥 Populaires en ce moment · " else "") +
-                                "${r.hits.size} recettes · $answered site${if (answered > 1) "s" else ""}",
+                                "${r.hits.size} recettes · $answered site${if (answered > 1) "s" else ""}" +
+                                if (sort != RecipeSort.PERTINENCE) " · ${sort.label.lowercase()}" else "",
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -233,6 +277,7 @@ fun DiscoverContent(
                     val book = inBook[RecipeSites.normalize(hit.url)]
                     HitCard(
                         hit = hit,
+                        badge = RecipeFilters.badge(hit.title),
                         favorite = book?.status == RecipeStatus.FAVORI,
                         adding = hit.url in adding,
                         onClick = { onOpenPreview(hit.url) },
@@ -242,15 +287,69 @@ fun DiscoverContent(
             }
         }
     }
+
+    if (showFilters) FiltersSheet(vm, onDismiss = { showFilters = false })
+}
+
+/** Feuille « Filtres » : groupes de filtres, sites et tri ; « Voir les recettes » lance la recherche. */
+@Composable
+private fun FiltersSheet(vm: DiscoverViewModel, onDismiss: () -> Unit) {
+    val filters by vm.filters.collectAsStateWithLifecycle()
+    val sites by vm.sites.collectAsStateWithLifecycle()
+    val sort by vm.sort.collectAsStateWithLifecycle()
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Filtres", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                if (filters.isNotEmpty()) TextButton(onClick = { filters.forEach { vm.toggleFilterQuietly(it) } }) { Text("Tout effacer") }
+            }
+            FilterGroup.entries.forEach { group ->
+                Text(group.label + if (group.single) " (un seul)" else "", style = MaterialTheme.typography.titleSmall)
+                val inGroup = RecipeFilter.entries.filter { it.group == group }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    inGroup.forEach { f ->
+                        FilterChip(selected = f in filters, onClick = { vm.toggleFilterQuietly(f) }, label = { Text("${f.emoji} ${f.label}") })
+                    }
+                }
+                inGroup.filter { it in filters && it.note != null }.forEach { f ->
+                    Text("${f.label} : ${f.note}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Text("Trier par", style = MaterialTheme.typography.titleSmall)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                RecipeSort.entries.forEach { s -> FilterChip(selected = sort == s, onClick = { vm.setSort(s) }, label = { Text(s.label) }) }
+            }
+            Text("Sites", style = MaterialTheme.typography.titleSmall)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                FilterChip(selected = sites.isEmpty(), onClick = { vm.allSites() }, label = { Text("Tous") })
+                vm.searchableSites.forEach { site ->
+                    FilterChip(selected = site.id in sites, onClick = { vm.toggleSite(site.id) }, label = { Text(site.name) })
+                }
+            }
+            Button(onClick = { vm.refresh(); onDismiss() }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Voir les recettes") }
+        }
+    }
 }
 
 @Composable
 private fun IdleDiscover(
     ideas: List<String>,
+    quickIdeas: List<QuickIdea>,
     onIdea: (String) -> Unit,
+    onQuickIdea: (QuickIdea) -> Unit,
     onBrowse: (String) -> Unit,
 ) {
+    var browseOpen by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 8.dp)) {
+        SectionHeader("Idées rapides", emoji = "✨")
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            quickIdeas.forEach { idea ->
+                AssistChip(onClick = { onQuickIdea(idea) }, label = { Text("${idea.emoji} ${idea.label}") })
+            }
+        }
         if (ideas.isNotEmpty()) {
             SectionHeader("De saison en ce moment", emoji = "🍂")
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -264,16 +363,22 @@ private fun IdleDiscover(
                 }
             }
         }
-        SectionHeader("Parcourir un site", emoji = "🧭")
-        Text(
-            "Navigue sur le site dans l'app : chaque recette ouverte s'affiche en version simplifiée, prête à ajouter à tes favoris.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            RecipeSites.all.forEach { site ->
-                OutlinedButton(onClick = { onBrowse(site.browsePage) }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-                    Text(site.name)
+        // Parcourir un site : replié par défaut, pour laisser la place aux idées.
+        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { browseOpen = !browseOpen }, verticalAlignment = Alignment.CenterVertically) {
+            SectionHeader("Parcourir un site", emoji = "🧭", modifier = Modifier.weight(1f))
+            Text(if (browseOpen) "▲" else "▼", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(end = 8.dp))
+        }
+        if (browseOpen) {
+            Text(
+                "Navigue sur le site dans l'app : chaque recette ouverte s'affiche en version simplifiée, prête à ajouter à tes favoris.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                RecipeSites.all.forEach { site ->
+                    OutlinedButton(onClick = { onBrowse(site.browsePage) }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
+                        Text(site.name)
+                    }
                 }
             }
         }
@@ -281,7 +386,7 @@ private fun IdleDiscover(
 }
 
 @Composable
-private fun HitCard(hit: RecipeHit, favorite: Boolean, adding: Boolean, onClick: () -> Unit, onStar: () -> Unit) {
+private fun HitCard(hit: RecipeHit, badge: RecipeFilter?, favorite: Boolean, adding: Boolean, onClick: () -> Unit, onStar: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.large).clickable(onClick = onClick),
         shape = MaterialTheme.shapes.large,
@@ -297,6 +402,15 @@ private fun HitCard(hit: RecipeHit, favorite: Boolean, adding: Boolean, onClick:
                 modifier = Modifier.align(Alignment.TopStart).padding(8.dp).clip(RoundedCornerShape(6.dp))
                     .background(MaterialTheme.colorScheme.surfaceContainerLowest).padding(horizontal = 6.dp, vertical = 2.dp),
             )
+            // Pastille de catégorie reconnue dans le titre (Poisson, Dessert…).
+            badge?.let { b ->
+                Text(
+                    "${b.emoji} ${b.label}",
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.align(Alignment.BottomStart).padding(8.dp).clip(RoundedCornerShape(6.dp))
+                        .background(MaterialTheme.colorScheme.secondaryContainer).padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
             Box(
                 Modifier.align(Alignment.TopEnd).padding(4.dp).size(40.dp).clip(CircleShape).clickable(onClick = onStar),
                 contentAlignment = Alignment.Center,
