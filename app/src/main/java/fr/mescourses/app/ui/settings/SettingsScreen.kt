@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 
 package fr.mescourses.app.ui.settings
 
@@ -53,6 +53,12 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material3.InputChip
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.foundation.layout.size
 import fr.mescourses.app.AppContainer
 import fr.mescourses.app.retail.SessionState
 import fr.mescourses.app.ui.retail.RetailerChips
@@ -211,6 +217,46 @@ fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStor
                     steps = 14,
                 )
                 Field("Régime, allergies, goûts, budget…", s.preferences, lines = 3) { v -> vm.update { it.copy(preferences = v) } }
+            }
+
+            SectionCard {
+                SectionHeader("Toujours dans mon placard", emoji = "🧂")
+                Text(
+                    "Ces produits ne sont jamais ajoutés à la liste de courses depuis une recette. Touche-en un pour le retirer " +
+                        "(tu l'achèteras), ou ajoute ce que tu as toujours chez toi.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val pantry = s.pantryList()
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    pantry.forEach { item ->
+                        InputChip(
+                            selected = false,
+                            onClick = { vm.update { it.withPantry(it.pantryList() - item) } },
+                            label = { Text(item) },
+                            trailingIcon = { Icon(Icons.Filled.Close, "Retirer $item", Modifier.size(16.dp)) },
+                        )
+                    }
+                }
+                var newPantry by remember { mutableStateOf("") }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = newPantry,
+                        onValueChange = { newPantry = it },
+                        label = { Text("Ajouter (ex. riz, café)") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(
+                        onClick = {
+                            val v = newPantry.trim().replaceFirstChar { it.uppercase() }
+                            if (v.isNotEmpty()) vm.update { st -> st.withPantry((st.pantryList() + v).distinct()) }
+                            newPantry = ""
+                        },
+                        enabled = newPantry.isNotBlank(),
+                    ) { Text("Ajouter") }
+                }
+                if (s.pantry.isNotEmpty()) TextButton(onClick = { vm.update { it.copy(pantry = "") } }) { Text("Revenir à la liste par défaut") }
             }
 
             SectionCard {

@@ -57,8 +57,8 @@ object ShoppingListMerger {
      * Articles de la liste pour une recette : l'aliment seul (« morceaux de poulet » → poulet),
      * sans les produits de placard (sel, huile, beurre…).
      */
-    fun fromRecipe(recipe: Recipe, portions: Double): List<ShoppingItem> = scale(recipe, portions)
-        .filterNot { Pantry.isStaple(it.name) }
+    fun fromRecipe(recipe: Recipe, portions: Double, pantry: List<String> = Pantry.DEFAULTS): List<ShoppingItem> = scale(recipe, portions)
+        .filterNot { Pantry.isStaple(it.name, pantry) }
         .map {
         ShoppingItem(
             name = FoodName.clean(it.name),

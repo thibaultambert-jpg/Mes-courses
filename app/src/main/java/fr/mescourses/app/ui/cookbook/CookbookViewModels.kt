@@ -115,7 +115,7 @@ class RecipeDetailViewModel(private val c: AppContainer, private val id: Long) :
 
     fun addToList(r: Recipe) = viewModelScope.launch {
         val p = portions.value
-        c.shopping.add(ShoppingListMerger.fromRecipe(r, p.equivalent(childFactor())))
+        c.shopping.add(ShoppingListMerger.fromRecipe(r, p.equivalent(childFactor()), c.settings.current.pantryList()))
         messages.value = "Ingrédients ajoutés à la liste (${p.label()})"
     }
 
@@ -134,7 +134,7 @@ class RecipeDetailViewModel(private val c: AppContainer, private val id: Long) :
     fun sendToCart(r: Recipe) {
         c.pendingCart.value = fr.mescourses.app.PendingCart(
             label = r.title,
-            items = ShoppingListMerger.fromRecipe(r, portions.value.equivalent(childFactor())),
+            items = ShoppingListMerger.fromRecipe(r, portions.value.equivalent(childFactor()), c.settings.current.pantryList()),
         )
     }
 

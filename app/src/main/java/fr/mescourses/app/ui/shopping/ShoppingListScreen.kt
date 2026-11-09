@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Kitchen
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -157,6 +158,16 @@ class ShoppingViewModel(private val c: AppContainer) : ViewModel() {
 
     fun restore(items: List<ShoppingItem>) = viewModelScope.launch { c.shopping.add(items) }
 
+    /** Le libellé est-il un produit du placard (Réglages) ? */
+    fun isPantry(name: String): Boolean = fr.mescourses.core.shopping.Pantry.isStaple(name, c.settings.current.pantryList())
+
+    /** Retire de la liste les produits du placard non pris (ajoutés avant le filtre) ; renvoie ce qui a été retiré. */
+    suspend fun removePantry(): List<ShoppingItem> {
+        val removed = c.shopping.all().filter { !it.checked && isPantry(it.name) }
+        removed.forEach { c.shopping.delete(it.id) }
+        return removed
+    }
+
     /** Supprime les articles pris et renvoie ce qui a été supprimé (pour « Annuler »). */
     suspend fun clearChecked(): List<ShoppingItem> {
         val removed = c.shopping.all().filter { it.checked }
@@ -188,6 +199,11 @@ fun ShoppingListScreen(onOpenSettings: () -> Unit, onSendToCart: () -> Unit) {
         actions = {
             if (lines.any { !it.checked }) IconButton(onClick = { vm.sendToCart(); onSendToCart() }) {
                 Icon(Icons.Filled.ShoppingCart, "Envoyer au panier")
+            }
+            // Produits du placard restés dans la liste (ajoutés avant le filtre, ou à la main).
+            val pantryCount = lines.count { !it.checked && vm.isPantry(it.label) }
+            if (pantryCount > 0) IconButton(onClick = { scope.launch { undoable("$pantryCount produit(s) du placard retiré(s)", vm.removePantry()) } }) {
+                Icon(Icons.Filled.Kitchen, "Retirer les produits du placard")
             }
             if (done > 0) IconButton(onClick = { scope.launch { undoable("$done article(s) retiré(s)", vm.clearChecked()) } }) {
                 Icon(Icons.Filled.DeleteSweep, "Retirer les articles pris")

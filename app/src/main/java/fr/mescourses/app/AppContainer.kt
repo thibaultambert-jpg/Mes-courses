@@ -258,5 +258,6 @@ class AppContainer(context: Context) {
         plan = plan,
         draft = draft,
         childFactor = { settings.current.childFactor },
+        pantry = { settings.current.pantryList() },
     )
 }

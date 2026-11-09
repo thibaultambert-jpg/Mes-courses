@@ -13,16 +13,16 @@ class ShoppingListMergerTest {
 
     private val crepes = Recipe(
         title = "Crêpes", servings = 4,
-        ingredients = IngredientParser.parseAll(listOf("250 g de farine", "4 œufs", "50 cl de lait", "1 pincée de sel")),
+        ingredients = IngredientParser.parseAll(listOf("250 g de chocolat", "4 œufs", "50 cl de lait", "1 pincée de sel")),
     )
     private val gateau = Recipe(
         title = "Gâteau", servings = 6,
-        ingredients = IngredientParser.parseAll(listOf("1 kg de farine", "3 oeufs", "0,5 l de lait")),
+        ingredients = IngredientParser.parseAll(listOf("1 kg de chocolat", "3 oeufs", "0,5 l de lait")),
     )
 
     @Test fun mise_a_l_echelle() {
         val items = ShoppingListMerger.fromRecipe(crepes, portions = 2.0)
-        assertEquals(125.0, items.first { it.name == "farine" }.quantity)
+        assertEquals(125.0, items.first { it.name == "chocolat" }.quantity)
         assertEquals(2.0, items.first { it.name == "œufs" }.quantity)
     }
 
@@ -31,7 +31,7 @@ class ShoppingListMergerTest {
             ShoppingListMerger.fromRecipe(crepes, 4.0) + ShoppingListMerger.fromRecipe(gateau, 6.0) +
                 ShoppingListMerger.fromText("lessive"),
         )
-        val farine = merged.first { it.name == "Farine" }
+        val farine = merged.first { it.name == "Chocolat" }
         assertEquals(1.25, farine.quantity); assertEquals("kg", farine.unit)
         val oeufs = merged.first { ShoppingListMerger.key(it.name) == "oeuf" }
         assertEquals(12.0, oeufs.quantity) // 7 œufs nécessaires => une boîte de 12
@@ -39,7 +39,7 @@ class ShoppingListMergerTest {
         assertTrue(merged.none { it.name == "Lait" })
         assertEquals("Crêpes, Gâteau", farine.origin)
         assertEquals(ItemSource.MANUEL, merged.first { it.name == "Lessive" }.source)
-        assertEquals(3, merged.size) // farine, œufs, lessive (lait et sel restent au placard)
+        assertEquals(3, merged.size) // chocolat, œufs, lessive (lait et sel restent au placard)
     }
 
     @Test fun unites_incompatibles_restent_separees() {

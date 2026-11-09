@@ -32,6 +32,8 @@ class MenuValidator(
     private val draft: MenuDraftRepository,
     private val childFactor: () -> Double,
     private val today: () -> LocalDate = { LocalDate.now() },
+    /** Produits du placard (Réglages) : jamais ajoutés à la liste. */
+    private val pantry: () -> List<String> = { fr.mescourses.core.shopping.Pantry.DEFAULTS },
 ) {
     suspend fun validate(onProgress: suspend (done: Int, total: Int, current: String) -> Unit = { _, _, _ -> }): ValidationResult {
         val dishes = draft.get()
@@ -59,7 +61,7 @@ class MenuValidator(
             val id = recipes.save(saved)
             if (existing != null) reused++ else created++
 
-            val list = ShoppingListMerger.fromRecipe(saved, dish.portions.equivalent(childFactor()))
+            val list = ShoppingListMerger.fromRecipe(saved, dish.portions.equivalent(childFactor()), pantry())
             shopping.add(list)
             items += list.size
             plan.add(PlannedMeal(date = date, recipeId = id, recipeTitle = saved.title, portions = dish.portions))

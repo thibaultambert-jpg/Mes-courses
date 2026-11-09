@@ -27,6 +27,26 @@ jobs:
       - name: Tests du module core (logique métier, MCP)
         run: ./gradlew -p core test --stacktrace
 
+      - name: Clé de signature fixe (si les secrets existent)
+        env:
+          KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "Pas de secret SIGNING_KEYSTORE_BASE64 : signature avec la clé de debug."
+            exit 0
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/mescourses.jks"
+          {
+            echo "SIGNING_STORE_FILE=$RUNNER_TEMP/mescourses.jks"
+            echo "SIGNING_STORE_PASSWORD=$STORE_PASSWORD"
+            echo "SIGNING_KEY_ALIAS=$KEY_ALIAS"
+            echo "SIGNING_KEY_PASSWORD=${KEY_PASSWORD:-$STORE_PASSWORD}"
+          } >> "$GITHUB_ENV"
+          echo "Clé fixe prête."
+
       - name: Compilation de l'APK
         run: ./gradlew :app:assembleRelease --stacktrace
 
