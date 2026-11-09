@@ -29,6 +29,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -606,8 +609,9 @@ private fun ChatSheet(
     LaunchedEffect(chat.size, chat.lastOrNull()?.text?.length) {
         if (chat.isNotEmpty()) listState.animateScrollToItem(chat.lastIndex)
     }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 16.dp)) {
+    // Le clavier est géré ici seulement (pas aussi par la feuille), et la liste rétrécit pour laisser voir le champ.
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, contentWindowInsets = { WindowInsets(0) }) {
+        Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(horizontal = 16.dp)) {
             Text("Ajuster le menu", style = MaterialTheme.typography.titleLarge)
             Text(
                 "Demande en français : invités sur un plat, remplacer une recette, plus rapide…",
@@ -621,7 +625,7 @@ private fun ChatSheet(
             )
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxWidth().height(320.dp).padding(vertical = 8.dp),
+                modifier = Modifier.fillMaxWidth().weight(1f, fill = false).heightIn(max = 320.dp).padding(vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (chat.isEmpty()) item {
