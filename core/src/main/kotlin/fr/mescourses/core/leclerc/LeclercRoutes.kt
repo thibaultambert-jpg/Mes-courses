@@ -25,7 +25,11 @@ object LeclercRoutes {
     /** Page d'accueil du drive (stationnement de la WebView, choix du drive sur le site, connexion). */
     fun storePage(store: LeclercStore) = store.homeUrl
     fun search(store: LeclercStore, query: String) = storeBase(store) + "/recherche.aspx?TexteRecherche=${enc(query)}"
-    fun cartOp(store: LeclercStore) = storeBase(store) + "/panier.aspx?op=1"
+    /**
+     * Écriture du panier : chemin court `magasin-{noPL}-{noPR}`, SANS le nom de la ville (sinon 404), corps JSON.
+     * Relevé sur le site (Chrome, novembre 2026) : POST …/magasin-159201-159201/panier.aspx?op=1.
+     */
+    fun cartOp(store: LeclercStore) = "https://${store.host}/magasin-${store.id}-${store.noPR}/panier.aspx?op=1"
     /** Recherche sans résultat : la page ne contient alors que les produits du panier. */
     fun cartPage(store: LeclercStore) = search(store, NO_MATCH_QUERY)
     const val NO_MATCH_QUERY = "zzzznomatchzzz"
@@ -35,9 +39,9 @@ object LeclercRoutes {
 
     val HTML_HEADERS = mapOf("accept" to "text/html,application/xhtml+xml")
     val JSON_HEADERS = mapOf("accept" to "application/json")
-    val FORM_HEADERS = mapOf(
+    val CART_HEADERS = mapOf(
         "accept" to "application/json, text/javascript, */*; q=0.01",
-        "content-type" to "application/x-www-form-urlencoded; charset=UTF-8",
+        "content-type" to "application/json; charset=UTF-8",
         "x-requested-with" to "XMLHttpRequest",
     )
 

@@ -14,7 +14,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import java.net.URLEncoder
 
 /**
  * Client E.Leclerc Drive. Comme pour Carrefour, aucune requête directe : tout passe par le [HttpTransport]
@@ -126,14 +125,21 @@ class LeclercClient(
     private suspend fun mutate(id: String, quantity: Int, current: Int): Cart {
         val s = currentStore()
         val action = if (quantity >= current) LeclercRoutes.ACTION_ADD else LeclercRoutes.ACTION_SUB
+        // Corps JSON tel que l'envoie le site (provenance : ajout depuis une recherche).
         val payload = buildJsonObject {
             put("eTypeAction", action)
             put("iIdProduit", id)
             put("iQuantite", quantity)
             put("sNoPointLivraison", s.id)
+            put("objContexteProvenanceArticle", buildJsonObject {
+                put("eOrigine", 4)
+                put("eTypePage", 3)
+                put("sTexteRecherche", "")
+                put("eVue", 0)
+                put("sInformationsComplementaires", "uni-2")
+            })
         }.toString()
-        val body = "d=" + URLEncoder.encode(payload, Charsets.UTF_8)
-        val response = http.call("POST", LeclercRoutes.cartOp(s), LeclercRoutes.FORM_HEADERS, body)
+        val response = http.call("POST", LeclercRoutes.cartOp(s), LeclercRoutes.CART_HEADERS, payload)
         return LeclercParsers.parseCartEvents(response.body)
             ?: throw if (LeclercParsers.isExpiredPage(response.body)) CarrefourException.SessionExpired(who) else CarrefourException.ChallengeRequired(who)
     }
