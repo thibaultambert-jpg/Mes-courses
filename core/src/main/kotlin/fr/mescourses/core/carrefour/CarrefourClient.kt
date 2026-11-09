@@ -1,6 +1,7 @@
 package fr.mescourses.core.carrefour
 
 import fr.mescourses.core.cart.RetailerBackend
+import fr.mescourses.core.retail.Retailer
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -28,7 +29,7 @@ class CarrefourClient(
     private val rateLimitWaitMs: Long = 3_000,
 ) : RetailerBackend {
 
-    override val label = "Carrefour"
+    override val retailer = Retailer.CARREFOUR
 
     private data class Cached<T>(val at: Long, val value: T)
     private val cacheTtlMs = 5 * 60 * 1000L
@@ -94,7 +95,7 @@ class CarrefourClient(
      * un panier invité répond 200 sur /api/cart, il ne prouve rien). Puis lit le panier « au mieux »
      * pour le contexte du drive : renvoie null si son format n'est pas reconnu.
      */
-    suspend fun sessionProbe(): Cart? {
+    override suspend fun sessionProbe(): Cart? {
         call("GET", CarrefourRoutes.SESSION_PROBE)
         return runCatching { cart() }.getOrNull()
     }
@@ -128,6 +129,8 @@ class CarrefourClient(
 
     suspend fun driveStores(lat: Double, lon: Double, postalCode: String, city: String): List<Store> =
         CarrefourParsers.parseStores(call("GET", CarrefourRoutes.driveStores(lat, lon, postalCode, city)).body)
+
+    override suspend fun stores(lat: Double, lon: Double, postalCode: String, city: String): List<Store> = driveStores(lat, lon, postalCode, city)
 
     // ---------- Panier ----------
 
@@ -182,7 +185,7 @@ class CarrefourClient(
     }
 
     /** Oublie le drive connu (après un changement de drive). */
-    fun forgetContext() {
+    override fun forgetContext() {
         lastContext = null
         contextSource = null
         searchServiceId = null

@@ -2,9 +2,11 @@ package fr.mescourses.app
 
 import android.content.Context
 import androidx.room.Room
-import fr.mescourses.app.carrefour.CarrefourSession
-import fr.mescourses.app.carrefour.CarrefourWebViewBridge
-import fr.mescourses.app.carrefour.ConfirmationBroker
+import fr.mescourses.app.retail.AuchanTokens
+import fr.mescourses.app.retail.ConfirmationBroker
+import fr.mescourses.app.retail.RetailerSession
+import fr.mescourses.app.retail.RetailerSites
+import fr.mescourses.app.retail.RetailerWebViewBridge
 import fr.mescourses.app.data.AppDatabase
 import fr.mescourses.app.data.MIGRATION_1_2
 import fr.mescourses.app.data.MIGRATION_2_3
@@ -20,8 +22,16 @@ import fr.mescourses.app.llm.LlmEngine
 import fr.mescourses.app.llm.ModelController
 import fr.mescourses.app.llm.ModelManager
 import fr.mescourses.core.agent.AgentTool
+import fr.mescourses.core.auchan.AuchanClient
+import fr.mescourses.core.cart.CartLine
+import fr.mescourses.core.cart.ProductMemory
+import fr.mescourses.core.cart.RetailerBackend
 import fr.mescourses.core.carrefour.CarrefourClient
+import fr.mescourses.core.carrefour.CarrefourRoutes
 import fr.mescourses.core.carrefour.CarrefourTools
+import fr.mescourses.core.leclerc.LeclercClient
+import fr.mescourses.core.retail.Retailer
+import fr.mescourses.core.retail.RetailerProductMemory
 import fr.mescourses.core.carrefour.ShoppingPrompt
 import fr.mescourses.core.menu.MenuConfig
 import fr.mescourses.core.menu.MenuPrompt
@@ -42,12 +52,23 @@ import io.ktor.client.plugins.HttpTimeout
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import android.webkit.CookieManager
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import java.time.LocalDate
 
 /** Articles à envoyer au panier, posés par la fiche recette ou la liste de courses. */
 data class PendingCart(val label: String, val items: List<ShoppingItem>)
+
+/** Panier proposé par la comparaison des prix, à reprendre tel quel dans l'écran Panier. */
+data class PendingQuote(val label: String, val retailer: Retailer, val lines: List<CartLine>)
 
 /** Injection de dépendances manuelle (application personnelle, pas besoin de Hilt). */
 class AppContainer(context: Context) {
@@ -60,7 +81,9 @@ class AppContainer(context: Context) {
     val plan = RoomMealPlanRepository(db.mealDao())
     val shopping = RoomShoppingRepository(db.shoppingDao())
     val draft = RoomMenuDraftRepository(db.menuDraftDao())
-    val productMemory = RoomProductMemory(db.ingredientProductDao())
+    private val roomProductMemory = RoomProductMemory(db.ingredientProductDao())
+    /** Mémoire des choix de l'enseigne donnée (les identifiants produit diffèrent d'une enseigne à l'autre). */
+    fun productMemory(r: Retailer = activeRetailer.value): ProductMemory = RetailerProductMemory(r, roomProductMemory)
 
     val settings = SettingsStore(context, appScope)
 
@@ -107,10 +130,21 @@ class AppContainer(context: Context) {
     /** Travaux longs du chef (proposition, validation), qui continuent quand on quitte l'app. */
     val chef = ChefWork(context, appScope, model, recipes) { stepsWriter() }
 
-    // --- Carrefour (natif, via une WebView connectée) ---
-    val bridge = CarrefourWebViewBridge(context) { settings.current.uaWithoutWv }
+    // --- Drives (natifs, via une WebView connectée par enseigne) ---
+    private val sites = RetailerSites.create { settings.current }
+    val auchanTokens = AuchanTokens()
+    val bridges: Map<Retailer, RetailerWebViewBridge> = Retailer.entries.associateWith { r ->
+        RetailerWebViewBridge(
+            context,
+            sites.getValue(r),
+            uaWithoutWv = { settings.current.uaWithoutWv },
+            leclercUaMode = { settings.current.leclercUaMode },
+            onRequestSeen = if (r == Retailer.AUCHAN) auchanTokens::seen else null,
+        )
+    }
+
     val carrefour = CarrefourClient(
-        bridge,
+        bridges.getValue(Retailer.CARREFOUR),
         savedContext = { settings.current.driveContext() },
         storeRef = { settings.current.storeRef.ifBlank { null } },
         // Drive découvert (panier ou offres d'une recherche) : mémorisé pour les fois suivantes.
@@ -122,9 +156,87 @@ class AppContainer(context: Context) {
             }
         },
     )
-    val session = CarrefourSession(carrefour, bridge, settings)
+    val leclerc = LeclercClient(
+        bridges.getValue(Retailer.LECLERC),
+        store = { settings.current.leclercStore() },
+        // La session Leclerc est liée au drive ouvert dans le navigateur : on y ouvre la page du drive choisi.
+        rebind = { bridges.getValue(Retailer.LECLERC).reloadAndWait() },
+        // Aucun drive choisi : on reprend celui du compte, lu sur la page d'accueil connectée.
+        onStoreFound = { s ->
+            settings.update {
+                if (it.leclercStoreId.isNotBlank()) it
+                else it.copy(leclercStoreId = s.id, leclercNoPR = s.noPR, leclercHost = s.host, leclercStoreName = s.name, leclercPath = s.path)
+            }
+        },
+    )
+    val auchan = AuchanClient(
+        bridges.getValue(Retailer.AUCHAN),
+        auth = { auchanTokens.current() },
+        // La page panier rappelle l'API du site : on y relève des jetons frais (au plus ~4 s après le chargement).
+        refreshAuth = {
+            auchanTokens.clear()
+            bridges.getValue(Retailer.AUCHAN).reloadAndWait()
+            var tries = 0
+            while (auchanTokens.current()?.complete != true && tries++ < 8) delay(500)
+        },
+        onStore = { name ->
+            if (name != settings.current.auchanStoreName) appScope.launch { settings.update { it.copy(auchanStoreName = name) } }
+        },
+    )
+    val backends: Map<Retailer, RetailerBackend> = mapOf(Retailer.CARREFOUR to carrefour, Retailer.LECLERC to leclerc, Retailer.AUCHAN to auchan)
+
+    val sessions: Map<Retailer, RetailerSession> = Retailer.entries.associateWith { r ->
+        val bridge = bridges.getValue(r)
+        if (r == Retailer.CARREFOUR) {
+            RetailerSession(
+                r, carrefour, bridge,
+                // Renouvellement depuis le cookie SSO : retour sur www.carrefour.fr = renouvelé, rester sur moncompte = reconnexion.
+                refresher = {
+                    bridge.visit(CarrefourRoutes.AUTHORIZE_URL) { it.startsWith(CarrefourRoutes.ORIGIN) || it.startsWith(CarrefourRoutes.IAM_ORIGIN) }
+                        ?.startsWith(CarrefourRoutes.ORIGIN) == true
+                },
+                ssoCookie = { CookieManager.getInstance().getCookie(CarrefourRoutes.IAM_ORIGIN)?.contains("c4iamsecuretk=") == true },
+            )
+        } else {
+            RetailerSession(r, backends.getValue(r), bridge)
+        }
+    }
+
+    /** Enseigne du panier en cours : la préférée par défaut, changeable à la demande (sans toucher aux Réglages). */
+    val activeRetailer = MutableStateFlow(Retailer.CARREFOUR)
+    /** Enseignes interrogées par une comparaison des prix en cours. */
+    val comparing = MutableStateFlow<Set<Retailer>>(emptySet())
+    /** Enseignes dont la WebView invisible doit être attachée à l'activité. */
+    /** Enseigne testée dans l'écran de debug (sa WebView doit être chargée). */
+    val debugRetailer = MutableStateFlow<Retailer?>(null)
+    /** Enseignes vérifiées par l'écran des Réglages (leurs WebViews doivent être chargées pour répondre). */
+    val checkingRetailers = MutableStateFlow<Set<Retailer>>(emptySet())
+    val attachedRetailers: StateFlow<Set<Retailer>> =
+        combine(activeRetailer, comparing, debugRetailer, checkingRetailers) { a, c, d, k -> c + a + setOfNotNull(d) + k }
+        .stateIn(appScope, SharingStarted.Eagerly, setOf(Retailer.CARREFOUR))
+
+    init {
+        // L'enseigne préférée des Réglages devient l'enseigne active dès qu'elle change (et au démarrage).
+        appScope.launch {
+            settings.state.map { it.preferredRetailer }.distinctUntilChanged().collect { activeRetailer.value = it }
+        }
+    }
+
+    fun backend(r: Retailer = activeRetailer.value): RetailerBackend = backends.getValue(r)
+    fun session(r: Retailer = activeRetailer.value): RetailerSession = sessions.getValue(r)
+    fun bridge(r: Retailer = activeRetailer.value): RetailerWebViewBridge = bridges.getValue(r)
+
+    /** Les cookies sont communs à toutes les enseignes : la déconnexion vaut pour toutes. */
+    fun logoutAll() {
+        RetailerSession.clearAllCookies()
+        sessions.values.forEach { it.markLoggedOut() }
+    }
+
     val confirmations = ConfirmationBroker()
     val pendingCart = MutableStateFlow<PendingCart?>(null)
+    /** Articles à comparer (posés par l'écran Panier) ; null = liste de courses. */
+    val pendingCompare = MutableStateFlow<PendingCart?>(null)
+    val pendingQuote = MutableStateFlow<PendingQuote?>(null)
 
     fun defaultPortions(): Portions = settings.current.let { Portions(it.householdSize, it.children) }
 
@@ -133,9 +245,9 @@ class AppContainer(context: Context) {
 
     fun menuTools(): List<AgentTool> = MenuTools(draft, recipes, ::defaultPortions).all()
 
-    fun shoppingSystemPrompt(): String = ShoppingPrompt.system(settings.current.preferOrganic, settings.current.preferences)
+    fun shoppingSystemPrompt(): String = ShoppingPrompt.system(settings.current.preferOrganic, settings.current.preferences, activeRetailer.value)
 
-    fun shoppingTools(): List<AgentTool> = CarrefourTools(carrefour, confirmations).all()
+    fun shoppingTools(): List<AgentTool> = CarrefourTools(backend(), confirmations).all()
 
     fun stepsWriter() = RecipeStepsWriter(TextGenerator { system, prompt -> model.generateOnce(system, prompt) })
 

@@ -1,4 +1,4 @@
-package fr.mescourses.app.ui.carrefour
+package fr.mescourses.app.ui.retail
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,7 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import fr.mescourses.app.carrefour.ConfirmationBroker
+import fr.mescourses.app.retail.ConfirmationBroker
 import fr.mescourses.app.ui.components.DishArt
 import fr.mescourses.app.ui.components.StatChip
 

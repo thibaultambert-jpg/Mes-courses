@@ -2,14 +2,15 @@
 
 Application Android **personnelle** (testée pour un Honor Magic 5 Pro) pour planifier ses repas en
 discutant avec un **LLM 100 % local**, tenir un **livre de recettes**, une **liste de courses** libre,
-puis **remplir son panier Carrefour Drive** directement depuis le téléphone (sans serveur).
+puis **remplir son panier Carrefour, E.Leclerc ou Auchan Drive** directement depuis le téléphone (sans serveur),
+et **comparer les prix** de sa liste entre les trois enseignes.
 
 | Onglet | Rôle |
 |---|---|
 | **Menu** | Tu choisis le nombre de repas, les adultes et les enfants, tes envies, puis « Proposer un menu ». Le LLM local propose des plats **sains, bio et de saison**. Tu ajustes en discutant (« ajoute 3 adultes et 2 enfants au plat 2 », « remplace le plat 4 ») ou avec les boutons. « Valider » écrit les recettes, les range dans le livre (Historique) et remplit la liste de courses. |
 | **Recettes** | Livre de recettes vide au départ, en 3 listes : **Historique** (plats validés), **Favoris** (que le LLM peut reproposer ; les recettes partagées depuis un site ou écrites à la main y arrivent), **Ne plus proposer** (jamais reproposées). Un bouton déplace un plat d'une liste à l'autre. **Découvrir** : recherche sur Marmiton, 750g, Cuisine AZ et Journal des Femmes, aperçu, étoile pour ajouter aux favoris ; navigateur intégré qui détecte la recette de la page affichée ; ajout par lien. |
 | **Liste** | Liste de courses libre + ingrédients des menus ; vue « fusionnée » (doublons regroupés, unités converties). Les quantités tiennent compte des enfants (demi-portion par défaut). |
-| **Panier** | Pour chaque article, recherche du produit au drive (bio en priorité), **validation par toi**, puis ajout au panier. La commande et le paiement se font ensuite chez l'enseigne. |
+| **Panier** | Chez ton **enseigne préférée** (Réglages) ou une autre choisie pour ce panier : pour chaque article, recherche du produit au drive (bio en priorité), **validation par toi**, puis ajout au panier. **Comparer les prix** : la même liste cherchée chez Carrefour, E.Leclerc et Auchan, total par enseigne, puis « Remplir le panier chez… ». La commande et le paiement se font ensuite chez l'enseigne. |
 
 ## Choix techniques
 
@@ -26,24 +27,32 @@ Modèles proposés dans l'app : **Gemma 4 E4B** (qualité, ~10-14 tok/s estimés
 Le moteur est derrière l'interface `LlmEngine` : on pourra brancher xybrid (quand il gérera le GPU Android)
 ou llama.cpp (Qwen3.5, Ministral 3) pour comparer.
 
-### Carrefour Drive : intégration native (sans serveur)
+### Drives Carrefour, E.Leclerc et Auchan : intégration native (sans serveur)
 
-Les requêtes vers carrefour.fr partent **d'une WebView connectée** à ton compte (cookies + vrai navigateur :
-c'est ce qui passe la protection Cloudflare, qu'un client HTTP classique ne passe pas).
+Les requêtes vers chaque enseigne partent **d'une WebView connectée** à ton compte (cookies + vrai navigateur :
+c'est ce qui passe les protections Cloudflare ou DataDome, qu'un client HTTP classique ne passe pas). Une WebView
+invisible par enseigne ; seule celle de l'enseigne active est chargée (les trois pendant une comparaison).
+
+- **Enseigne préférée** (Réglages → Mes drives) : utilisée par défaut. Dans l'onglet Panier, les pastilles permettent
+  d'en changer pour un panier (la recherche est relancée), et « Comparer les prix » interroge les trois enseignes.
 
 - **Connexion** : une fois, dans l'app (e-mail + mot de passe + code reçu par e-mail ; la connexion « via Google » ne marche pas
   dans une WebView). L'app ne voit ni ne stocke ton mot de passe ; seuls les cookies sont gardés par Android.
   La session Carrefour expire après ~1 h d'inactivité : l'app la renouvelle seule tant que possible, sinon elle te redemande de te connecter.
 - **Panier** : un produit proposé par article (bio d'abord, tes choix précédents en priorité), tu vérifies, l'app ajoute.
 - **Assistant (mode Courses)** : Gemma cherche, propose au plus 3 produits ; **chaque ajout est confirmé** par une carte.
-- **Jamais** de paiement, de validation de commande ni de réservation de créneau : bouton « Finaliser sur Carrefour ».
-- Routes utilisées et sources : [`docs/carrefour/ROUTES_CARREFOUR.md`](docs/carrefour/ROUTES_CARREFOUR.md) ;
-  toutes sont dans un seul fichier (`core/.../carrefour/CarrefourRoutes.kt`).
-- **Écran de debug** : Réglages → appuyer 7 fois sur « version » (requête de test, export anonymisé d'une réponse,
-  option « se présenter comme Chrome » si Cloudflare bloque la WebView).
+- **Jamais** de paiement, de validation de commande ni de réservation de créneau : bouton « Finaliser sur … ».
+- Routes utilisées et sources : [`docs/carrefour/ROUTES_CARREFOUR.md`](docs/carrefour/ROUTES_CARREFOUR.md),
+  [`docs/leclerc/ROUTES_LECLERC.md`](docs/leclerc/ROUTES_LECLERC.md), [`docs/auchan/ROUTES_AUCHAN.md`](docs/auchan/ROUTES_AUCHAN.md) ;
+  un seul fichier de routes par enseigne (`CarrefourRoutes.kt`, `LeclercRoutes.kt`, `AuchanRoutes.kt`).
+- **Particularités** : chez Leclerc, le drive se cherche par code postal mais la session est liée au drive ouvert sur le site
+  (l'ouvrir une fois) ; chez Auchan, le drive se choisit sur auchan.fr et l'app lit le magasin dans le panier.
+  Les créneaux et le détail produit (composition) ne sont lus que chez Carrefour pour l'instant.
+- **Écran de debug** : Réglages → appuyer 7 fois sur « version » (choix de l'enseigne, requête de test, export anonymisé
+  d'une réponse, jetons Auchan relevés ou non, option « se présenter comme Chrome » si l'anti-robot bloque la WebView).
 
-Intégration **non officielle**, pour un usage personnel : elle peut casser si Carrefour modifie son site.
-Leclerc et Auchan pourront être ajoutés plus tard sur le même modèle (interface `RetailerBackend`).
+Intégrations **non officielles**, pour un usage personnel : elles peuvent casser si une enseigne modifie son site.
+Toutes passent par l'interface `RetailerBackend` (`core/.../cart/RetailerBackend.kt`).
 
 ### Sites de recettes
 
@@ -66,9 +75,9 @@ L'app libère d'elle-même le modèle (plusieurs Go) quand le système manque de
 
 ```
 core/    Logique métier Kotlin/JVM pur, testée (ingrédients, fusion de liste, extraction de recettes
-         schema.org, outils du LLM, client Carrefour, préparation du panier)
+         schema.org, outils du LLM, clients Carrefour / Leclerc / Auchan, préparation du panier, comparaison des prix)
 app/     Application Android (Jetpack Compose, Room, DataStore, LiteRT-LM)
-docs/    Routes Carrefour documentées
+docs/    Routes des enseignes documentées
 ```
 
 ## Installer l'application
@@ -79,7 +88,7 @@ docs/    Routes Carrefour documentées
    autorisation, accepte la licence Gemma sur la page du modèle et colle ton jeton HF ; ou télécharge le
    fichier `.litertlm` sur un PC depuis [litert-community](https://huggingface.co/litert-community) et utilise
    « Importer un fichier ».
-4. Onglet **Panier** → « Se connecter », puis choisis ton drive.
+4. Réglages → **Mes drives** : choisis ton enseigne préférée, connecte-toi et choisis ton drive (pour chaque enseigne à comparer).
 
 ## Développement
 

@@ -4,7 +4,11 @@ import fr.mescourses.core.carrefour.Product
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import fr.mescourses.app.AppContainer
-import fr.mescourses.app.carrefour.SessionState
+import fr.mescourses.app.PendingCart
+import fr.mescourses.app.retail.RetailerSite
+import fr.mescourses.app.retail.SessionState
+import fr.mescourses.core.carrefour.CarrefourException
+import fr.mescourses.core.retail.Retailer
 import fr.mescourses.app.llm.ChatEvent
 import fr.mescourses.app.llm.ModelStatus
 import fr.mescourses.core.cart.CartLine
@@ -14,7 +18,13 @@ import fr.mescourses.core.carrefour.Cart
 import fr.mescourses.core.carrefour.TimeSlot
 import fr.mescourses.core.model.ShoppingItem
 import fr.mescourses.core.shopping.ShoppingListMerger
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.collectLatest
+import fr.mescourses.core.carrefour.CarrefourClient
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -30,16 +40,14 @@ data class CartState(
     val cart: Cart? = null,
     val slots: List<TimeSlot>? = null,
     val loadingInfo: Boolean = false,
+    /** Enseigne chez qui les produits des lignes ont été cherchés. */
+    val retailer: Retailer = Retailer.CARREFOUR,
     /** Articles du panier que le drive ne pourra pas servir, avec des remplaçants proposés. */
     val toReplace: List<Replacement> = emptyList(),
 ) {
-    /** Carrefour n'a pas encore donné l'identifiant du drive (panier vide et aucune offre trouvée). */
-    val noDrive: Boolean get() = lines.any { it.status == LineStatus.ERREUR && it.message == NO_DRIVE_MESSAGE }
+    /** L'enseigne n'a pas encore donné l'identifiant du drive (Carrefour : panier vide et aucune offre trouvée). */
+    val noDrive: Boolean get() = lines.any { it.status == LineStatus.ERREUR && it.message == CarrefourException.NoDrive(retailer.label).message }
     val added: Int get() = lines.count { it.status == LineStatus.AJOUTE }
-
-    companion object {
-        val NO_DRIVE_MESSAGE: String? = fr.mescourses.core.carrefour.CarrefourException.NoDrive().message
-    }
 }
 
 /** Un article du panier indisponible au drive et ses remplaçants disponibles. */
@@ -54,13 +62,30 @@ sealed interface ProductSheet {
 class CartViewModel(private val c: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(CartState())
     val state: StateFlow<CartState> = _state
-    val session = c.session.state
+    /** Enseigne active (la préférée par défaut). */
+    val retailer: StateFlow<Retailer> = c.activeRetailer
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val session: StateFlow<SessionState> = c.activeRetailer.flatMapLatest { c.session(it).state }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, SessionState.INCONNU)
     val settings = c.settings.state
     private var job: Job? = null
 
+    fun site(r: Retailer): RetailerSite = c.bridge(r).site
+
     init {
-        // À l'ouverture de l'onglet : session, puis panier et articles à remplacer.
-        viewModelScope.launch { if (c.session.ensureSession()) loadInfo() }
+        // À l’ouverture de l onglet, puis à chaque changement d’enseigne : session, puis panier et articles à remplacer.
+        viewModelScope.launch { c.activeRetailer.collectLatest { if (c.session(it).ensureSession()) loadInfo() } }
+        // Panier choisi dans la comparaison des prix : repris tel quel, prêt à vérifier.
+        viewModelScope.launch {
+            c.pendingQuote.collect { q ->
+                if (q != null) {
+                    c.pendingQuote.value = null
+                    job?.cancel()
+                    c.activeRetailer.value = q.retailer
+                    _state.value = CartState(phase = Phase.VALIDATION, source = q.label, lines = q.lines, retailer = q.retailer)
+                }
+            }
+        }
         // Envoi demandé depuis une recette ou la liste de courses.
         viewModelScope.launch {
             c.pendingCart.collect { pending ->
@@ -73,7 +98,7 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     private fun fail(e: Throwable) {
-        c.session.onError(e)
+        c.session(_state.value.retailer).onError(e)
         _state.update { it.copy(error = e.message) }
     }
 
@@ -81,9 +106,11 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
     fun prepare(items: List<ShoppingItem>? = null, label: String = "Liste de courses") {
         job?.cancel()
         job = viewModelScope.launch {
-            _state.update { CartState(phase = Phase.RECHERCHE, source = label) }
-            if (!c.session.ensureSession()) {
-                _state.update { it.copy(phase = Phase.IDLE, error = "Connecte-toi à Carrefour pour préparer le panier.") }
+            val r = c.activeRetailer.value
+            _state.update { CartState(phase = Phase.RECHERCHE, source = label, retailer = r) }
+            val session = c.session(r)
+            if (!session.ensureSession()) {
+                _state.update { it.copy(phase = Phase.IDLE, error = session.problem()) }
                 return@launch
             }
             val list = ShoppingListMerger.merge(items ?: c.shopping.all())
@@ -93,7 +120,7 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
             }
             _state.update { it.copy(lines = list.map { item -> CartLine(item) }) }
             var i = 0
-            CartPlanner.propose(c.carrefour, list, c.settings.current.preferOrganic, c.productMemory).collect { line ->
+            CartPlanner.propose(c.backend(r), list, c.settings.current.preferOrganic, c.productMemory(r)).collect { line ->
                 val index = i++
                 _state.update { s -> s.copy(lines = s.lines.toMutableList().also { it[index] = line }) }
             }
@@ -107,7 +134,7 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
     /** Pour un produit repris de la mémoire : chercher d'autres choix. */
     fun moreChoices(index: Int) = viewModelScope.launch {
         val line = _state.value.lines.getOrNull(index) ?: return@launch
-        val found = CartPlanner.searchLine(c.carrefour, line.item, c.settings.current.preferOrganic)
+        val found = CartPlanner.searchLine(c.backend(_state.value.retailer), line.item, c.settings.current.preferOrganic)
         val merged = (line.candidates + found.candidates).distinctBy { it.ean }
         updateLine(index) { it.copy(candidates = merged, remembered = false, status = if (merged.isEmpty()) found.status else LineStatus.PROPOSE) }
     }
@@ -118,7 +145,8 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
         job = viewModelScope.launch {
             _state.update { it.copy(phase = Phase.ENVOI, error = null) }
             try {
-                CartPlanner.fill(c.carrefour, _state.value.lines, c.productMemory).collect { (index, line) -> updateLine(index) { line } }
+                val r = _state.value.retailer
+                CartPlanner.fill(c.backend(r), _state.value.lines, c.productMemory(r)).collect { (index, line) -> updateLine(index) { line } }
                 val failures = _state.value.lines.count { it.status == LineStatus.ERREUR }
                 _state.update { it.copy(phase = Phase.TERMINE, error = if (failures > 0) "$failures article(s) en erreur" else null) }
                 loadInfo()
@@ -131,10 +159,11 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
 
     /** Panier actuel et prochains créneaux (lecture seule). */
     fun loadInfo() = viewModelScope.launch {
+        val r = c.activeRetailer.value
         _state.update { it.copy(loadingInfo = true) }
         try {
-            val cart = c.carrefour.cart()
-            val slots = runCatching { c.carrefour.timeslots(5) }.getOrNull()
+            val cart = c.backend(r).cart()
+            val slots = runCatching { c.backend(r).timeslots(5) }.getOrNull()
             _state.update { it.copy(cart = cart, slots = slots) }
             // Le drive signale-t-il des articles à remplacer ?
             checkUnavailable()
@@ -145,7 +174,27 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
         }
     }
 
-    fun reset() = _state.update { CartState() }
+    fun reset() = _state.update { CartState(retailer = c.activeRetailer.value) }
+
+    /**
+     * Change l'enseigne du panier (sans toucher à l'enseigne préférée). Les produits proposés appartiennent
+     * à l'ancienne enseigne : la recherche est relancée sur les mêmes articles.
+     */
+    fun switchTo(r: Retailer) {
+        if (r == c.activeRetailer.value) return
+        c.activeRetailer.value = r
+        val s = _state.value
+        when (s.phase) {
+            Phase.VALIDATION, Phase.RECHERCHE -> if (s.lines.isNotEmpty()) prepare(s.lines.map { it.item }, s.source) else reset()
+            else -> { job?.cancel(); _state.value = CartState(retailer = r) }
+        }
+    }
+
+    /** Articles à comparer : ceux du panier en cours, sinon la liste de courses. */
+    fun prepareCompare() {
+        val s = _state.value
+        c.pendingCompare.value = if (s.lines.isNotEmpty()) PendingCart(s.source, s.lines.map { it.item }) else null
+    }
 
     // ---------- Fiche produit ----------
 
@@ -154,7 +203,8 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
     fun openProduct(p: Product) {
         productSheet.value = ProductSheet.Loading(p)
         viewModelScope.launch {
-            val detail = runCatching { c.carrefour.productDetail(p.ean) }.getOrNull()
+            // Fiche détaillée (composition, allergènes) : Carrefour seulement ; ailleurs, les infos de la recherche.
+            val detail = runCatching { (c.backend() as? CarrefourClient)?.productDetail(p.ean) }.getOrNull()
             // Garde les infos de la recherche (prix au drive) et complète avec la fiche.
             if (productSheet.value is ProductSheet.Loading) productSheet.value = ProductSheet.Loaded(p, detail)
         }
@@ -166,15 +216,15 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
 
     /** Demande au drive les articles du panier qu'il ne pourra pas servir, et cherche des remplaçants. */
     fun checkUnavailable() = viewModelScope.launch {
-        val eans = runCatching { c.carrefour.unavailableInCart() }.getOrDefault(emptyList())
+        val eans = runCatching { c.backend().unavailableInCart() }.getOrDefault(emptyList())
         if (eans.isEmpty()) { _state.update { it.copy(toReplace = emptyList()) }; return@launch }
-        val cart = _state.value.cart ?: runCatching { c.carrefour.cart() }.getOrNull()
+        val cart = _state.value.cart ?: runCatching { c.backend().cart() }.getOrNull()
         val replacements = eans.map { ean ->
             val inCart = cart?.lines?.firstOrNull { it.ean == ean }
             val sent = _state.value.lines.firstOrNull { it.product?.ean == ean }
             val name = inCart?.name ?: sent?.product?.name ?: ean
             val query = sent?.item?.let { CartPlanner.searchQuery(it, c.settings.current.preferOrganic) } ?: name
-            val alternatives = runCatching { c.carrefour.search(query, 6) }.getOrDefault(emptyList())
+            val alternatives = runCatching { c.backend().search(query, 6) }.getOrDefault(emptyList())
                 .filter { it.ean != ean && it.available }.take(3)
             Replacement(ean, name, inCart?.quantity ?: sent?.quantity ?: 1, alternatives)
         }
@@ -184,8 +234,9 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
     /** Remplace un article indisponible : quantité 0 pour l'ancien, ajout du nouveau. */
     fun replace(r: Replacement, product: Product) = viewModelScope.launch {
         try {
-            c.carrefour.setQuantity(r.ean, 0)
-            c.carrefour.addToCart(product, r.quantity)
+            val backend = c.backend()
+            backend.setQuantity(r.ean, 0)
+            backend.addToCart(product, r.quantity)
             _state.update { s -> s.copy(toReplace = s.toReplace.map { if (it.ean == r.ean) it.copy(done = true) else it }) }
             loadInfo()
         } catch (e: Exception) {
@@ -198,7 +249,7 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
         val sentKeys = _state.value.lines.filter { it.status == LineStatus.AJOUTE }.map { ShoppingListMerger.key(it.item.name) }.toSet()
         c.shopping.all().filter { !it.checked && ShoppingListMerger.key(it.name) in sentKeys }
             .forEach { c.shopping.update(it.copy(checked = true)) }
-        _state.update { CartState() }
+        _state.update { CartState(retailer = c.activeRetailer.value) }
     }
 
     fun isLoggedIn() = session.value == SessionState.CONNECTE
@@ -214,9 +265,8 @@ class ShoppingChatViewModel(private val c: AppContainer) : ViewModel() {
     val busy = MutableStateFlow(false)
     private var job: Job? = null
 
-    private companion object {
-        const val OWNER = "courses"
-    }
+    /** Une conversation par enseigne : les outils de Gemma sont liés au drive de l'enseigne active. */
+    private val owner: String get() = "courses-" + c.activeRetailer.value.name
 
     fun send(text: String) {
         val t = text.trim()
@@ -225,7 +275,8 @@ class ShoppingChatViewModel(private val c: AppContainer) : ViewModel() {
             busy.value = true
             lines.update { it + ShoppingChatLine(true, t) }
             try {
-                if (!c.model.owns(OWNER)) c.model.startConversation(OWNER, c.shoppingSystemPrompt(), c.shoppingTools())
+                val id = owner
+                if (!c.model.owns(id)) c.model.startConversation(id, c.shoppingSystemPrompt(), c.shoppingTools())
                 c.model.use {
                     c.model.send(t).collect { ev ->
                         when (ev) {
@@ -245,7 +296,7 @@ class ShoppingChatViewModel(private val c: AppContainer) : ViewModel() {
                     }
                 }
             } catch (e: Exception) {
-                c.session.onError(e)
+                c.session().onError(e)
                 lines.update { it + ShoppingChatLine(false, "⚠️ ${e.message}", tool = true, ok = false) }
             } finally {
                 busy.value = false
@@ -259,7 +310,7 @@ class ShoppingChatViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     private fun label(tool: String) = when (tool) {
-        "chercher_produit" -> "Recherche chez Carrefour"
+        "chercher_produit" -> "Recherche chez ${c.activeRetailer.value.label}"
         "details_produit" -> "Détails du produit"
         "voir_panier" -> "Lecture du panier"
         "ajouter_au_panier" -> "Ajout au panier"

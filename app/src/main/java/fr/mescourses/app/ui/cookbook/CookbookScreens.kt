@@ -333,7 +333,7 @@ fun RecipeDetailScreen(recipeId: Long, onBack: () -> Unit, onEdit: () -> Unit, o
         snackbar = snackbar,
         actions = {
             if (r != null) {
-                IconButton(onClick = { vm.sendToCart(r); onSendToCart() }) { Icon(Icons.Filled.ShoppingCart, "Envoyer au panier Carrefour") }
+                IconButton(onClick = { vm.sendToCart(r); onSendToCart() }) { Icon(Icons.Filled.ShoppingCart, "Envoyer au panier") }
                 IconButton(onClick = onEdit) { Icon(Icons.Filled.Edit, "Modifier") }
                 IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Filled.DeleteOutline, "Supprimer") }
             }

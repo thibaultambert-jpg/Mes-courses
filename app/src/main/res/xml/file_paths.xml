@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fichiers partageables : seulement les exports du debug (cache/debug). -->
+<paths>
+    <cache-path name="debug" path="debug/" />
+</paths>

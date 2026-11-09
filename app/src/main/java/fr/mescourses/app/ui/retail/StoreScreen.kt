@@ -1,4 +1,4 @@
-package fr.mescourses.app.ui.carrefour
+package fr.mescourses.app.ui.retail
 
 import android.location.Geocoder
 import androidx.compose.foundation.layout.Arrangement
@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -39,14 +40,21 @@ import fr.mescourses.app.ui.common.appContainer
 import fr.mescourses.app.ui.components.InfoBanner
 import fr.mescourses.app.ui.components.StatChip
 import fr.mescourses.core.carrefour.Store
+import fr.mescourses.core.leclerc.LeclercClient
+import fr.mescourses.core.retail.Retailer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 
-/** Choix du drive : code postal → coordonnées (Geocoder Android) → drives Carrefour proches. */
+/**
+ * Choix du drive. Carrefour : code postal → coordonnées (Geocoder Android) → drives proches.
+ * E.Leclerc : code postal → recherche de magasins du site. Auchan : le drive se choisit sur auchan.fr
+ * (route non relevée) et l'application lit ensuite le magasin dans le panier.
+ */
 @Composable
-fun CarrefourStoreScreen(onBack: () -> Unit, onOpenSite: () -> Unit) {
+fun StoreScreen(retailer: Retailer, onBack: () -> Unit, onOpenSite: (String) -> Unit) {
     val c = appContainer()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -55,31 +63,69 @@ fun CarrefourStoreScreen(onBack: () -> Unit, onOpenSite: () -> Unit) {
     var stores by remember { mutableStateOf<List<Store>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    val who = retailer.label
+    val currentName = settings.storeName(retailer)
+    val currentId = when (retailer) {
+        Retailer.CARREFOUR -> settings.storeId
+        Retailer.LECLERC -> settings.leclercStoreId
+        Retailer.AUCHAN -> ""
+    }
 
     fun search() = scope.launch {
         loading = true; error = null
         try {
             @Suppress("DEPRECATION")
             val address = withContext(Dispatchers.IO) {
-                Geocoder(context, Locale.FRANCE).getFromLocationName("$postalCode, France", 1)?.firstOrNull()
-            } ?: error("Code postal introuvable")
-            stores = c.carrefour.driveStores(address.latitude, address.longitude, postalCode, address.locality ?: "")
-            if (stores.isEmpty()) error = "Aucun drive trouvé autour de $postalCode."
+                runCatching { Geocoder(context, Locale.FRANCE).getFromLocationName("$postalCode, France", 1)?.firstOrNull() }.getOrNull()
+            }
+            // Leclerc retrouve lui-même les coordonnées du code postal ; Carrefour a besoin du Geocoder.
+            if (address == null && retailer == Retailer.CARREFOUR) error("Code postal introuvable")
+            // Délai maximal : sans réponse du site, un message plutôt qu'une roue qui tourne sans fin.
+            stores = withTimeoutOrNull(40_000) {
+                c.backend(retailer).stores(address?.latitude ?: 0.0, address?.longitude ?: 0.0, postalCode, address?.locality ?: "")
+            } ?: error("$who ne répond pas : ouvre le site une fois (bouton ci-dessous), puis réessaie.")
+            if (stores.isEmpty()) error = "Aucun drive $who trouvé autour de $postalCode."
         } catch (e: Exception) {
-            c.session.onError(e)
+            c.session(retailer).onError(e)
             error = e.message
         } finally {
             loading = false
         }
     }
 
-    ScreenScaffold(title = "Mon drive Carrefour", onBack = onBack) { padding ->
+    fun choose(store: Store) = scope.launch {
+        // Nouveau drive : l'ancien contexte (identifiant de panier, recherches en cache) ne vaut plus.
+        c.backend(retailer).forgetContext()
+        when (retailer) {
+            Retailer.CARREFOUR -> c.settings.update { it.copy(storeId = store.id, storeName = store.name, storeRef = store.ref.orEmpty(), basketServiceId = "", facilityServiceId = "") }
+            Retailer.LECLERC -> LeclercClient.storeOf(store)?.let { s ->
+                c.settings.update { it.copy(leclercStoreId = s.id, leclercNoPR = s.noPR, leclercHost = s.host, leclercStoreName = s.name, leclercPath = s.path) }
+                // La session suit le drive ouvert dans le navigateur : on ouvre ce drive dans la WebView, puis on vérifie.
+                runCatching { c.bridge(retailer).reloadAndWait() }
+                c.session(retailer).check()
+            }
+            Retailer.AUCHAN -> Unit
+        }
+    }
+
+    ScreenScaffold(title = "Mon drive $who", onBack = onBack) { padding ->
         LazyColumn(
             Modifier.padding(padding).fillMaxSize(),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (settings.storeName.isNotBlank()) item { StatChip("Actuel : ${settings.storeName}", emphasized = true) }
+            if (currentName.isNotBlank()) item { StatChip("Actuel : $currentName", emphasized = true) }
+            if (retailer == Retailer.AUCHAN) {
+                item {
+                    InfoBanner(
+                        "ℹ️",
+                        "Chez Auchan, le drive se choisit sur le site (connecte-toi, puis « Choisir mon drive »). " +
+                            "L'application lit ensuite le magasin dans ton panier.",
+                    )
+                }
+                item { Button(onClick = { onOpenSite(c.bridge(retailer).site.storeChoice()) }) { Text("Choisir le drive sur auchan.fr") } }
+                return@LazyColumn
+            }
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
@@ -99,16 +145,11 @@ fun CarrefourStoreScreen(onBack: () -> Unit, onOpenSite: () -> Unit) {
             }
             if (loading) item { CircularProgressIndicator() }
             error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
-            items(stores, key = { it.id }) { store ->
-                val selected = store.id == settings.storeId
+            // Clé unique : un même magasin peut revenir pour plusieurs services.
+            itemsIndexed(stores, key = { i, st -> "${st.id}|${st.ref}|$i" }) { _, store ->
+                val selected = store.id == currentId
                 Card(
-                    onClick = {
-                        scope.launch {
-                            // Nouveau drive : l'ancien identifiant de panier ne vaut plus, il sera relu (panier ou recherche).
-                            c.carrefour.forgetContext()
-                            c.settings.update { it.copy(storeId = store.id, storeName = store.name, storeRef = store.ref.orEmpty(), basketServiceId = "", facilityServiceId = "") }
-                        }
-                    },
+                    onClick = { choose(store) },
                     shape = MaterialTheme.shapes.medium,
                     colors = CardDefaults.cardColors(
                         containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLowest,
@@ -127,11 +168,15 @@ fun CarrefourStoreScreen(onBack: () -> Unit, onOpenSite: () -> Unit) {
             item {
                 InfoBanner(
                     "ℹ️",
-                    "Pour que Carrefour enregistre ce drive dans ton compte, choisis-le aussi une fois sur le site " +
-                        "(le panier dépend du magasin). L'application lira ensuite automatiquement le drive dans ton panier.",
+                    when (retailer) {
+                        Retailer.LECLERC -> "Ta session Leclerc est liée à un drive : ouvre une fois le drive choisi sur le site " +
+                            "(et connecte-toi) pour que le panier se remplisse au bon endroit."
+                        else -> "Pour que Carrefour enregistre ce drive dans ton compte, choisis-le aussi une fois sur le site " +
+                            "(le panier dépend du magasin). L'application lira ensuite automatiquement le drive dans ton panier."
+                    },
                 )
             }
-            item { OutlinedButton(onClick = onOpenSite) { Text("Choisir le drive sur carrefour.fr") } }
+            item { OutlinedButton(onClick = { onOpenSite(c.bridge(retailer).site.storeChoice()) }) { Text("Ouvrir le drive sur ${retailer.site}") } }
         }
     }
 }

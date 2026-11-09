@@ -73,7 +73,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import fr.mescourses.app.carrefour.SessionState
+import fr.mescourses.app.retail.SessionState
+import fr.mescourses.app.ui.retail.RetailerChips
+import fr.mescourses.app.ui.retail.RetailerDot
+import fr.mescourses.core.retail.Retailer
 import fr.mescourses.app.ui.common.ScreenScaffold
 import fr.mescourses.app.ui.common.containerViewModel
 import fr.mescourses.app.ui.components.BottomActionBar
@@ -86,20 +89,24 @@ import fr.mescourses.core.cart.LineStatus
 import fr.mescourses.core.carrefour.Product
 import fr.mescourses.core.shopping.ShoppingListMerger
 
-private val CarrefourBlue = Color(0xFF1E5BC6)
 private fun euros(v: Double) = String.format(java.util.Locale.FRANCE, "%.2f €", v)
 
 @Composable
 fun CartScreen(
     onOpenSettings: () -> Unit,
-    onLogin: () -> Unit,
-    onOpenSite: (String) -> Unit,
-    onChooseStore: () -> Unit,
+    onLogin: (Retailer) -> Unit,
+    onOpenSite: (Retailer, String) -> Unit,
+    onChooseStore: (Retailer) -> Unit,
+    onCompare: () -> Unit,
 ) {
     val vm = containerViewModel { CartViewModel(it) }
     val state by vm.state.collectAsStateWithLifecycle()
     val session by vm.session.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
+    val retailer by vm.retailer.collectAsStateWithLifecycle()
+    val site = vm.site(retailer)
+    val who = retailer.label
+    fun open(url: String) = onOpenSite(retailer, url)
     var alternativesFor by remember { mutableStateOf<Int?>(null) }
     val productSheet by vm.productSheet.collectAsStateWithLifecycle()
     var chatOpen by remember { mutableStateOf(false) }
@@ -112,7 +119,7 @@ fun CartScreen(
     val total = state.lines.filter { it.included && it.product != null }.sumOf { (it.product?.price ?: 0.0) * it.quantity }
 
     ScreenScaffold(
-        title = "Panier Carrefour",
+        title = "Panier $who",
         onOpenSettings = onOpenSettings,
         bottomBar = {
             when (state.phase) {
@@ -125,8 +132,8 @@ fun CartScreen(
                 }
                 Phase.TERMINE -> BottomActionBar {
                     OutlinedButton(onClick = vm::markSentAsBought) { Text("Cocher dans la liste") }
-                    Button(onClick = { onOpenSite(fr.mescourses.core.carrefour.CarrefourRoutes.WEB_CART) }, modifier = Modifier.weight(1f)) {
-                        Text("Finaliser sur Carrefour")
+                    Button(onClick = { open(site.webCart()) }, modifier = Modifier.weight(1f)) {
+                        Text("Finaliser sur $who")
                     }
                 }
                 else -> Unit
@@ -139,13 +146,23 @@ fun CartScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
-                AccountCard(session, settings.storeName, onLogin = onLogin, onChooseStore = onChooseStore)
+                // Enseigne du panier : la préférée par défaut ; en changer relance la recherche des produits.
+                val busy = state.phase == Phase.RECHERCHE || state.phase == Phase.ENVOI
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    RetailerChips(selected = retailer, preferred = settings.preferredRetailer, enabled = !busy, onSelect = vm::switchTo)
+                    if (state.phase == Phase.IDLE || state.phase == Phase.VALIDATION) {
+                        TextButton(onClick = { vm.prepareCompare(); onCompare() }) { Text("⚖️ Comparer les prix Carrefour · Leclerc · Auchan") }
+                    }
+                }
+            }
+            item {
+                AccountCard(retailer, session, settings.storeName(retailer), onLogin = { onLogin(retailer) }, onChooseStore = { onChooseStore(retailer) })
             }
             if (session != SessionState.CONNECTE) {
                 if (session == SessionState.VERIFICATION) item {
                     SectionCard {
-                        Text("Carrefour demande une vérification anti-robot.", style = MaterialTheme.typography.bodyMedium)
-                        Button(onClick = { onOpenSite(fr.mescourses.core.carrefour.CarrefourRoutes.PARKING) }) { Text("Ouvrir carrefour.fr") }
+                        Text("$who demande une vérification anti-robot.", style = MaterialTheme.typography.bodyMedium)
+                        Button(onClick = { open(site.parking()) }) { Text("Ouvrir ${retailer.site}") }
                     }
                 }
                 return@LazyColumn
@@ -160,7 +177,7 @@ fun CartScreen(
                         Text("🛒 Remplir mon panier", style = MaterialTheme.typography.titleLarge)
                         Text(
                             "Je propose un produit par article de ta liste (bio quand c'est possible, et tes choix précédents en priorité). " +
-                                "Tu vérifies, puis j'ajoute tout au panier. La commande et le paiement se font ensuite sur carrefour.fr.",
+                                "Tu vérifies, puis j'ajoute tout au panier. La commande et le paiement se font ensuite sur ${retailer.site}.",
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -169,13 +186,13 @@ fun CartScreen(
                             TextButton(onClick = { vm.loadInfo() }) { Text("Voir mon panier") }
                         }
                         // Liste vide ou rien à préparer : accès direct au panier du site.
-                        TextButton(onClick = { onOpenSite(CarrefourRoutes.WEB_CART) }) { Text("Ouvrir mon panier sur carrefour.fr ↗") }
+                        TextButton(onClick = { open(site.webCart()) }) { Text("Ouvrir mon panier sur ${retailer.site} ↗") }
                     }
                 }
                 Phase.TERMINE -> item {
                     SectionCard {
                         when {
-                            state.noDrive -> {
+                            state.noDrive && retailer == Retailer.CARREFOUR -> {
                                 Text("🏪 Drive pas encore reconnu", style = MaterialTheme.typography.titleLarge)
                                 Text(
                                     "Carrefour ne m'a pas encore donné l'identifiant de ton drive : il apparaît dans ton panier dès qu'il contient " +
@@ -183,7 +200,7 @@ fun CartScreen(
                                     style = MaterialTheme.typography.bodyMedium,
                                 )
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    OutlinedButton(onClick = { onOpenSite(CarrefourRoutes.ORIGIN + CarrefourRoutes.search("lait")) }) { Text("Ajouter sur le site") }
+                                    OutlinedButton(onClick = { open(CarrefourRoutes.ORIGIN + CarrefourRoutes.search("lait")) }) { Text("Ajouter sur le site") }
                                     Button(onClick = { vm.send() }) { Text("Réessayer") }
                                 }
                             }
@@ -194,7 +211,7 @@ fun CartScreen(
                             }
                             else -> {
                                 Text("🎉 Panier rempli !", style = MaterialTheme.typography.titleLarge)
-                                Text("${state.added} produit(s) ajoutés. Choisis ton créneau et paie sur carrefour.fr.")
+                                Text("${state.added} produit(s) ajoutés. Choisis ton créneau et paie sur ${retailer.site}.")
                             }
                         }
                     }
@@ -230,7 +247,7 @@ fun CartScreen(
                 ReplacementsCard(state.toReplace, onReplace = vm::replace, onProduct = vm::openProduct)
             }
             if (state.loadingInfo) item { Busy("Lecture du panier…") }
-            state.cart?.let { cart -> item { CartSummary(cart, state.slots, onOpenWebCart = { onOpenSite(CarrefourRoutes.WEB_CART) }) } }
+            state.cart?.let { cart -> item { CartSummary(retailer, cart, state.slots, onOpenWebCart = { open(site.webCart()) }) } }
         }
     }
 
@@ -284,6 +301,13 @@ fun CartScreen(
     if (chatOpen) ShoppingChatSheet(onDismiss = { chatOpen = false })
 }
 
+/** Site d'où la photo est censée être demandée : le serveur d'images de l'enseigne peut exiger ce Referer. */
+private fun imageReferer(url: String): String = when {
+    "leclercdrive" in url -> fr.mescourses.core.leclerc.LeclercRoutes.HOME
+    "auchan" in url -> fr.mescourses.core.auchan.AuchanRoutes.HOME
+    else -> CarrefourRoutes.ORIGIN + "/"
+}
+
 /**
  * Requête d'image comme depuis carrefour.fr (Referer + User-Agent de Chrome) : le serveur d'images peut
  * refuser les requêtes qui ne viennent pas d'un navigateur sur le site.
@@ -295,14 +319,14 @@ private fun carrefourImage(url: String): ImageRequest {
     return remember(url) {
         ImageRequest.Builder(context)
             .data(url)
-            .addHeader("Referer", CarrefourRoutes.ORIGIN + "/")
+            .addHeader("Referer", imageReferer(url))
             .addHeader("User-Agent", ua)
             .crossfade(true)
             .build()
     }
 }
 
-/** Vignette d'un produit (photo Carrefour, sinon emoji). */
+/** Vignette d'un produit (photo de l'enseigne, sinon emoji). */
 @Composable
 private fun ProductThumb(p: Product, size: Int) {
     Box(
@@ -367,7 +391,7 @@ private fun ProductDetailSheet(sheet: ProductSheet, onDismiss: () -> Unit) {
                 detail?.ingredients?.let { Section("Ingrédients", it) }
                 detail?.allergens?.let { Section("Allergènes", it) }
                 if (description == null && detail?.ingredients == null && detail?.allergens == null) {
-                    Text("Pas de description fournie par Carrefour pour ce produit.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Pas de description fournie par l'enseigne pour ce produit.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -415,29 +439,27 @@ private fun ReplacementsCard(items: List<Replacement>, onReplace: (Replacement, 
 }
 
 @Composable
-private fun AccountCard(session: SessionState, storeName: String, onLogin: () -> Unit, onChooseStore: () -> Unit) {
+private fun AccountCard(retailer: Retailer, session: SessionState, storeName: String, onLogin: () -> Unit, onChooseStore: () -> Unit) {
     SectionCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(44.dp).clip(CircleShape).background(CarrefourBlue), contentAlignment = Alignment.Center) {
-                Text("C", color = Color.White, style = MaterialTheme.typography.titleMedium)
-            }
+            RetailerDot(retailer)
             Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                Text("Carrefour Drive", style = MaterialTheme.typography.titleMedium)
+                Text("${retailer.label} Drive", style = MaterialTheme.typography.titleMedium)
                 Text(storeName.ifBlank { "Aucun drive choisi" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             StatChip(session.label, emphasized = session != SessionState.CONNECTE)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (session == SessionState.CONNEXION_REQUISE || session == SessionState.INCONNU) Button(onClick = onLogin) { Text("Se connecter") }
+            if (session == SessionState.CONNEXION_REQUISE || session == SessionState.INCONNU || session == SessionState.NON_VERIFIE) Button(onClick = onLogin) { Text("Se connecter") }
             OutlinedButton(onClick = onChooseStore) { Text(if (storeName.isBlank()) "Choisir mon drive" else "Changer de drive") }
         }
     }
 }
 
 @Composable
-private fun CartSummary(cart: fr.mescourses.core.carrefour.Cart, slots: List<fr.mescourses.core.carrefour.TimeSlot>?, onOpenWebCart: () -> Unit) {
+private fun CartSummary(retailer: Retailer, cart: fr.mescourses.core.carrefour.Cart, slots: List<fr.mescourses.core.carrefour.TimeSlot>?, onOpenWebCart: () -> Unit) {
     SectionCard {
-        Text("Mon panier Carrefour", style = MaterialTheme.typography.titleMedium)
+        Text("Mon panier ${retailer.label}", style = MaterialTheme.typography.titleMedium)
         if (cart.lines.isEmpty()) Text("Panier vide.", style = MaterialTheme.typography.bodyMedium)
         cart.lines.take(30).forEach { l ->
             Row {
@@ -452,7 +474,10 @@ private fun CartSummary(cart: fr.mescourses.core.carrefour.Cart, slots: List<fr.
                 Text("• ${s.date} ${s.start}–${s.end}" + (s.price?.let { " · ${euros(it)}" } ?: ""), style = MaterialTheme.typography.bodySmall)
             }
         }
-        OutlinedButton(onClick = onOpenWebCart) { Text("🛒 Voir mon panier sur carrefour.fr") }
+        if (slots != null && slots.isEmpty() && retailer != Retailer.CARREFOUR) {
+            Text("Les créneaux se choisissent sur ${retailer.site}.", style = MaterialTheme.typography.bodySmall)
+        }
+        OutlinedButton(onClick = onOpenWebCart) { Text("🛒 Voir mon panier sur ${retailer.site}") }
     }
 }
 
@@ -477,7 +502,7 @@ private fun ShoppingChatSheet(onDismiss: () -> Unit) {
             )
             when {
                 model == ModelStatus.Loading -> ModelLoadingCard(Modifier.padding(top = 8.dp))
-                busy -> ChefCard("Le chef réfléchit…", "Il cherche les produits au drive Carrefour.", Modifier.padding(top = 8.dp))
+                busy -> ChefCard("Le chef réfléchit…", "Il cherche les produits au drive.", Modifier.padding(top = 8.dp))
             }
             LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().height(320.dp).padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(lines) { l ->

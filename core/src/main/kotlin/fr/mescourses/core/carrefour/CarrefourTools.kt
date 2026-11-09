@@ -5,6 +5,8 @@ import fr.mescourses.core.agent.int
 import fr.mescourses.core.agent.params
 import fr.mescourses.core.agent.str
 import fr.mescourses.core.agent.toolOk
+import fr.mescourses.core.cart.RetailerBackend
+import fr.mescourses.core.retail.Retailer
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
@@ -26,15 +28,18 @@ fun interface WriteConfirmer {
 }
 
 /**
- * Les 6 outils Carrefour exposés à Gemma (mode Courses). Résultats compacts pour ménager le contexte
+ * Les outils du drive exposés à Gemma (mode Courses), pour l'enseigne active (Carrefour, E.Leclerc ou Auchan). Résultats compacts pour ménager le contexte
  * du modèle local. Les écritures passent TOUJOURS par [WriteConfirmer]. Aucun paiement, aucune validation
  * de commande, aucune réservation de créneau n'est exposé.
  */
 class CarrefourTools(
-    private val client: CarrefourClient,
+    private val client: RetailerBackend,
     private val confirmer: WriteConfirmer,
 ) {
-    fun all(): List<AgentTool> = listOf(search, details, viewCart, add, setQuantity, slots)
+    private val who = client.label
+
+    /** Le détail produit (composition, allergènes) n'existe que chez Carrefour pour l'instant. */
+    fun all(): List<AgentTool> = listOfNotNull(search, details.takeIf { client is CarrefourClient }, viewCart, add, setQuantity, slots)
 
     /** Derniers produits montrés au modèle, pour retrouver nom et prix lors d'un ajout. */
     private val seen = LinkedHashMap<String, Product>()
@@ -78,7 +83,7 @@ class CarrefourTools(
 
     val search = tool(
         "chercher_produit",
-        "Cherche des produits chez Carrefour.",
+        "Cherche des produits chez $who.",
         params {
             string("requete", "Produit recherché, ex. « farine de blé bio »")
             integer("max", "Nombre de résultats (5 par défaut)", required = false)
@@ -96,7 +101,7 @@ class CarrefourTools(
         params { string("id", "Identifiant (EAN) du produit") },
     ) { args ->
         val id = args.str("id") ?: return@tool buildJsonObject { put("erreur", "id manquant") }
-        val d = client.productDetail(id) ?: return@tool buildJsonObject { put("erreur", "introuvable") }
+        val d = (client as? CarrefourClient)?.productDetail(id) ?: return@tool buildJsonObject { put("erreur", "introuvable") }
         buildJsonObject {
             put("id", d.product.ean); put("nom", d.product.name)
             d.product.price?.let { put("prix", it) }
@@ -106,7 +111,7 @@ class CarrefourTools(
         }
     }
 
-    val viewCart = tool("voir_panier", "Affiche le panier Carrefour actuel.", params { }) { _ -> client.cart().compact() }
+    val viewCart = tool("voir_panier", "Affiche le panier $who actuel.", params { }) { _ -> client.cart().compact() }
 
     private suspend fun write(ean: String, newQuantity: Int, current: Int): JsonElement {
         val product = seen[ean]
@@ -124,7 +129,7 @@ class CarrefourTools(
         "ajouter_au_panier",
         "Ajoute un produit au panier (l'utilisateur doit confirmer).",
         params {
-            string("id", "Identifiant (EAN) du produit, tel que renvoyé par chercher_produit")
+            string("id", "Identifiant du produit, tel que renvoyé par chercher_produit")
             integer("quantite", "Nombre d'unités à ajouter", required = false)
         },
     ) { args ->
@@ -138,7 +143,7 @@ class CarrefourTools(
         "modifier_quantite",
         "Change la quantité d'un produit du panier (0 = retirer ; l'utilisateur doit confirmer).",
         params {
-            string("id", "Identifiant (EAN) du produit")
+            string("id", "Identifiant du produit")
             integer("quantite", "Nouvelle quantité totale (0 pour retirer)")
         },
     ) { args ->
@@ -166,11 +171,12 @@ class CarrefourTools(
 
 /** Prompt système du mode Courses. */
 object ShoppingPrompt {
-    fun system(preferOrganic: Boolean, preferences: String = ""): String = buildString {
-        appendLine("Tu es « Mes courses », un assistant qui aide à remplir le panier Carrefour Drive. Tu parles français, brièvement.")
+    fun system(preferOrganic: Boolean, preferences: String = "", retailer: Retailer = Retailer.CARREFOUR): String = buildString {
+        val who = retailer.label
+        appendLine("Tu es « Mes courses », un assistant qui aide à remplir le panier $who Drive. Tu parles français, brièvement.")
         appendLine("Outils :")
         appendLine("- chercher_produit : pour trouver un produit (une recherche par ingrédient, termes simples).")
-        appendLine("- details_produit : seulement si l'utilisateur demande la composition ou les allergènes.")
+        if (retailer == Retailer.CARREFOUR) appendLine("- details_produit : seulement si l'utilisateur demande la composition ou les allergènes.")
         appendLine("- voir_panier : pour savoir ce qui est déjà dans le panier.")
         appendLine("- ajouter_au_panier / modifier_quantite : l'utilisateur confirme chaque ajout dans l'application.")
         appendLine("- creneaux_drive : pour indiquer les prochains créneaux de retrait (lecture seule).")
@@ -178,7 +184,7 @@ object ShoppingPrompt {
         appendLine("- Propose AU PLUS 3 produits pour un besoin, avec prix, puis ajoute celui choisi (ou le plus pertinent si l'utilisateur te laisse choisir).")
         if (preferOrganic) appendLine("- Privilégie les produits bio quand ils existent.")
         if (preferences.isNotBlank()) appendLine("- Préférences du foyer : $preferences")
-        appendLine("- Tu ne passes JAMAIS commande, ne payes jamais et ne réserves jamais de créneau : l'utilisateur finalise sur carrefour.fr.")
-        appendLine("- Si un outil renvoie une erreur de session, dis à l'utilisateur de se reconnecter à Carrefour.")
+        appendLine("- Tu ne passes JAMAIS commande, ne payes jamais et ne réserves jamais de créneau : l'utilisateur finalise sur ${retailer.site}.")
+        appendLine("- Si un outil renvoie une erreur de session, dis à l'utilisateur de se reconnecter à $who.")
     }
 }

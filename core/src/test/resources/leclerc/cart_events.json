@@ -1,0 +1,3 @@
+[{"eTypeEvenement":101,"sIdUnique":"Produit2612","objElement":{"sType":"Produit","iIdProduit":2612,"sLibelleLigne1":"Lait demi-écrémé bio","sLibelleLigne2":"1L","nrPVUnitaireTTC":1.15,"iQuantitePanier":3,"rTotalAPayer":3.45}},
+ {"eTypeEvenement":503,"sIdUnique":"Rayon12","objElement":{"iQuantitePanier":3}},
+ {"eTypeEvenement":1,"sIdUnique":"Panier053701","objElement":{"iQuantitePanier":3,"rTotalAPayer":19.33,"sTotalAPayer":"19,33 €"}}]

@@ -150,7 +150,7 @@ class ShoppingViewModel(private val c: AppContainer) : ViewModel() {
         }
     }
 
-    /** Envoie les articles restants à l'écran Panier Carrefour. */
+    /** Envoie les articles restants à l'écran Panier. */
     fun sendToCart() = viewModelScope.launch {
         c.pendingCart.value = fr.mescourses.app.PendingCart("Liste de courses", c.shopping.all().filterNot { it.checked })
     }
@@ -187,7 +187,7 @@ fun ShoppingListScreen(onOpenSettings: () -> Unit, onSendToCart: () -> Unit) {
         snackbar = snackbar,
         actions = {
             if (lines.any { !it.checked }) IconButton(onClick = { vm.sendToCart(); onSendToCart() }) {
-                Icon(Icons.Filled.ShoppingCart, "Envoyer au panier Carrefour")
+                Icon(Icons.Filled.ShoppingCart, "Envoyer au panier")
             }
             if (done > 0) IconButton(onClick = { scope.launch { undoable("$done article(s) retiré(s)", vm.clearChecked()) } }) {
                 Icon(Icons.Filled.DeleteSweep, "Retirer les articles pris")

@@ -1,4 +1,4 @@
-package fr.mescourses.app.ui.carrefour
+package fr.mescourses.app.ui.retail
 
 import android.content.Intent
 import androidx.compose.foundation.horizontalScroll
@@ -20,6 +20,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.core.content.FileProvider
+import fr.mescourses.core.retail.DebugReader
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,7 +38,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import fr.mescourses.app.ui.common.ScreenScaffold
 import fr.mescourses.app.ui.common.appContainer
 import fr.mescourses.app.ui.components.SectionCard
+import fr.mescourses.core.auchan.AuchanRoutes
 import fr.mescourses.core.carrefour.CarrefourRoutes
+import fr.mescourses.core.leclerc.LeclercRoutes
+import fr.mescourses.core.retail.Retailer
 import fr.mescourses.core.carrefour.HttpResponse
 import kotlinx.coroutines.launch
 
@@ -44,37 +51,58 @@ fun anonymize(text: String): String = text
     .replace(Regex("""(?<!\d)(?:\+33|0)[1-9](?:[ .-]?\d{2}){4}(?!\d)"""), "0600000000")
     .replace(Regex(""""(firstName|lastName|firstname|lastname|name_on_card|customerName|email|phone|mobile|address1|address2|street|birthDate)"\s*:\s*"[^"]*""""), "\"$1\":\"***\"")
 
-/** Écran de test des requêtes Carrefour (accès caché : 7 appuis sur la version, dans Réglages). */
+/** Écran de test des requêtes des enseignes (accès caché : 7 appuis sur la version, dans Réglages). */
 @Composable
-fun CarrefourDebugScreen(onBack: () -> Unit, onOpenSite: () -> Unit) {
+fun RetailerDebugScreen(onBack: () -> Unit, onOpenSite: (Retailer) -> Unit) {
     val c = appContainer()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val log by c.bridge.log.collectAsStateWithLifecycle()
+    var retailer by remember { mutableStateOf(c.activeRetailer.value) }
+    var sending by remember { mutableStateOf(false) }
+    var summary by remember { mutableStateOf<String?>(null) }
+    // La WebView de l'enseigne testée doit être chargée, même si ce n'est pas l'enseigne active.
+    DisposableEffect(retailer) {
+        c.debugRetailer.value = retailer
+        onDispose { c.debugRetailer.value = null }
+    }
+    val log by c.bridge(retailer).log.collectAsStateWithLifecycle()
     val settings by c.settings.state.collectAsStateWithLifecycle()
     var method by remember { mutableStateOf("GET") }
-    var path by remember { mutableStateOf(CarrefourRoutes.CART) }
+    val presets = when (retailer) {
+        Retailer.CARREFOUR -> listOf(
+            "Panier" to CarrefourRoutes.CART,
+            "Recherche lait" to CarrefourRoutes.search("lait"),
+            "Drive favori" to CarrefourRoutes.FAVORITE_STORE,
+            "Session" to CarrefourRoutes.SESSION_PROBE,
+            "Simulation panier" to CarrefourRoutes.cartSimulate(
+                settings.storeRef.ifBlank { settings.basketServiceId.substringBefore('-') }.ifBlank { "0" },
+            ),
+        )
+        Retailer.LECLERC -> settings.leclercStore()?.let { s ->
+            listOf("Panier (page)" to LeclercRoutes.cartPage(s), "Recherche lait" to LeclercRoutes.search(s, "lait"))
+        } ?: listOf("Magasins 37700" to LeclercRoutes.locatorAutocomplete("37700"))
+        Retailer.AUCHAN -> listOfNotNull(
+            "Recherche lait" to AuchanRoutes.search("lait"),
+            c.auchanTokens.current()?.consentId?.let { "Panier (API)" to AuchanRoutes.cartMine(it) },
+        )
+    }
+    var path by remember(retailer) { mutableStateOf(presets.first().second) }
     var body by remember { mutableStateOf("") }
     var result by remember { mutableStateOf<HttpResponse?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var millis by remember { mutableStateOf(0L) }
     var driveInfo by remember { mutableStateOf<String?>(null) }
 
-    ScreenScaffold(title = "Debug Carrefour", onBack = onBack) { padding ->
+    ScreenScaffold(title = "Debug ${retailer.label}", onBack = onBack) { padding ->
         Column(
             Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf(
-                    "Panier" to CarrefourRoutes.CART,
-                    "Recherche lait" to CarrefourRoutes.search("lait"),
-                    "Drive favori" to CarrefourRoutes.FAVORITE_STORE,
-                    "Session" to CarrefourRoutes.SESSION_PROBE,
-                    "Simulation panier" to CarrefourRoutes.cartSimulate(
-                        c.settings.current.storeRef.ifBlank { c.settings.current.basketServiceId.substringBefore('-') }.ifBlank { "0" },
-                    ),
-                ).forEach { (label, p) -> FilterChip(selected = path == p, onClick = { method = "GET"; path = p; body = "" }, label = { Text(label) }) }
+                Retailer.entries.forEach { r -> FilterChip(selected = retailer == r, onClick = { retailer = r; result = null; error = null; driveInfo = null }, label = { Text(r.label) }) }
+            }
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                presets.forEach { (label, p) -> FilterChip(selected = path == p, onClick = { method = "GET"; path = p; body = "" }, label = { Text(label) }) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf("GET", "POST", "PATCH").forEach { m -> FilterChip(selected = method == m, onClick = { method = m }, label = { Text(m) }) }
@@ -83,21 +111,43 @@ fun CarrefourDebugScreen(onBack: () -> Unit, onOpenSite: () -> Unit) {
             if (method != "GET") {
                 OutlinedTextField(body, { body = it }, label = { Text("Corps JSON") }, minLines = 3, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp))
             }
-            Button(onClick = {
+            Button(enabled = !sending, onClick = {
                 scope.launch {
-                    error = null; result = null
+                    error = null; result = null; summary = null; sending = true
                     val start = System.currentTimeMillis()
                     try {
-                        result = c.carrefour.call(method, path, body.ifBlank { null })
+                        result = if (retailer == Retailer.CARREFOUR) {
+                            c.carrefour.call(method, path, body.ifBlank { null })
+                        } else {
+                            // Requête brute par la WebView de l'enseigne (en-têtes de l'API panier pour Auchan).
+                            val headers = if (path.startsWith(AuchanRoutes.API)) mapOf("accept" to "application/json") + (c.auchanTokens.current()?.headers ?: emptyMap())
+                                else mapOf("accept" to "application/json, text/html")
+                            c.bridge(retailer).request(method, path, headers, body.ifBlank { null })
+                        }
                     } catch (e: Exception) {
                         error = "${e::class.simpleName} : ${e.message}"
                     }
                     millis = System.currentTimeMillis() - start
+                    sending = false
                 }
-            }) { Text("Envoyer") }
+            }) { Text(if (sending) "Envoi… (chargement de ${retailer.site})" else "Envoyer") }
+            if (sending) LinearProgressIndicator(Modifier.fillMaxWidth())
 
             // Identifiants du drive seulement (aucune donnée personnelle).
-            OutlinedButton(onClick = {
+            if (retailer == Retailer.LECLERC) Text(
+                settings.leclercStore()?.let { "Drive : ${it.id}-${it.noPR} sur ${it.host}" } ?: "Aucun drive Leclerc choisi.",
+                style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
+            )
+            if (retailer == Retailer.AUCHAN) {
+                // On dit seulement si les jetons ont été vus, jamais leur valeur.
+                val t = c.auchanTokens.current()
+                Text(
+                    "Jetons API relevés : ${t?.headers?.keys?.sorted()?.joinToString().orEmpty().ifBlank { "aucun" }}\n" +
+                        "consentId : ${if (t?.consentId != null) "oui" else "non"}\nMagasin lu : ${settings.auchanStoreName.ifBlank { "—" }}",
+                    style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
+                )
+            }
+            if (retailer == Retailer.CARREFOUR) OutlinedButton(onClick = {
                 scope.launch {
                     driveInfo = "Recherche…"
                     val ctx = c.carrefour.discoverContext()
@@ -118,15 +168,26 @@ fun CarrefourDebugScreen(onBack: () -> Unit, onOpenSite: () -> Unit) {
                     SelectionContainer {
                         Text(r.body.take(3000), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                     }
-                    OutlinedButton(onClick = {
-                        val text = "$method ${path.substringBefore('?')}\nstatut ${r.status}\n\n" + anonymize(r.body)
-                        context.startActivity(
-                            Intent.createChooser(
-                                Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text),
-                                "Exporter la réponse (anonymisée)",
-                            ),
-                        )
-                    }) { Text("Exporter (anonymisé)") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { summary = DebugReader.summarize(retailer, r.body) }) { Text("Lire avec l'app") }
+                        OutlinedButton(onClick = {
+                            // Réponse complète dans un fichier : une page de drive dépasse la taille permise pour un texte partagé.
+                            val text = "${retailer.label} $method ${path.substringBefore('?')}\nstatut ${r.status}\n\n" + anonymize(r.body)
+                            val dir = java.io.File(context.cacheDir, "debug").apply { mkdirs() }
+                            val file = java.io.File(dir, "${retailer.name.lowercase()}-${System.currentTimeMillis()}.txt").apply { writeText(text) }
+                            val uri = FileProvider.getUriForFile(context, context.packageName + ".fichiers", file)
+                            context.startActivity(
+                                Intent.createChooser(
+                                    Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_STREAM, uri)
+                                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                                    "Exporter la réponse (anonymisée)",
+                                ),
+                            )
+                        }) { Text("Exporter (fichier)") }
+                    }
+                    summary?.let { sm ->
+                        SelectionContainer { Text(sm, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
+                    }
                 }
             }
 
@@ -138,7 +199,7 @@ fun CarrefourDebugScreen(onBack: () -> Unit, onOpenSite: () -> Unit) {
                     }
                     Switch(checked = settings.uaWithoutWv, onCheckedChange = { v -> scope.launch { c.settings.update { it.copy(uaWithoutWv = v) } } })
                 }
-                OutlinedButton(onClick = onOpenSite) { Text("Ouvrir la WebView visible") }
+                OutlinedButton(onClick = { onOpenSite(retailer) }) { Text("Ouvrir ${retailer.site} (WebView visible)") }
             }
 
             if (log.isNotEmpty()) {

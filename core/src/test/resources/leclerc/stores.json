@@ -1,0 +1,6 @@
+{"points":[
+ {"name":"La Ville-aux-Dames","noPL":"053701","noPR":"053701","serviceType":"drive","distance":1.2,"postalCode":"37700","urlSiteCourse":"https://fd9-courses.leclercdrive.fr/magasin-053701-053701-La-Ville-aux-Dames/"},
+ {"name":"Tours Centre","noPL":"053800","noPR":"053801","serviceType":"relais","distance":4.5,"postalCode":"37000","urlBase":"https://fd14-courses.leclercdrive.fr/"},
+ {"name":"La Ville-aux-Dames","noPL":"053701","noPR":"053701","serviceType":"livraison","distance":1.2,"urlSiteCourse":"https://fd9-courses.leclercdrive.fr/magasin-053701-053701-La-Ville-aux-Dames/"},
+ {"name":"Sans hôte","noPL":"000001"}
+]}

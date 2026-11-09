@@ -2,14 +2,18 @@ package fr.mescourses.core.cart
 
 import fr.mescourses.core.carrefour.Cart
 import fr.mescourses.core.carrefour.Product
+import fr.mescourses.core.carrefour.Store
 import fr.mescourses.core.carrefour.TimeSlot
+import fr.mescourses.core.retail.Retailer
 
 /**
- * Ce que l'app sait faire avec un drive. Implémenté nativement par enseigne
- * (Carrefour aujourd'hui ; Leclerc et Auchan plus tard, sur le même modèle).
+ * Ce que l'app sait faire avec un drive. Implémenté nativement par enseigne (Carrefour, E.Leclerc, Auchan).
+ * L'identifiant d'un produit (`Product.ean`, `CartLineItem.ean`) est l'EAN chez Carrefour, et l'identifiant
+ * propre à l'enseigne chez Leclerc et Auchan.
  */
 interface RetailerBackend {
-    val label: String
+    val retailer: Retailer
+    val label: String get() = retailer.label
     /** Produits disponibles au drive. */
     suspend fun search(query: String, limit: Int = 5): List<Product>
 
@@ -22,6 +26,14 @@ interface RetailerBackend {
     suspend fun setQuantity(ean: String, quantity: Int): Cart
     suspend fun timeslots(max: Int = 5): List<TimeSlot>
 
+    /** Vérifie la session (exception SessionExpired / ChallengeRequired sinon) ; renvoie le panier s'il est lisible. */
+    suspend fun sessionProbe(): Cart?
+
+    /** Drives proches. Liste vide si l'enseigne ne sait pas les chercher depuis l'app (choix sur le site). */
+    suspend fun stores(lat: Double, lon: Double, postalCode: String, city: String): List<Store> = emptyList()
+
+    /** Oublie le drive connu (après un changement de drive). */
+    fun forgetContext() {}
     /** Disponibilité au drive des produits (EAN → disponible) ; EAN absent = inconnu. */
     suspend fun availability(eans: List<String>): Map<String, Boolean> = emptyMap()
 
