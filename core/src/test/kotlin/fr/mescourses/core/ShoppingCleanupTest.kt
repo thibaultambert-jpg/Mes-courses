@@ -228,4 +228,17 @@ class ShoppingCleanupTest {
             .forEach { assertTrue(Pantry.isStaple(it), it) }
         listOf("gingembre", "coriandre", "graines de courge").forEach { assertFalse(Pantry.isStaple(it), it) }
     }
+
+    @Test fun ail_bio_frais_avant_chips_et_semoule() = runTest {
+        val b = FakeSearch(listOf(
+            p("1", "Ail Eco+ Filet 250g"), p("2", "Chips saveur Ail Noir et Crème Fraîche Tyrrells"),
+            p("3", "Ail blanc bio Bio Village 250g"), p("4", "Ail semoule Sainte Lucie Pot 320g"), p("5", "Persillade Rustica Ail persil"),
+        ))
+        val line = CartPlanner.searchLine(b, ShoppingItem(name = "Ail"), preferOrganic = true)
+        assertEquals("3", line.product?.id)
+        assertNull(line.note)
+        assertEquals(listOf("2", "4", "5"), line.candidates.takeLast(3).map { it.id }.sorted())
+        val classic = CartPlanner.searchLine(b, ShoppingItem(name = "Ail"), preferOrganic = false)
+        assertEquals("1", classic.product?.id)
+    }
 }

@@ -98,6 +98,26 @@ class LeclercAuchanTest {
         assertEquals("https://fd14-courses.leclercdrive.fr/magasin-159201-159201/panier.aspx?op=1", LeclercRoutes.cartOp(withCity))
     }
 
+    @Test fun leclerc_essaie_les_formats_du_panier() = runTest {
+        val errorPage = "<form action=\"./pgeWCSD002_Erreur.aspx\">Désolé, ce service est momentanément indisponible.</form>"
+        var posts = 0
+        val transport = FakeTransport { method, path, _ ->
+            when {
+                method == "GET" -> ok(res("/leclerc/cart.html"))
+                else -> { posts++; if (posts < 2) ok(errorPage) else ok(res("/leclerc/cart_events.json")) }
+            }
+        }
+        val client = LeclercClient(transport, { store }, rateLimitWaitMs = 0)
+        assertEquals(3, client.addToCart(Product(id = "2612", name = "Lait"), 1).quantityOf("2612"))
+        assertEquals(2, posts)
+        // Le format accepté est retenu : un seul essai la fois suivante.
+        client.setQuantity("2612", 3)
+        assertEquals(3, posts)
+        // Tous refusés : message clair, pas « anti-robot ».
+        val refusing = LeclercClient(FakeTransport { m, _, _ -> if (m == "GET") ok(res("/leclerc/cart.html")) else ok(errorPage) }, { store }, rateLimitWaitMs = 0)
+        assertFailsWith<CarrefourException.Rejected> { refusing.addToCart(Product(id = "2612", name = "Lait"), 1) }
+    }
+
     @Test fun leclerc_retrait_diminue() = runTest {
         val transport = FakeTransport { method, _, _ ->
             if (method == "GET") ok(res("/leclerc/cart.html")) else ok(res("/leclerc/cart_events.json"))

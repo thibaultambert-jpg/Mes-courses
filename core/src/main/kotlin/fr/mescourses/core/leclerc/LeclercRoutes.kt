@@ -39,6 +39,22 @@ object LeclercRoutes {
 
     val HTML_HEADERS = mapOf("accept" to "text/html,application/xhtml+xml")
     val JSON_HEADERS = mapOf("accept" to "application/json")
+    /**
+     * Formats d'écriture du panier, dans l'ordre d'essai : JSON brut avec l'en-tête de formulaire par défaut de jQuery
+     * (le plus probable sur ce site ASP.NET), JSON déclaré comme tel, puis l'ancien formulaire `d=<json>`.
+     */
+    fun cartVariants(payload: String): List<Pair<Map<String, String>, String>> = listOf(
+        FORM_HEADERS to payload,
+        CART_HEADERS to payload,
+        FORM_HEADERS to "d=" + URLEncoder.encode(payload, Charsets.UTF_8),
+    )
+
+    val FORM_HEADERS = mapOf(
+        "accept" to "application/json, text/javascript, */*; q=0.01",
+        "content-type" to "application/x-www-form-urlencoded; charset=UTF-8",
+        "x-requested-with" to "XMLHttpRequest",
+    )
+
     val CART_HEADERS = mapOf(
         "accept" to "application/json, text/javascript, */*; q=0.01",
         "content-type" to "application/json; charset=UTF-8",

@@ -40,6 +40,8 @@ class LeclercClient(
     private val cacheTtlMs = 5 * 60 * 1000L
     private val searchCache = HashMap<String, Cached<List<Product>>>()
     private val cacheLock = Mutex()
+    /** Format d'écriture du panier accepté la dernière fois (voir [LeclercRoutes.cartVariants]). */
+    @Volatile private var workingVariant = 0
 
     /** DataDome répond 403 (ou une page sans contenu de drive) : c'est une vérification anti-robot, pas une déconnexion. */
     private fun classify(r: HttpResponse): CarrefourException? = when {
@@ -139,9 +141,24 @@ class LeclercClient(
                 put("sInformationsComplementaires", "uni-2")
             })
         }.toString()
-        val response = http.call("POST", LeclercRoutes.cartOp(s), LeclercRoutes.CART_HEADERS, payload)
-        return LeclercParsers.parseCartEvents(response.body)
-            ?: throw if (LeclercParsers.isExpiredPage(response.body)) CarrefourException.SessionExpired(who) else CarrefourException.ChallengeRequired(who)
+        // Le format exact attendu n'est pas documenté : on essaie les formats connus, en commençant par celui qui a
+        // marché la dernière fois. Sans risque : la quantité envoyée est la cible, pas un ajout.
+        val variants = LeclercRoutes.cartVariants(payload)
+        val order = variants.indices.sortedBy { if (it == workingVariant) -1 else it }
+        var last: HttpResponse? = null
+        for (i in order) {
+            val (headers, body) = variants[i]
+            val response = http.call("POST", LeclercRoutes.cartOp(s), headers, body)
+            last = response
+            LeclercParsers.parseCartEvents(response.body)?.let { workingVariant = i; return it }
+            if (LeclercParsers.isExpiredPage(response.body)) throw CarrefourException.SessionExpired(who)
+            if (!LeclercParsers.isErrorPage(response.body)) break
+        }
+        val body = last?.body.orEmpty()
+        throw when {
+            LeclercParsers.isErrorPage(body) -> CarrefourException.Rejected(who, "le drive a refusé l'ajout au panier (« service momentanément indisponible »)")
+            else -> CarrefourException.ChallengeRequired(who)
+        }
     }
 
     /** Les créneaux Leclerc ne sont pas encore relevés : ils se choisissent sur le site. */

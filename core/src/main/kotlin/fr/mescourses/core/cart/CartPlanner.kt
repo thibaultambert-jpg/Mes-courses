@@ -75,12 +75,15 @@ object CartPlanner {
     private val processedWords = listOf(
         "surgele", "seche", "deshydrate", "lyophilise", "poudre", "moulu", "conserve", "bocal", "emince", "cuisine",
         "poelee", "puree", "soupe", "grille", "marine", "appertise", "cube", "confit", "pickle", "frit", "chips", "tapenade",
-    )
+        "semoule", "persillade", "sauce", "aromate", "pate", "creme", "saveur", "aromatise", "huile", "pot", "flocon",
+        "condiment", "vinaigrette", "pesto", "puree", "chip",
+    ).map(ShoppingListMerger::key).distinct()
 
     /** Fruits, légumes et herbes : le frais d'abord (1), le transformé (surgelé, séché, conserve…) en dernier (-1). */
     fun freshness(item: ShoppingItem, p: Product): Int {
         if (fr.mescourses.core.shopping.Aisle.of(item.name) != fr.mescourses.core.shopping.Aisle.FRUITS_LEGUMES) return 0
         val k = " " + ShoppingListMerger.key(p.name) + " "
+        // Comparaison en début de mot (« chips » → « chip », « surgelés » → « surgele »).
         return when {
             processedWords.any { k.contains(" $it") } -> -1
             freshWords.any { k.contains(" $it") } -> 1
@@ -97,8 +100,10 @@ object CartPlanner {
         return products.withIndex()
             .sortedWith(
                 compareByDescending<IndexedValue<Product>> { (_, p) -> isRelevant(query, p) }
-                    .thenByDescending { (_, p) -> freshness(item, p) }
+                    // Transformé (surgelé, chips, semoule…) en dernier, puis le bio, puis le frais.
+                    .thenByDescending { (_, p) -> freshness(item, p) >= 0 }
                     .thenByDescending { (_, p) -> preferOrganic && p.organic }
+                    .thenByDescending { (_, p) -> freshness(item, p) }
                     .thenByDescending { (_, p) ->
                         val key = " " + ShoppingListMerger.key(p.name) + " "
                         words.count { key.contains(" $it") }
@@ -167,7 +172,7 @@ object CartPlanner {
             else -> base.copy(
                 status = LineStatus.PROPOSE,
                 note = skipped?.let { "« ${it.name} » indisponible : remplacé par le suivant" }
-                    ?: if (preferOrganic && !available.first().organic) "Pas de version bio au drive" else null,
+                    ?: if (preferOrganic && available.none { it.organic }) "Pas de version bio au drive" else null,
             )
         }
     } catch (e: Exception) {

@@ -103,6 +103,8 @@ object LeclercParsers {
 
     /** Est-ce une vraie page de drive ? Sinon : page anti-robot (DataDome) ou « session expirée ». */
     fun isStorePage(html: String) = html.contains(LeclercRoutes.STORE_PAGE_MARKER)
+    /** Page d'erreur du site (« Désolé, ce service est momentanément indisponible »), renvoyée avec un statut 200. */
+    fun isErrorPage(html: String) = html.contains("pgeWCSD002_Erreur") || Regex("(?i)momentan(?:é|&#233;|e)ment indisponible").containsMatchIn(html)
     fun isExpiredPage(html: String) = Regex("(?i)session a expir|sessionexpiree").containsMatchIn(html)
     fun isNotFoundPage(html: String) = Regex("(?i)page demand(?:é|&#233;|&eacute;|e)e n.a pas pu|page introuvable").containsMatchIn(html)
 
