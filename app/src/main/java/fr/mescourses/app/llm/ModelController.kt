@@ -78,6 +78,18 @@ class ModelController(private val llm: LlmEngine, private val settings: Settings
 
     fun owns(id: String) = owner == id && llm.hasConversation()
 
+    companion object {
+        /**
+         * Mémoire de la conversation pleine (« Prefill input length exceeds available state entries ») : il faut
+         * repartir d'une conversation neuve. Les messages renvoient déjà l'état utile (menu, panier).
+         */
+        fun isContextFull(t: Throwable): Boolean = generateSequence(t) { it.cause }.any { e ->
+            val m = e.message.orEmpty()
+            "exceeds available state entries" in m || "Prefill input length" in m ||
+                (m.contains("context", true) && (m.contains("exceed", true) || m.contains("too long", true)))
+        }
+    }
+
     suspend fun startConversation(id: String, systemPrompt: String, tools: List<AgentTool>) {
         check(ensureLoaded()) { "Assistant indisponible" }
         generation.withLock {

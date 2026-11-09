@@ -207,7 +207,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     fun improveSharing() = send(MenuPrompt.IMPROVE_SHARING)
 
     /** Envoie un message au LLM et suit les appels d'outils ; renvoie le texte de la réponse. */
-    private suspend fun exchange(prompt: String, shownAs: String?): String {
+    private suspend fun exchange(prompt: String, shownAs: String?, retry: Boolean = true): String {
         _state.update { s -> s.copy(busy = true, chat = if (shownAs != null) s.chat + ChatLine(true, shownAs) else s.chat) }
         val answer = StringBuilder()
         try {
@@ -230,6 +230,16 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                 }
             } }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            // Mémoire de l'assistant pleine : conversation neuve (le message contient déjà le menu actuel),
+            // avec un rappel de sa dernière réponse pour qu'un « Oui » garde son sens. Un seul essai.
+            if (retry && answer.isEmpty() && fr.mescourses.app.llm.ModelController.isContextFull(e)) {
+                val last = _state.value.chat.lastOrNull { !it.fromUser && !it.tool }?.text?.trim()?.takeLast(600)
+                _state.update { it.copy(chat = it.chat + ChatLine(false, "↻ Mémoire de l'assistant pleine : nouvelle conversation, le menu actuel est gardé.", tool = true, ok = true)) }
+                startConversation()
+                val recall = last?.let { "Rappel de ta réponse précédente : « $it »\n" }.orEmpty()
+                return exchange(recall + prompt, shownAs = null, retry = false)
+            }
             _state.update { it.copy(chat = it.chat + ChatLine(false, "⚠️ ${e.message}", tool = true, ok = false)) }
         }
         return answer.toString()
