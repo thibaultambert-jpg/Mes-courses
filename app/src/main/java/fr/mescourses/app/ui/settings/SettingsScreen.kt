@@ -275,7 +275,7 @@ fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStor
                         RetailerDot(r, 32.dp)
                         Column(Modifier.weight(1f).padding(start = 10.dp)) {
                             Text(r.label, style = MaterialTheme.typography.bodyLarge)
-                            Text(s.storeName(r).ifBlank { "Aucun drive choisi" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(s.storeName(r).ifBlank { r.noStoreText() }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         StatChip(session.label, emphasized = session != SessionState.CONNECTE)
                     }
@@ -286,7 +286,7 @@ fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStor
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         // « Drive à choisir » : on est connecté, il manque seulement le drive.
                         if (session != SessionState.CONNECTE && session != SessionState.DRIVE_REQUIS) Button(onClick = { onLogin(r) }) { Text("Se connecter") }
-                        TextButton(onClick = { onChooseStore(r) }) { Text(if (s.storeName(r).isBlank()) "Choisir le drive" else "Changer de drive") }
+                        TextButton(onClick = { onChooseStore(r) }) { Text(r.chooseStoreText(s.storeName(r).isNotBlank())) }
                     }
                 }
                 HorizontalDivider()

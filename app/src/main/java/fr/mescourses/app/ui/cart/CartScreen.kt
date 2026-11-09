@@ -421,14 +421,14 @@ private fun AccountCard(retailer: Retailer, session: SessionState, storeName: St
         Row(verticalAlignment = Alignment.CenterVertically) {
             RetailerDot(retailer)
             Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                Text("${retailer.label} Drive", style = MaterialTheme.typography.titleMedium)
-                Text(storeName.ifBlank { "Aucun drive choisi" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(retailer.accountTitle, style = MaterialTheme.typography.titleMedium)
+                Text(storeName.ifBlank { retailer.noStoreText() }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             StatChip(session.label, emphasized = session != SessionState.CONNECTE)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (session == SessionState.CONNEXION_REQUISE || session == SessionState.INCONNU || session == SessionState.NON_VERIFIE) Button(onClick = onLogin) { Text("Se connecter") }
-            OutlinedButton(onClick = onChooseStore) { Text(if (storeName.isBlank()) "Choisir mon drive" else "Changer de drive") }
+            OutlinedButton(onClick = onChooseStore) { Text(retailer.chooseStoreText(storeName.isNotBlank())) }
         }
     }
 }
