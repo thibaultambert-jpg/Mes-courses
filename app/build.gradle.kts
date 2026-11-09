@@ -22,11 +22,22 @@ android {
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
+    // Clé fixe fournie par la CI (secrets GitHub) : les mises à jour s'installent par-dessus sans perdre les données.
+    val fixedStore = System.getenv("SIGNING_STORE_FILE")?.takeIf { it.isNotBlank() && file(it).exists() }
+    signingConfigs {
+        if (fixedStore != null) create("fixe") {
+            storeFile = file(fixedStore)
+            storePassword = System.getenv("SIGNING_STORE_PASSWORD")
+            keyAlias = System.getenv("SIGNING_KEY_ALIAS")
+            keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Application personnelle : signée avec la clé de debug pour pouvoir l'installer directement.
-            signingConfig = signingConfigs.getByName("debug")
+            // Application personnelle : clé fixe si disponible, sinon clé de debug pour l'installer directement.
+            signingConfig = signingConfigs.getByName(if (fixedStore != null) "fixe" else "debug")
         }
     }
 
