@@ -120,7 +120,7 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
             }
             _state.update { it.copy(lines = list.map { item -> CartLine(item) }) }
             var i = 0
-            CartPlanner.propose(c.backend(r), list, c.settings.current.preferOrganic, c.productMemory(r)).collect { line ->
+            CartPlanner.propose(c.backend(r), list, c.settings.current.preferOrganic, c.productMemory(r), queries = c.settings.current.queryMap()).collect { line ->
                 val index = i++
                 _state.update { s -> s.copy(lines = s.lines.toMutableList().also { it[index] = line }) }
             }
@@ -134,9 +134,42 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
     /** Pour un produit repris de la mémoire : chercher d'autres choix. */
     fun moreChoices(index: Int) = viewModelScope.launch {
         val line = _state.value.lines.getOrNull(index) ?: return@launch
-        val found = CartPlanner.searchLine(c.backend(_state.value.retailer), line.item, c.settings.current.preferOrganic)
+        val found = CartPlanner.searchLine(
+            c.backend(_state.value.retailer), line.item, c.settings.current.preferOrganic,
+            CartPlanner.queryFor(line.item, c.settings.current.queryMap()),
+        )
         val merged = (line.candidates + found.candidates).distinctBy { it.ean }
-        updateLine(index) { it.copy(candidates = merged, remembered = false, status = if (merged.isEmpty()) found.status else LineStatus.PROPOSE) }
+        updateLine(index) {
+            it.copy(
+                candidates = merged, remembered = false, query = found.query,
+                relevantCount = (line.candidates.size + found.relevantCount).coerceAtMost(merged.size),
+                status = if (merged.isEmpty()) found.status else LineStatus.PROPOSE,
+            )
+        }
+    }
+
+    /**
+     * Relance la recherche d'une seule ligne avec les mots choisis par l'utilisateur ; la recherche est mémorisée
+     * pour cet ingrédient si [remember] (prochains paniers et comparaison des prix).
+     */
+    fun searchAgain(index: Int, query: String, remember: Boolean = true) = viewModelScope.launch {
+        val line = _state.value.lines.getOrNull(index) ?: return@launch
+        val q = query.trim().ifEmpty { return@launch }
+        updateLine(index) { it.copy(status = LineStatus.A_CHERCHER, query = q) }
+        val found = CartPlanner.searchLine(c.backend(_state.value.retailer), line.item, c.settings.current.preferOrganic, q)
+        updateLine(index) { found.copy(quantity = line.quantity) }
+        if (remember) {
+            val key = fr.mescourses.core.shopping.ShoppingListMerger.key(line.item.name)
+            val auto = CartPlanner.searchQuery(line.item)
+            c.settings.update { it.withQuery(key, if (q.equals(auto, ignoreCase = true)) "" else q) }
+        }
+    }
+
+    /** Recherche plus large (sans le dernier mot). */
+    fun widen(index: Int) {
+        val line = _state.value.lines.getOrNull(index) ?: return
+        val q = line.query ?: CartPlanner.searchQuery(line.item)
+        CartPlanner.widen(q)?.let { searchAgain(index, it) }
     }
 
     /** Confirmation groupée : envoie les lignes cochées. */
@@ -223,7 +256,7 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
             val inCart = cart?.lines?.firstOrNull { it.ean == ean }
             val sent = _state.value.lines.firstOrNull { it.product?.ean == ean }
             val name = inCart?.name ?: sent?.product?.name ?: ean
-            val query = sent?.item?.let { CartPlanner.searchQuery(it, c.settings.current.preferOrganic) } ?: name
+            val query = sent?.item?.let { CartPlanner.queryFor(it, c.settings.current.queryMap()) } ?: name
             val alternatives = runCatching { c.backend().search(query, 6) }.getOrDefault(emptyList())
                 .filter { it.ean != ean && it.available }.take(3)
             Replacement(ean, name, inCart?.quantity ?: sent?.quantity ?: 1, alternatives)

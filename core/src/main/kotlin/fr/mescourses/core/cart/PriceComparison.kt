@@ -37,6 +37,8 @@ object PriceComparison {
         /** Vérifie la session avant de chercher ; renvoie un message d'erreur, ou null si tout va bien. */
         ready: suspend (RetailerBackend) -> String? = { null },
         pauseMs: Long = 600,
+        /** Recherches corrigées par l'utilisateur (clé de l'ingrédient → recherche). */
+        queries: Map<String, String> = emptyMap(),
     ): Flow<RetailerQuote> = channelFlow {
         coroutineScope {
             backends.map { backend ->
@@ -49,7 +51,7 @@ object PriceComparison {
                         return@async
                     }
                     var index = 0
-                    CartPlanner.propose(backend, items, preferOrganic, memory(backend.retailer), pauseMs).collect { line ->
+                    CartPlanner.propose(backend, items, preferOrganic, memory(backend.retailer), pauseMs, queries).collect { line ->
                         val i = index++
                         quote = quote.copy(lines = quote.lines.toMutableList().also { it[i] = line })
                         send(quote)

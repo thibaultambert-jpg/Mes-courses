@@ -290,7 +290,7 @@ fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStor
                     }
                 }
                 HorizontalDivider()
-                SwitchRow("Privilégier le bio", "Cherche d'abord la version bio de chaque produit", s.preferOrganic) { v ->
+                SwitchRow("Privilégier le bio", "Propose la version bio quand le drive en a une, sinon le produit classique", s.preferOrganic) { v ->
                     vm.update { it.copy(preferOrganic = v) }
                 }
                 OutlinedButton(onClick = vm::logout) { Text("Se déconnecter de toutes les enseignes") }

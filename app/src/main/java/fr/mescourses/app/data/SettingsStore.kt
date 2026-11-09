@@ -43,6 +43,8 @@ data class Settings(
     val auchanStoreName: String = "",
     /** Produits « toujours dans mon placard », séparés par des retours à la ligne ; vide = liste par défaut. */
     val pantry: String = "",
+    /** Recherches corrigées au drive, une par ligne : « clé de l'ingrédient<TAB>recherche ». */
+    val searchQueries: String = "",
     /**
      * Leclerc : navigateur annoncé au site. « ordinateur » (défaut) = site ordinateur fdN-courses, le seul que l'app sait
      * lire ; « mobile » = Chrome Android (site mobile m-courses) ; « webview » = User-Agent d'origine.
@@ -66,7 +68,21 @@ data class Settings(
     fun pantryList(): List<String> = when (pantry) {
         "" -> fr.mescourses.core.shopping.Pantry.DEFAULTS
         "-" -> emptyList()
+        // Les épices restent toujours au placard (demande de l'utilisateur).
         else -> pantry.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+            .let { l -> if (l.any { it.equals("Épices", true) || it.equals("Epices", true) }) l else l + "Épices" }
+    }
+
+    fun queryMap(): Map<String, String> = searchQueries.split('\n').mapNotNull { line ->
+        line.split('\t').takeIf { it.size == 2 && it[0].isNotBlank() && it[1].isNotBlank() }?.let { it[0] to it[1] }
+    }.toMap()
+
+    /** Mémorise (ou oublie, si vide) la recherche corrigée d'un ingrédient. */
+    fun withQuery(key: String, query: String): Settings {
+        val m = queryMap().toMutableMap()
+        val q = query.replace(Regex("[\\t\\n]"), " ").trim()
+        if (q.isEmpty()) m.remove(key) else m[key] = q
+        return copy(searchQueries = m.entries.joinToString("\n") { "${it.key}\t${it.value}" })
     }
 
     fun withPantry(list: List<String>): Settings = copy(pantry = if (list.isEmpty()) "-" else list.joinToString("\n"))
@@ -114,6 +130,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
         val lcPath = stringPreferencesKey("lc_store_path")
         val auName = stringPreferencesKey("au_store_name")
         val pantry = stringPreferencesKey("pantry")
+        val searchQueries = stringPreferencesKey("search_queries")
         val lcUaMode = stringPreferencesKey("lc_ua_mode")
     }
 
@@ -142,6 +159,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
         leclercPath = this[K.lcPath].orEmpty(),
         auchanStoreName = this[K.auName].orEmpty(),
         pantry = this[K.pantry].orEmpty(),
+        searchQueries = this[K.searchQueries].orEmpty(),
         leclercUaMode = this[K.lcUaMode] ?: "ordinateur",
     )
 
@@ -178,6 +196,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
             prefs[K.lcPath] = s.leclercPath
             prefs[K.auName] = s.auchanStoreName
             prefs[K.pantry] = s.pantry
+            prefs[K.searchQueries] = s.searchQueries
             prefs[K.lcUaMode] = s.leclercUaMode
         }
     }

@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -176,7 +177,7 @@ fun CartScreen(
                     SectionCard {
                         Text("🛒 Remplir mon panier", style = MaterialTheme.typography.titleLarge)
                         Text(
-                            "Je propose un produit par article de ta liste (bio quand c'est possible, et tes choix précédents en priorité). " +
+                            "Je propose un produit par article de ta liste (frais et bio d'abord quand le drive en a, et tes choix précédents en priorité). " +
                                 "Tu vérifies, puis j'ajoute tout au panier. La commande et le paiement se font ensuite sur ${retailer.site}.",
                             style = MaterialTheme.typography.bodyMedium,
                         )
@@ -254,45 +255,17 @@ fun CartScreen(
     alternativesFor?.let { index ->
         val line = state.lines.getOrNull(index)
         if (line != null) {
-            ModalBottomSheet(onDismissRequest = { alternativesFor = null }) {
-                Text(
-                    "Choisir pour « ${ShoppingListMerger.format(line.item)} »",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-                )
-                line.candidates.forEachIndexed { i, p ->
-                    ListItem(
-                        headlineContent = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (i == line.selected) { Icon(Icons.Filled.CheckCircle, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.size(4.dp)) }
-                                if (p.organic) { BioBadge(); Spacer(Modifier.size(4.dp)) }
-                                Text(
-                                    p.name, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                                    color = if (p.available) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        },
-                        supportingContent = {
-                            Column {
-                                if (!p.available) Text("⛔ Indisponible au drive", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
-                                Text(listOfNotNull(p.brand, p.packaging, p.unitPrice, p.nutriscore?.let { "Nutri-Score $it" }, p.promo).joinToString(" · "))
-                            }
-                        },
-                        trailingContent = {
-                            Column(horizontalAlignment = Alignment.End) {
-                                p.price?.let { Text(euros(it), style = MaterialTheme.typography.titleSmall) }
-                                TextButton(onClick = { vm.openProduct(p) }, contentPadding = PaddingValues(0.dp)) { Text("Détails", style = MaterialTheme.typography.labelMedium) }
-                            }
-                        },
-                        leadingContent = { ProductThumb(p, 56) },
-                        modifier = Modifier.clickable(enabled = p.available) {
-                            vm.updateLine(index) { it.copy(selected = i, status = LineStatus.PROPOSE, included = true) }
-                            alternativesFor = null
-                        },
-                    )
-                }
-                Spacer(Modifier.size(24.dp))
-            }
+            ChoiceSheet(
+                line = line,
+                onDismiss = { alternativesFor = null },
+                onPick = { i ->
+                    vm.updateLine(index) { it.copy(selected = i, status = LineStatus.PROPOSE, included = true) }
+                    alternativesFor = null
+                },
+                onSearch = { q -> vm.searchAgain(index, q) },
+                onWiden = { vm.widen(index) },
+                onProduct = vm::openProduct,
+            )
         }
     }
 
@@ -595,7 +568,16 @@ private fun CartLineCard(
                 Text(ShoppingListMerger.format(line.item), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 when (line.status) {
                     LineStatus.A_CHERCHER -> Text("Recherche…", style = MaterialTheme.typography.bodyMedium)
-                    LineStatus.INTROUVABLE -> Text("Aucun produit trouvé", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                    LineStatus.INTROUVABLE -> {
+                        Text("Aucun produit trouvé", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                        line.note?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        if (editable) {
+                            TextButton(onClick = onAlternatives, contentPadding = PaddingValues(0.dp)) {
+                                Icon(Icons.Filled.Search, null, Modifier.size(16.dp))
+                                Text(" Modifier la recherche" + if (line.candidates.isNotEmpty()) " · voir les résultats" else "", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                    }
                     LineStatus.ERREUR -> Text(line.message ?: "Erreur", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 2)
                     else -> product?.let { p ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -608,11 +590,13 @@ private fun CartLineCard(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         line.note?.let { Text("⚠ $it", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary) }
-                        if (editable && (line.candidates.size > 1 || line.remembered)) {
+                        if (editable) {
                             TextButton(onClick = onAlternatives, contentPadding = PaddingValues(0.dp)) {
                                 Icon(Icons.Filled.SwapHoriz, null, Modifier.size(16.dp))
                                 Text(
-                                    if (line.remembered) " Ton choix habituel · autres choix" else " ${line.candidates.size - 1} autre(s) choix",
+                                    if (line.remembered) " Ton choix habituel · autres choix"
+                                    else if (line.candidates.size > 1) " ${line.candidates.size - 1} autre(s) choix · modifier la recherche"
+                                    else " Modifier la recherche",
                                     style = MaterialTheme.typography.labelMedium,
                                 )
                             }
@@ -632,4 +616,112 @@ private fun CartLineCard(
             }
         }
     }
+}
+
+
+/**
+ * Choix du produit d'une ligne : recherche modifiable (relancée pour cette seule ligne et mémorisée),
+ * résultats pertinents d'abord, « sans rapport » à part, et tous les produits reçus sur demande.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChoiceSheet(
+    line: CartLine,
+    onDismiss: () -> Unit,
+    onPick: (Int) -> Unit,
+    onSearch: (String) -> Unit,
+    onWiden: () -> Unit,
+    onProduct: (Product) -> Unit,
+) {
+    var query by remember(line.query) { mutableStateOf(line.query ?: fr.mescourses.core.cart.CartPlanner.searchQuery(line.item)) }
+    var showAll by remember(line.query) { mutableStateOf(false) }
+    val relevant = line.relevantCount.coerceIn(0, line.candidates.size)
+    val shownRelevant = if (showAll) relevant else minOf(relevant, 8)
+    val searching = line.status == LineStatus.A_CHERCHER
+    val canWiden = fr.mescourses.core.cart.CartPlanner.widen(line.query ?: query) != null
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        LazyColumn(Modifier.fillMaxWidth()) {
+            item {
+                Column(Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
+                    Text("Choisir pour « ${ShoppingListMerger.format(line.item)} »", style = MaterialTheme.typography.titleMedium)
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                        OutlinedTextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            label = { Text("Recherche au drive") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Button(onClick = { onSearch(query) }, enabled = !searching && query.isNotBlank()) { Text("Relancer") }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (canWiden) TextButton(onClick = onWiden, enabled = !searching) { Text("Élargir la recherche") }
+                        Text(
+                            "La recherche modifiée est retenue pour cet ingrédient.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    if (searching) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    line.note?.let { Text("⚠ $it", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary) }
+                    if (!searching && line.candidates.isEmpty()) Text("Aucun produit reçu pour « ${line.query ?: query} ».", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            items(shownRelevant) { i -> ChoiceRow(line, i, onPick, onProduct) }
+            if (shownRelevant < relevant) item {
+                TextButton(onClick = { showAll = true }, modifier = Modifier.padding(horizontal = 12.dp)) {
+                    Text("Voir tous les résultats (${relevant - shownRelevant} de plus)")
+                }
+            }
+            if (line.candidates.size > relevant && (showAll || relevant == 0)) {
+                item {
+                    Text(
+                        "Autres résultats (sans rapport avec « ${line.query ?: query} »)",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                    )
+                }
+                items(line.candidates.size - relevant) { j -> ChoiceRow(line, relevant + j, onPick, onProduct) }
+            } else if (line.candidates.size > relevant) item {
+                TextButton(onClick = { showAll = true }, modifier = Modifier.padding(horizontal = 12.dp)) {
+                    Text("Voir aussi ${line.candidates.size - relevant} résultat(s) sans rapport")
+                }
+            }
+            item { Spacer(Modifier.size(24.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun ChoiceRow(line: CartLine, i: Int, onPick: (Int) -> Unit, onProduct: (Product) -> Unit) {
+    val p = line.candidates[i]
+    ListItem(
+        headlineContent = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (i == line.selected && line.status == LineStatus.PROPOSE) { Icon(Icons.Filled.CheckCircle, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.size(4.dp)) }
+                if (p.organic) { BioBadge(); Spacer(Modifier.size(4.dp)) }
+                Text(
+                    p.name, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    color = if (p.available) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        supportingContent = {
+            Column {
+                if (!p.available) Text("⛔ Indisponible au drive", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+                Text(listOfNotNull(p.brand, p.packaging, p.unitPrice, p.nutriscore?.let { "Nutri-Score $it" }, p.promo).joinToString(" · "))
+            }
+        },
+        trailingContent = {
+            Column(horizontalAlignment = Alignment.End) {
+                p.price?.let { Text(euros(it), style = MaterialTheme.typography.titleSmall) }
+                TextButton(onClick = { onProduct(p) }, contentPadding = PaddingValues(0.dp)) { Text("Détails", style = MaterialTheme.typography.labelMedium) }
+            }
+        },
+        leadingContent = { ProductThumb(p, 56) },
+        modifier = Modifier.clickable(enabled = p.available) { onPick(i) },
+    )
 }

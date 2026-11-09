@@ -23,7 +23,13 @@ object Pantry {
         "epice" to listOf(
             "epice", "cumin", "curry", "paprika", "cannelle", "muscade", "noix de muscade", "piment", "curcuma",
             "gingembre moulu", "quatre epice", "4 epice", "ras el hanout", "coriandre moulue", "clou de girofle",
-            "cardamome", "safran", "piment d espelette", "garam masala", "chili",
+            "cardamome", "safran", "piment d espelette", "garam masala", "chili", "piment de cayenne", "cayenne",
+            "5 baie", "cinq baie", "melange 5 baie", "epice a couscous", "epice couscous", "tandoori", "colombo",
+            "zaatar", "za atar", "sumac", "fenugrec", "anis", "anis etoile", "badiane", "graine de fenouil",
+            "graine de coriandre", "graine de moutarde", "graine de cumin", "graine de carvi", "carvi", "cumin en poudre",
+            "gingembre en poudre", "gingembre moulu", "ail en poudre", "oignon en poudre", "herbe a tajine", "epice a tajine",
+            "mélange d epice", "melange d epice", "piment en poudre", "piment moulu", "coriandre en poudre", "cannelle en poudre",
+            "vanille en poudre", "poivre de cayenne", "poudre de piment", "curry en poudre", "massale", "berbere", "harissa en poudre",
         ),
         "herbe sechee" to listOf("herbe de provence", "thym", "laurier", "origan", "romarin seche", "feuille de laurier", "bouquet garni"),
         "condiment" to listOf("moutarde", "ketchup", "mayonnaise", "mayo", "tabasco", "sauce soja", "sauce", "vinaigrette", "worcestershire"),
@@ -52,6 +58,7 @@ object Pantry {
         // Exceptions vérifiées aussi sur le nom brut : « piment frais » perd « frais » au nettoyage.
         val raw = ShoppingListMerger.key(name)
         if (k.isEmpty() || keepKeys.any { k.startsWith(it) || raw.startsWith(it) }) return false
-        return keys(entries).any { w -> k == w || k.startsWith("$w ") }
+        // Nom brut aussi : « gingembre en poudre » devient « gingembre » au nettoyage (frais, à acheter).
+        return keys(entries).any { w -> k == w || k.startsWith("$w ") || raw == w || raw.startsWith("$w ") }
     }
 }

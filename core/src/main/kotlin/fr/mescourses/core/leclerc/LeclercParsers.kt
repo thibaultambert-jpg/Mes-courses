@@ -52,7 +52,10 @@ object LeclercParsers {
     }
 
     /** Produits d'une page de recherche (sans doublons, seulement les fiches de type « Produit »). */
-    fun parseSearch(html: String): List<Product> = productRecords(html)
+    fun parseSearch(html: String): List<Product> = productRecords(
+        // Le panier est intégré à chaque page : ses produits ne sont pas des résultats de recherche.
+        Scrape.arrayNamed(html, "lstProduits")?.let { html.replace(it, "[]") } ?: html,
+    )
         .filter { (it.str("sType") ?: "Produit") == "Produit" }
         .map(::product)
         .filter { it.id.isNotBlank() }

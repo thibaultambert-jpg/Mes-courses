@@ -171,4 +171,61 @@ class ShoppingCleanupTest {
         val ail = merged.first { it.name == "Ail" }
         assertEquals(1.0, ail.quantity); assertEquals(ShoppingListMerger.PIECE, ail.unit)
     }
+
+    private class FakeSearch(val results: List<fr.mescourses.core.carrefour.Product>) : fr.mescourses.core.cart.RetailerBackend {
+        val queries = mutableListOf<String>()
+        override val retailer = fr.mescourses.core.retail.Retailer.LECLERC
+        override suspend fun search(query: String, limit: Int) = results.filter { it.available }.take(limit)
+        override suspend fun searchWithUnavailable(query: String, limit: Int): List<fr.mescourses.core.carrefour.Product> { queries += query; return results.take(limit) }
+        override suspend fun cart() = error("")
+        override suspend fun addToCart(product: fr.mescourses.core.carrefour.Product, quantity: Int) = error("")
+        override suspend fun setQuantity(ean: String, quantity: Int) = error("")
+        override suspend fun timeslots(max: Int) = emptyList<fr.mescourses.core.carrefour.TimeSlot>()
+        override suspend fun sessionProbe() = null
+    }
+
+    private fun p(id: String, name: String) = fr.mescourses.core.carrefour.Product(id, name)
+
+    @Test fun produits_sans_rapport_jamais_choisis() = runTest {
+        val b = FakeSearch(listOf(p("1", "Lait corps hydratant Nivea"), p("2", "Thé Earl Grey Twinings"), p("3", "Mouchoirs blancs")))
+        val line = CartPlanner.searchLine(b, ShoppingItem(name = "Lardons", quantity = 200.0, unit = "g"), preferOrganic = true)
+        assertEquals(fr.mescourses.core.cart.LineStatus.INTROUVABLE, line.status)
+        assertFalse(line.included)
+        assertEquals(0, line.relevantCount)
+        assertEquals(listOf("Lardons"), b.queries) // une seule recherche, sans « bio »
+    }
+
+    @Test fun bio_choisi_parmi_les_resultats() = runTest {
+        val b = FakeSearch(listOf(p("1", "Mouchoirs"), p("2", "Lardons fumés 200g"), p("3", "Lardons fumés bio 150g")))
+        val line = CartPlanner.searchLine(b, ShoppingItem(name = "Lardons"), preferOrganic = true)
+        assertEquals("3", line.product?.id)
+        assertEquals(2, line.relevantCount)
+        assertEquals("1", line.candidates.last().id)
+        val classic = CartPlanner.searchLine(FakeSearch(listOf(p("2", "Lardons fumés 200g"))), ShoppingItem(name = "Lardons"), preferOrganic = true)
+        assertEquals("2", classic.product?.id)
+        assertEquals("Pas de version bio au drive", classic.note)
+    }
+
+    @Test fun frais_d_abord() {
+        val persil = CartPlanner.rank(ShoppingItem(name = "persil"), listOf(p("1", "Persil séché 15g"), p("2", "Persil surgelé"), p("3", "Persil frais botte")))
+        assertEquals("3", persil.first().id)
+        val oignon = CartPlanner.rank(ShoppingItem(name = "oignon"), listOf(p("1", "Oignons émincés surgelés"), p("2", "Oignons jaunes filet 1kg")))
+        assertEquals("2", oignon.first().id)
+        // Hors fruits et légumes : pas d'effet.
+        assertEquals(0, CartPlanner.freshness(ShoppingItem(name = "riz"), p("1", "Riz frais")))
+    }
+
+    @Test fun elargir_et_recherche_corrigee() {
+        assertEquals("coulis de tomate", CartPlanner.widen("coulis de tomate jaune"))
+        assertEquals("coulis", CartPlanner.widen("coulis de tomate"))
+        assertNull(CartPlanner.widen("lardons"))
+        val item = ShoppingItem(name = "Coulis de tomate jaune")
+        assertEquals("coulis de tomate", CartPlanner.queryFor(item, mapOf(ShoppingListMerger.key(item.name) to "coulis de tomate")))
+    }
+
+    @Test fun epices_au_placard() {
+        listOf("graines de cumin", "cumin en poudre", "gingembre en poudre", "piment de cayenne", "mélange 5 baies", "badiane", "curry")
+            .forEach { assertTrue(Pantry.isStaple(it), it) }
+        listOf("gingembre", "coriandre", "graines de courge").forEach { assertFalse(Pantry.isStaple(it), it) }
+    }
 }

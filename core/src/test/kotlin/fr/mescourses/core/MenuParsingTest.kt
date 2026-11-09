@@ -95,7 +95,8 @@ class MenuParsingTest {
 
     @Test fun panier_privilegie_le_bio() {
         val item = ShoppingItem(name = "Carottes")
-        assertEquals("Carottes bio", CartPlanner.searchQuery(item, preferOrganic = true))
+        // Recherche classique : le bio est choisi parmi les résultats.
+        assertEquals("Carottes", CartPlanner.searchQuery(item))
         val ranked = CartPlanner.rank(
             item,
             listOf(Product("1", "Carottes 1kg"), Product("2", "Carottes bio 1kg"), Product("3", "Chips")),
