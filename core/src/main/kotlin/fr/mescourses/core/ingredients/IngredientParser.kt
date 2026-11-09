@@ -21,10 +21,12 @@ object IngredientParser {
         "c. à soupe" to listOf(
             "c. a soupe", "c.a.s", "c.a.s.", "cas", "cs", "c. a s.", "cuillere a soupe", "cuilleres a soupe",
             "cuil. a soupe", "c a soupe", "cuillerees a soupe", "cuilleree a soupe", "tbsp",
+            "c a s", "c. a s", "c.a.s", "cuil. a s", "cuillere a s", "cuilleres a s",
         ),
         "c. à café" to listOf(
             "c. a cafe", "c.a.c", "c.a.c.", "cac", "cc", "c. a c.", "cuillere a cafe", "cuilleres a cafe",
             "cuil. a cafe", "c a cafe", "cuillerees a cafe", "cuilleree a cafe", "tsp",
+            "c a c", "c. a c", "c.a.c", "cuil. a c", "cuillere a c", "cuilleres a c",
         ),
         "pincée" to listOf("pincee", "pincees"),
         "gousse" to listOf("gousse", "gousses"),
@@ -45,7 +47,11 @@ object IngredientParser {
         "paquet" to listOf("paquet", "paquets"),
         "bouteille" to listOf("bouteille", "bouteilles"),
         "rouleau" to listOf("rouleau", "rouleaux"),
+        // Mots de comptage : « 1 unité courge butternut » = 1 courge, sans unité.
+        COUNT to listOf("unite", "unites", "piece", "pieces", "pc", "pcs"),
     )
+
+    private const val COUNT = ""
 
     // Variantes triées de la plus longue à la plus courte pour éviter que « c » capture « c. à soupe ».
     private val sortedAliases: List<Pair<String, String>> = unitAliases
@@ -108,7 +114,7 @@ object IngredientParser {
                 // l'unité doit être un mot entier
                 if (after == null || after == ' ' || after == '.' || after == '\'' || after == '’' || after == ')') {
                     if (quantity == null && alias.length <= 2) break // « l'huile », « g » isolé : ambigu
-                    unit = canonical
+                    unit = canonical.ifEmpty { null }
                     rest = rest.substring(alias.length).trimStart('.', ' ')
                     break
                 }
@@ -125,6 +131,17 @@ object IngredientParser {
             .trim().trim(',', '.', ';', ' ')
         if (name.isEmpty()) name = raw
         return Ingredient(name = name, quantity = quantity, unit = unit, raw = raw)
+    }
+
+    /**
+     * Recette déjà enregistrée dont l'unité est restée collée au nom (« C à c thym », « Unité oignon ») :
+     * on retrouve l'unité dans le nom et on garde la quantité.
+     */
+    fun repair(ing: Ingredient): Ingredient {
+        if (ing.unit != null || ing.name.isBlank()) return ing
+        val p = parse(ing.name)
+        if (p.quantity != null || p.name == ing.name || p.name.isBlank()) return ing
+        return ing.copy(name = p.name, unit = p.unit)
     }
 
     fun parseAll(lines: List<String>): List<Ingredient> =

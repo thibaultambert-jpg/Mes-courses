@@ -58,16 +58,26 @@ object ShoppingListMerger {
      * sans les produits de placard (sel, huile, beurre…).
      */
     fun fromRecipe(recipe: Recipe, portions: Double, pantry: List<String> = Pantry.DEFAULTS): List<ShoppingItem> = scale(recipe, portions)
+        .map(IngredientParser::repair)
         .filterNot { Pantry.isStaple(it.name, pantry) }
         .map {
+        val small = it.unit in smallMeasures
         ShoppingItem(
             name = FoodName.clean(it.name),
-            quantity = it.quantity,
-            unit = it.unit,
+            quantity = if (small) 1.0 else it.quantity,
+            unit = if (small) PIECE else it.unit,
             source = ItemSource.RECETTE,
             origin = recipe.title,
         )
     }
+
+    /** Une pièce à acheter : ne s'additionne pas (deux recettes avec de l'ail → une tête d'ail). */
+    const val PIECE = "pièce"
+
+    /** Mesures de cuisine qui ne s'achètent pas telles quelles : on en achète une pièce. */
+    private val smallMeasures = setOf(
+        "gousse", "pincée", "brin", "feuille", "c. à café", "c. à soupe", "noix", "poignée", "tranche", "verre", "bol", "tasse",
+    )
 
     /** Article saisi librement : « 2 kg de pommes », « lessive »… */
     fun fromText(text: String): ShoppingItem {
@@ -91,7 +101,11 @@ object ShoppingListMerger {
         return groups.values.map { group ->
             val first = group.first()
             val quantities = group.mapNotNull { it.quantity }
-            val total = if (quantities.isEmpty()) null else quantities.sum()
+            val total = when {
+                quantities.isEmpty() -> null
+                first.unit == PIECE -> 1.0
+                else -> quantities.sum()
+            }
             val (q, u) = if (isEgg(first.name)) eggBoxes(total) to null else humanize(total, first.unit)
             ShoppingItem(
                 id = first.id,

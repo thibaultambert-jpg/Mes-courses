@@ -7,6 +7,7 @@ import fr.mescourses.core.menu.MenuValidator
 import fr.mescourses.core.menu.RecipeResponseParser
 import fr.mescourses.core.menu.RecipeStepsWriter
 import fr.mescourses.core.menu.TextGenerator
+import fr.mescourses.core.model.Ingredient
 import fr.mescourses.core.model.Recipe
 import fr.mescourses.core.model.ShoppingItem
 import fr.mescourses.core.shopping.Pantry
@@ -122,5 +123,52 @@ class ShoppingCleanupTest {
         assertEquals(25, done.cookMinutes)
         assertFalse(writer.needsSteps(done))
         assertEquals("Servir chaud", done.notes)
+    }
+
+    @Test fun unites_sans_points_et_mots_de_comptage() {
+        IngredientParser.parse("1 c à c thym").let { assertEquals("c. à café", it.unit); assertEquals("thym", it.name) }
+        IngredientParser.parse("1 C à s huile d'olive").let { assertEquals("c. à soupe", it.unit); assertEquals("huile d'olive", it.name) }
+        IngredientParser.parse("1 unité courge butternut").let {
+            assertEquals(1.0, it.quantity); assertNull(it.unit); assertEquals("courge butternut", it.name)
+        }
+        assertEquals("oignon", FoodName.clean(IngredientParser.parse("1 unité oignon hâché").name))
+        // Articles déjà dans la liste : cherchés sous le bon nom.
+        assertEquals("oignon", FoodName.clean("Unité oignon hâché"))
+        assertEquals("thym", FoodName.clean("C à c thym"))
+        // Pas de régression.
+        IngredientParser.parse("2 gousses d'ail").let { assertEquals("gousse", it.unit); assertEquals("ail", it.name) }
+    }
+
+    @Test fun recette_enregistree_reparee() {
+        val r = Recipe(
+            title = "Butternut farcie", servings = 2,
+            ingredients = listOf(
+                Ingredient(name = "C à c thym", quantity = 1.0),
+                Ingredient(name = "C à s huile d'olive", quantity = 1.0),
+                Ingredient(name = "Unité courge butternut", quantity = 1.0),
+                Ingredient(name = "Unité oignon hâché", quantity = 1.0),
+                Ingredient(name = "ail", quantity = 2.0, unit = "gousse"),
+                Ingredient(name = "persil", quantity = 1.0, unit = "pincée"),
+                Ingredient(name = "fromage de chèvre émietté", quantity = 150.0, unit = "g"),
+            ),
+        )
+        val items = ShoppingListMerger.fromRecipe(r, 2.0)
+        assertEquals(listOf("courge butternut", "oignon", "ail", "persil", "fromage de chèvre"), items.map { it.name })
+        assertEquals(1.0, items[0].quantity); assertNull(items[0].unit)
+        assertEquals(ShoppingListMerger.PIECE, items[2].unit); assertEquals(1.0, items[2].quantity)
+        assertEquals(ShoppingListMerger.PIECE, items[3].unit)
+        assertEquals("g", items[4].unit)
+    }
+
+    @Test fun pieces_non_additionnees() {
+        val a = Recipe(title = "A", servings = 2, ingredients = listOf(
+            Ingredient(name = "ail", quantity = 2.0, unit = "gousse"), Ingredient(name = "oignon", quantity = 3.0, unit = "unités"),
+        ))
+        val b = Recipe(title = "B", servings = 2, ingredients = listOf(
+            Ingredient(name = "ail", quantity = 4.0, unit = "gousse"), Ingredient(name = "oignon", quantity = 1.0),
+        ))
+        val merged = ShoppingListMerger.merge(ShoppingListMerger.fromRecipe(a, 2.0) + ShoppingListMerger.fromRecipe(b, 2.0))
+        val ail = merged.first { it.name == "Ail" }
+        assertEquals(1.0, ail.quantity); assertEquals(ShoppingListMerger.PIECE, ail.unit)
     }
 }
