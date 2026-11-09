@@ -79,7 +79,7 @@ fun RetailerDebugScreen(onBack: () -> Unit, onOpenSite: (Retailer) -> Unit) {
             ),
         )
         Retailer.LECLERC -> settings.leclercStore()?.let { s ->
-            listOf("Panier (page)" to LeclercRoutes.cartPage(s), "Recherche lait" to LeclercRoutes.search(s, "lait"))
+            listOf("Panier (page)" to LeclercRoutes.cartPage(s), "Recherche lait" to LeclercRoutes.search(s, "lait"), "Recherche lardons" to LeclercRoutes.search(s, "lardons"))
         } ?: listOf("Magasins 37700" to LeclercRoutes.locatorAutocomplete("37700"))
         Retailer.AUCHAN -> listOfNotNull(
             "Recherche lait" to AuchanRoutes.search("lait"),
@@ -103,6 +103,14 @@ fun RetailerDebugScreen(onBack: () -> Unit, onOpenSite: (Retailer) -> Unit) {
             }
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 presets.forEach { (label, p) -> FilterChip(selected = path == p, onClick = { method = "GET"; path = p; body = "" }, label = { Text(label) }) }
+                // Leclerc : ajout au panier tel que l'app l'envoie (remplacer ID_PRODUIT par un iIdProduit lu dans une recherche).
+                if (retailer == Retailer.LECLERC) settings.leclercStore()?.let { st ->
+                    val op = LeclercRoutes.cartOp(st)
+                    FilterChip(selected = path == op, onClick = {
+                        method = "POST"; path = op
+                        body = "{\"eTypeAction\":${LeclercRoutes.ACTION_ADD},\"iIdProduit\":\"ID_PRODUIT\",\"iQuantite\":1,\"sNoPointLivraison\":\"${st.id}\"}"
+                    }, label = { Text("Ajout panier (POST)") })
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf("GET", "POST", "PATCH").forEach { m -> FilterChip(selected = method == m, onClick = { method = m }, label = { Text(m) }) }
@@ -120,9 +128,15 @@ fun RetailerDebugScreen(onBack: () -> Unit, onOpenSite: (Retailer) -> Unit) {
                             c.carrefour.call(method, path, body.ifBlank { null })
                         } else {
                             // Requête brute par la WebView de l'enseigne (en-têtes de l'API panier pour Auchan).
-                            val headers = if (path.startsWith(AuchanRoutes.API)) mapOf("accept" to "application/json") + (c.auchanTokens.current()?.headers ?: emptyMap())
-                                else mapOf("accept" to "application/json, text/html")
-                            c.bridge(retailer).request(method, path, headers, body.ifBlank { null })
+                            // Leclerc, écriture du panier : formulaire « d=<json> », comme l'app.
+                            val leclercForm = retailer == Retailer.LECLERC && "panier.aspx" in path && body.trimStart().startsWith("{")
+                            val headers = when {
+                                path.startsWith(AuchanRoutes.API) -> mapOf("accept" to "application/json") + (c.auchanTokens.current()?.headers ?: emptyMap())
+                                leclercForm -> LeclercRoutes.FORM_HEADERS
+                                else -> mapOf("accept" to "application/json, text/html")
+                            }
+                            val sent = if (leclercForm) "d=" + java.net.URLEncoder.encode(body.trim(), Charsets.UTF_8) else body.ifBlank { null }
+                            c.bridge(retailer).request(method, path, headers, sent)
                         }
                     } catch (e: Exception) {
                         error = "${e::class.simpleName} : ${e.message}"
