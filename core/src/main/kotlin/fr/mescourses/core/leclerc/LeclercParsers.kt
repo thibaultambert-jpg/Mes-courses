@@ -52,7 +52,10 @@ object LeclercParsers {
     }
 
     /** Produits d'une page de recherche (sans doublons, seulement les fiches de type « Produit »). */
-    fun parseSearch(html: String): List<Product> = productRecords(html)
+    fun parseSearch(html: String): List<Product> = productRecords(
+        // Le panier est intégré à chaque page : ses produits ne sont pas des résultats de recherche.
+        Scrape.arrayNamed(html, "lstProduits")?.let { html.replace(it, "[]") } ?: html,
+    )
         .filter { (it.str("sType") ?: "Produit") == "Produit" }
         .map(::product)
         .filter { it.id.isNotBlank() }
@@ -100,6 +103,8 @@ object LeclercParsers {
 
     /** Est-ce une vraie page de drive ? Sinon : page anti-robot (DataDome) ou « session expirée ». */
     fun isStorePage(html: String) = html.contains(LeclercRoutes.STORE_PAGE_MARKER)
+    /** Page d'erreur du site (« Désolé, ce service est momentanément indisponible »), renvoyée avec un statut 200. */
+    fun isErrorPage(html: String) = html.contains("pgeWCSD002_Erreur") || Regex("(?i)momentan(?:é|&#233;|e)ment indisponible").containsMatchIn(html)
     fun isExpiredPage(html: String) = Regex("(?i)session a expir|sessionexpiree").containsMatchIn(html)
     fun isNotFoundPage(html: String) = Regex("(?i)page demand(?:é|&#233;|&eacute;|e)e n.a pas pu|page introuvable").containsMatchIn(html)
 

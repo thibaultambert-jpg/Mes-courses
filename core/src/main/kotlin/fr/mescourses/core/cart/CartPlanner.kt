@@ -23,6 +23,10 @@ data class CartLine(
     val remembered: Boolean = false,
     /** Remarque affichée (ex. « Remplace X, indisponible au drive »). */
     val note: String? = null,
+    /** Recherche envoyée au drive pour cette ligne (modifiable dans la feuille de choix). */
+    val query: String? = null,
+    /** Les `relevantCount` premiers candidats contiennent un mot de la recherche ; les suivants sont « sans rapport ». */
+    val relevantCount: Int = candidates.size,
 ) {
     val product: Product? get() = candidates.getOrNull(selected)
 }
@@ -33,27 +37,77 @@ data class CartLine(
  */
 object CartPlanner {
 
-    /** Termes à chercher : on retire les précisions inutiles pour un moteur de recherche drive. */
-    fun searchQuery(item: ShoppingItem, preferOrganic: Boolean = false): String {
-        // Nom simplifié (« fromage de chèvre émietté » → fromage de chèvre), aussi pour les articles déjà dans la liste.
-        val base = fr.mescourses.core.ingredients.FoodName.clean(item.name)
+    /** Termes à chercher : le nom simplifié, sans « bio » (le bio est choisi parmi les résultats, voir [rank]). */
+    fun searchQuery(item: ShoppingItem): String =
+        fr.mescourses.core.ingredients.FoodName.clean(item.name)
             .replace(Regex("""(?i)\b(frais|fraîche|fraiches|fraîches|bio|émincé|émincée|haché|hachée|en dés|râpé|râpée)\b"""), " ")
             .replace(Regex("\\s+"), " ").trim().ifEmpty { item.name }
             .let { if (ShoppingListMerger.isEgg(it)) "oeufs x12" else it }
-        return if (preferOrganic) "$base bio" else base
+
+    /** Recherche à utiliser : celle corrigée par l'utilisateur pour cet ingrédient, sinon la recherche calculée. */
+    fun queryFor(item: ShoppingItem, custom: Map<String, String> = emptyMap()): String =
+        custom[ShoppingListMerger.key(item.name)]?.takeIf { it.isNotBlank() } ?: searchQuery(item)
+
+    private val stopWords = setOf("les", "des", "aux", "avec", "pour", "sans", "une", "the")
+
+    /** Mots qui comptent dans une recherche (au moins 3 lettres, sans accents, au singulier). */
+    fun words(query: String): List<String> =
+        ShoppingListMerger.key(query).split(' ').filter { it.length >= 3 && it !in stopWords && it != "bio" }
+
+    /** Le produit contient au moins un mot de la recherche (« lardon » ≠ « Lait corps Nivea »). */
+    fun isRelevant(query: String, p: Product): Boolean {
+        val w = words(query)
+        if (w.isEmpty()) return true
+        val k = " " + ShoppingListMerger.key(p.name + " " + (p.brand ?: "")) + " "
+        return w.any { k.contains(" $it") }
     }
 
-    /** Classe les produits : ceux dont le nom contient les mots de l'article d'abord, l'ordre de l'enseigne ensuite. */
-    fun rank(item: ShoppingItem, products: List<Product>, preferOrganic: Boolean = false): List<Product> {
-        val words = ShoppingListMerger.key(item.name).split(' ').filter { it.length > 2 && it != "bio" }
-        fun isOrganic(p: Product) = Regex("""\bbio\b""").containsMatchIn(ShoppingListMerger.key(p.name + " " + (p.brand ?: "")))
+    /** Recherche plus large : sans le dernier mot (« coulis de tomate jaune » → « coulis de tomate »). */
+    fun widen(query: String): String? {
+        val parts = query.trim().split(Regex("\\s+")).toMutableList()
+        if (parts.size < 2) return null
+        parts.removeAt(parts.lastIndex)
+        while (parts.size > 1 && parts.last().lowercase().let { it in setOf("de", "du", "des", "d'", "à", "a", "au", "aux", "en", "et") }) parts.removeAt(parts.lastIndex)
+        return parts.joinToString(" ")
+    }
+
+    private val freshWords = listOf("frais", "fraiche", "botte", "bouquet", "barquette", "filet", "vrac", "piece", "kg")
+    private val processedWords = listOf(
+        "surgele", "seche", "deshydrate", "lyophilise", "poudre", "moulu", "conserve", "bocal", "emince", "cuisine",
+        "poelee", "puree", "soupe", "grille", "marine", "appertise", "cube", "confit", "pickle", "frit", "chips", "tapenade",
+        "semoule", "persillade", "sauce", "aromate", "pate", "creme", "saveur", "aromatise", "huile", "pot", "flocon",
+        "condiment", "vinaigrette", "pesto", "puree", "chip",
+    ).map(ShoppingListMerger::key).distinct()
+
+    /** Fruits, légumes et herbes : le frais d'abord (1), le transformé (surgelé, séché, conserve…) en dernier (-1). */
+    fun freshness(item: ShoppingItem, p: Product): Int {
+        if (fr.mescourses.core.shopping.Aisle.of(item.name) != fr.mescourses.core.shopping.Aisle.FRUITS_LEGUMES) return 0
+        val k = " " + ShoppingListMerger.key(p.name) + " "
+        // Comparaison en début de mot (« chips » → « chip », « surgelés » → « surgele »).
+        return when {
+            processedWords.any { k.contains(" $it") } -> -1
+            freshWords.any { k.contains(" $it") } -> 1
+            else -> 0
+        }
+    }
+
+    /**
+     * Classe les produits : pertinents d'abord, puis frais (fruits, légumes, herbes), puis bio si demandé,
+     * puis le nombre de mots de l'article retrouvés, et enfin l'ordre de l'enseigne.
+     */
+    fun rank(item: ShoppingItem, products: List<Product>, preferOrganic: Boolean = false, query: String = searchQuery(item)): List<Product> {
+        val words = (words(item.name) + words(query)).distinct()
         return products.withIndex()
             .sortedWith(
-                compareByDescending<IndexedValue<Product>> { (_, p) ->
-                    val key = ShoppingListMerger.key(p.name)
-                    words.count { it in key }
-                }
-                    .thenByDescending { (_, p) -> preferOrganic && isOrganic(p) }
+                compareByDescending<IndexedValue<Product>> { (_, p) -> isRelevant(query, p) }
+                    // Transformé (surgelé, chips, semoule…) en dernier, puis le bio, puis le frais.
+                    .thenByDescending { (_, p) -> freshness(item, p) >= 0 }
+                    .thenByDescending { (_, p) -> preferOrganic && p.organic }
+                    .thenByDescending { (_, p) -> freshness(item, p) }
+                    .thenByDescending { (_, p) ->
+                        val key = " " + ShoppingListMerger.key(p.name) + " "
+                        words.count { key.contains(" $it") }
+                    }
                     .thenBy { it.index },
             )
             .map { it.value }
@@ -69,6 +123,8 @@ object CartPlanner {
         preferOrganic: Boolean = false,
         memory: ProductMemory? = null,
         pauseMs: Long = 600,
+        /** Recherches corrigées par l'utilisateur (clé de l'ingrédient → recherche). */
+        queries: Map<String, String> = emptyMap(),
     ): Flow<CartLine> = flow {
         val remembered = items.associateWith { memory?.get(ShoppingListMerger.key(it.name)) }
         // Les choix habituels peuvent être en rupture : vérification groupée avant de les proposer.
@@ -82,34 +138,45 @@ object CartPlanner {
             }
             if (known != null) {
                 // Choix habituel indisponible : on cherche un remplaçant disponible.
-                val line = searchLine(backend, item, preferOrganic)
+                val line = searchLine(backend, item, preferOrganic, queryFor(item, queries))
                 emit(line.copy(candidates = line.candidates.filter { it.ean != known.ean }, note = "Remplace « ${known.name} », indisponible au drive"))
                 delay(pauseMs)
                 continue
             }
-            emit(searchLine(backend, item, preferOrganic))
+            emit(searchLine(backend, item, preferOrganic, queryFor(item, queries)))
             delay(pauseMs) // rythme « humain » pour ne pas déclencher les protections anti-robots
         }
     }
 
-    /** Recherche des produits pour une ligne (aussi utilisée pour « autres choix » d'un produit mémorisé). */
-    suspend fun searchLine(backend: RetailerBackend, item: ShoppingItem, preferOrganic: Boolean): CartLine = try {
-        var found = backend.searchWithUnavailable(searchQuery(item, preferOrganic))
-        // Pas de version bio disponible au drive : on se rabat sur le produit classique.
-        if (found.none { it.available } && preferOrganic) found = backend.searchWithUnavailable(searchQuery(item))
-        val ranked = rank(item, found, preferOrganic)
-        val available = ranked.filter { it.available }
-        // Les produits en rupture restent visibles dans « autres choix » (marqués), jamais présélectionnés.
-        val products = available + ranked.filterNot { it.available }
-        val skipped = ranked.firstOrNull()?.takeIf { !it.available }
+    /**
+     * Recherche des produits pour une ligne. Toujours la recherche classique : le bio passe ensuite en tête parmi
+     * les produits pertinents, et à défaut on garde le meilleur produit classique. Tous les produits reçus sont
+     * gardés (aucune requête de plus) ; ceux sans rapport avec la recherche ne sont jamais présélectionnés.
+     */
+    suspend fun searchLine(backend: RetailerBackend, item: ShoppingItem, preferOrganic: Boolean, query: String = searchQuery(item)): CartLine = try {
+        val found = backend.searchWithUnavailable(query, Int.MAX_VALUE)
+        val ranked = rank(item, found, preferOrganic, query)
+        val relevant = ranked.filter { isRelevant(query, it) }
+        val others = ranked.filterNot { isRelevant(query, it) }
+        val available = relevant.filter { it.available }
+        // Les produits en rupture restent visibles (marqués), jamais présélectionnés.
+        val products = available + relevant.filterNot { it.available } + others
+        val skipped = relevant.firstOrNull()?.takeIf { !it.available }
+        val base = CartLine(item, products, query = query, relevantCount = relevant.size)
         when {
-            available.isEmpty() && ranked.isNotEmpty() ->
-                CartLine(item, products, status = LineStatus.INTROUVABLE, included = false, note = "Tous les produits trouvés sont indisponibles au drive")
-            available.isEmpty() -> CartLine(item, status = LineStatus.INTROUVABLE, included = false)
-            else -> CartLine(item, products, status = LineStatus.PROPOSE, note = skipped?.let { "« ${it.name} » indisponible : remplacé par le suivant" })
+            available.isEmpty() && relevant.isNotEmpty() ->
+                base.copy(status = LineStatus.INTROUVABLE, included = false, note = "Tous les produits trouvés sont indisponibles au drive")
+            available.isEmpty() && others.isNotEmpty() ->
+                base.copy(status = LineStatus.INTROUVABLE, included = false, note = "Aucun produit ne correspond à « $query » : modifie la recherche")
+            available.isEmpty() -> base.copy(status = LineStatus.INTROUVABLE, included = false)
+            else -> base.copy(
+                status = LineStatus.PROPOSE,
+                note = skipped?.let { "« ${it.name} » indisponible : remplacé par le suivant" }
+                    ?: if (preferOrganic && available.none { it.organic }) "Pas de version bio au drive" else null,
+            )
         }
     } catch (e: Exception) {
-        CartLine(item, status = LineStatus.ERREUR, included = false, message = e.message)
+        CartLine(item, status = LineStatus.ERREUR, included = false, message = e.message, query = query)
     }
 
     /** Envoie les lignes validées et mémorise les choix confirmés. */

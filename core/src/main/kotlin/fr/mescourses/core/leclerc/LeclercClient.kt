@@ -14,7 +14,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import java.net.URLEncoder
 
 /**
  * Client E.Leclerc Drive. Comme pour Carrefour, aucune requête directe : tout passe par le [HttpTransport]
@@ -41,6 +40,8 @@ class LeclercClient(
     private val cacheTtlMs = 5 * 60 * 1000L
     private val searchCache = HashMap<String, Cached<List<Product>>>()
     private val cacheLock = Mutex()
+    /** Format d'écriture du panier accepté la dernière fois (voir [LeclercRoutes.cartVariants]). */
+    @Volatile private var workingVariant = 0
 
     /** DataDome répond 403 (ou une page sans contenu de drive) : c'est une vérification anti-robot, pas une déconnexion. */
     private fun classify(r: HttpResponse): CarrefourException? = when {
@@ -126,16 +127,38 @@ class LeclercClient(
     private suspend fun mutate(id: String, quantity: Int, current: Int): Cart {
         val s = currentStore()
         val action = if (quantity >= current) LeclercRoutes.ACTION_ADD else LeclercRoutes.ACTION_SUB
+        // Corps JSON tel que l'envoie le site (provenance : ajout depuis une recherche).
         val payload = buildJsonObject {
             put("eTypeAction", action)
             put("iIdProduit", id)
             put("iQuantite", quantity)
             put("sNoPointLivraison", s.id)
+            put("objContexteProvenanceArticle", buildJsonObject {
+                put("eOrigine", 4)
+                put("eTypePage", 3)
+                put("sTexteRecherche", "")
+                put("eVue", 0)
+                put("sInformationsComplementaires", "uni-2")
+            })
         }.toString()
-        val body = "d=" + URLEncoder.encode(payload, Charsets.UTF_8)
-        val response = http.call("POST", LeclercRoutes.cartOp(s), LeclercRoutes.FORM_HEADERS, body)
-        return LeclercParsers.parseCartEvents(response.body)
-            ?: throw if (LeclercParsers.isExpiredPage(response.body)) CarrefourException.SessionExpired(who) else CarrefourException.ChallengeRequired(who)
+        // Le format exact attendu n'est pas documenté : on essaie les formats connus, en commençant par celui qui a
+        // marché la dernière fois. Sans risque : la quantité envoyée est la cible, pas un ajout.
+        val variants = LeclercRoutes.cartVariants(payload)
+        val order = variants.indices.sortedBy { if (it == workingVariant) -1 else it }
+        var last: HttpResponse? = null
+        for (i in order) {
+            val (headers, body) = variants[i]
+            val response = http.call("POST", LeclercRoutes.cartOp(s), headers, body)
+            last = response
+            LeclercParsers.parseCartEvents(response.body)?.let { workingVariant = i; return it }
+            if (LeclercParsers.isExpiredPage(response.body)) throw CarrefourException.SessionExpired(who)
+            if (!LeclercParsers.isErrorPage(response.body)) break
+        }
+        val body = last?.body.orEmpty()
+        throw when {
+            LeclercParsers.isErrorPage(body) -> CarrefourException.Rejected(who, "le drive a refusé l'ajout au panier (« service momentanément indisponible »)")
+            else -> CarrefourException.ChallengeRequired(who)
+        }
     }
 
     /** Les créneaux Leclerc ne sont pas encore relevés : ils se choisissent sur le site. */

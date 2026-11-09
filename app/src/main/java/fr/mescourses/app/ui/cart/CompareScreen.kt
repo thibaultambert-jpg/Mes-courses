@@ -90,6 +90,7 @@ class CompareViewModel(private val c: AppContainer) : ViewModel() {
                     preferOrganic = c.settings.current.preferOrganic,
                     memory = { c.productMemory(it) },
                     ready = { b -> c.session(b.retailer).let { s -> if (s.ensureSession()) null else s.problem() } },
+                    queries = c.settings.current.queryMap(),
                 ).collect { q -> _state.update { it.copy(quotes = it.quotes + (q.retailer to q)) } }
             } catch (e: Exception) {
                 _state.update { it.copy(error = e.message) }

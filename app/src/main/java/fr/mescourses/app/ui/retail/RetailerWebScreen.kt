@@ -86,7 +86,7 @@ fun loadWhenSized(wv: WebView, url: String) {
 private val prettyJson = Json { prettyPrint = true }
 
 /** Diagnostic d'une page blanche : élément au centre, iframes, styles, champs (jamais leurs valeurs). */
-private const val DIAG_JS = """(function(){function d(e){if(!e)return null;var s=getComputedStyle(e),r=e.getBoundingClientRect(),o={tag:e.tagName.toLowerCase(),taille:Math.round(r.width)+'x'+Math.round(r.height),haut:Math.round(r.top),hauteurEnLigne:e.style.height||undefined,overflow:s.overflow,transform:s.transform==='none'?undefined:s.transform,position:s.position,display:s.display,visibility:s.visibility,opacity:s.opacity,z:s.zIndex,fond:s.backgroundColor};if(e.id)o.id=e.id;var c=typeof e.className==='string'?e.className:'';if(c)o.classes=c.slice(0,80);if(e.tagName==='IFRAME'){try{var u=new URL(e.src,location.href);o.src=u.host+u.pathname}catch(x){o.src='?'}}return o;}var w=innerWidth,h=innerHeight,centre=[],e=document.elementFromPoint(w/2,h/2);for(var i=0;e&&i<6;i++){centre.push(d(e));e=e.parentElement;}var ifr=[];document.querySelectorAll('iframe').forEach(function(f){var x=d(f),r=f.getBoundingClientRect();x.couvre=r.width>=w*0.8&&r.height>=h*0.8;ifr.push(x);});var f=document.forms[0],vis=0,cach=0,act=null;if(f){Array.prototype.forEach.call(f.elements,function(el){var r=el.getBoundingClientRect();if(r.width>0&&r.height>0&&getComputedStyle(el).visibility!=='hidden')vis++;else cach++;});try{act=new URL(f.action,location.href).host}catch(x){}}var modales=[];document.querySelectorAll('.modal').forEach(function(m){var r=m.getBoundingClientRect();modales.push((m.className||'').toString().slice(0,60)+' '+Math.round(r.width)+'x'+Math.round(r.height)+(m.getAttribute('data-mc-fix')?' corrigée':''));});var champ=null,pc=[];document.querySelectorAll('input').forEach(function(el){var r=el.getBoundingClientRect();if(!champ&&el.type!=='hidden'&&r.width>0)champ=el;});for(var p=champ,k=0;p&&k<9;k++){pc.push(d(p));p=p.parentElement;}return JSON.stringify({etat:document.readyState,correctifInstalle:!!window.__mcModalFix,modales:modales,fenetre:innerWidth+'x'+innerHeight+' (outer '+outerWidth+'x'+outerHeight+')',parentsDuChamp:pc,ecran:w+'x'+h,page:document.documentElement.scrollWidth+'x'+document.documentElement.scrollHeight,defilement:scrollX+','+scrollY,centre:centre,iframes:ifr,html:d(document.documentElement),body:d(document.body),champsVisibles:vis,champsCaches:cach,action:act,texte:(document.body?document.body.innerText:'').replace(/\s+/g,' ').slice(0,150)});})()"""
+private const val DIAG_JS = """(function(){function d(e){if(!e)return null;var s=getComputedStyle(e),r=e.getBoundingClientRect(),o={tag:e.tagName.toLowerCase(),taille:Math.round(r.width)+'x'+Math.round(r.height),haut:Math.round(r.top),hauteurEnLigne:e.style.height||undefined,overflow:s.overflow,transform:s.transform==='none'?undefined:s.transform,position:s.position,display:s.display,visibility:s.visibility,opacity:s.opacity,z:s.zIndex,fond:s.backgroundColor};if(e.id)o.id=e.id;var c=typeof e.className==='string'?e.className:'';if(c)o.classes=c.slice(0,80);if(e.tagName==='IFRAME'){try{var u=new URL(e.src,location.href);o.src=u.host+u.pathname}catch(x){o.src='?'}}return o;}var w=innerWidth,h=innerHeight,centre=[],e=document.elementFromPoint(w/2,h/2);for(var i=0;e&&i<6;i++){centre.push(d(e));e=e.parentElement;}var ifr=[];document.querySelectorAll('iframe').forEach(function(f){var x=d(f),r=f.getBoundingClientRect();x.couvre=r.width>=w*0.8&&r.height>=h*0.8;ifr.push(x);});var f=document.forms[0],vis=0,cach=0,act=null;if(f){Array.prototype.forEach.call(f.elements,function(el){var r=el.getBoundingClientRect();if(r.width>0&&r.height>0&&getComputedStyle(el).visibility!=='hidden')vis++;else cach++;});try{act=new URL(f.action,location.href).host}catch(x){}}var modales=[];document.querySelectorAll('.modal').forEach(function(m){var r=m.getBoundingClientRect();modales.push((m.className||'').toString().slice(0,60)+' '+Math.round(r.width)+'x'+Math.round(r.height)+(m.getAttribute('data-mc-fix')?' corrigée':''));});var champ=null,pc=[];document.querySelectorAll('input').forEach(function(el){var r=el.getBoundingClientRect();if(!champ&&el.type!=='hidden'&&r.width>0)champ=el;});for(var p=champ,k=0;p&&k<9;k++){pc.push(d(p));p=p.parentElement;}return JSON.stringify({etat:document.readyState,correctifInstalle:!!window.__mcModalFix,correctifCaptcha:!!window.__mcCaptchaFix,modales:modales,fenetre:innerWidth+'x'+innerHeight+' (outer '+outerWidth+'x'+outerHeight+')',parentsDuChamp:pc,ecran:w+'x'+h,page:document.documentElement.scrollWidth+'x'+document.documentElement.scrollHeight,defilement:scrollX+','+scrollY,centre:centre,iframes:ifr,html:d(document.documentElement),body:d(document.body),champsVisibles:vis,champsCaches:cach,action:act,texte:(document.body?document.body.innerText:'').replace(/\s+/g,' ').slice(0,150)});})()"""
 
 
 
@@ -119,6 +119,10 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
     var diagnostic by remember { mutableStateOf<String?>(null) }
     /** Drive Leclerc affiché par le site, différent de celui de l'app (proposé dans un bandeau). */
     var siteStore by remember { mutableStateOf<fr.mescourses.core.leclerc.LeclercStore?>(null) }
+    /** Leclerc : la page affichée est la vérification anti-robot (DataDome). */
+    var captcha by remember { mutableStateOf(false) }
+    /** Un seul rechargement automatique si le cadre anti-robot reste invisible. */
+    var captchaReloaded by remember { mutableStateOf(false) }
 
     suspend fun useLeclercStore(found: fr.mescourses.core.leclerc.LeclercStore) {
         c.leclerc.forgetContext()
@@ -285,6 +289,14 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
             )
 
+            if (captcha) {
+                InfoBanner(
+                    "🤖",
+                    "Leclerc demande une vérification anti-robot : résous-la ci-dessous (puzzle à glisser), puis continue sur le site.",
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                )
+            }
+
             siteStore?.let { found ->
                 InfoBanner(
                     "🏪",
@@ -301,7 +313,35 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
             fun fixLayout(v: WebView?) {
                 if (retailer == Retailer.LECLERC && v?.url?.contains("leclercdrive.fr") == true) {
                     v.evaluateJavascript(fr.mescourses.core.leclerc.LeclercRoutes.LAYOUT_FIX_JS, null)
+                    v.evaluateJavascript(fr.mescourses.core.leclerc.LeclercRoutes.CAPTCHA_FIX_JS, null)
                     if (settingsState.leclercUaMode == "ordinateur") v.evaluateJavascript(fr.mescourses.core.leclerc.LeclercRoutes.DESKTOP_VIEWPORT_JS, null)
+                }
+            }
+
+            /**
+             * Anti-robot DataDome : bandeau d'aide, et si le cadre reste à 0 de haut malgré le correctif,
+             * nouvelle mise en page puis un seul rechargement.
+             */
+            fun checkCaptcha(v: WebView) {
+                scope.launch {
+                    kotlinx.coroutines.delay(1_500)
+                    v.evaluateJavascript(fr.mescourses.core.leclerc.LeclercRoutes.CAPTCHA_PROBE_JS) { r ->
+                        val h = r?.trim('"')?.toIntOrNull() ?: -1
+                        captcha = h >= 0
+                        if (h == 0) {
+                            v.requestLayout()
+                            v.evaluateJavascript(fr.mescourses.core.leclerc.LeclercRoutes.CAPTCHA_FIX_JS, null)
+                            scope.launch {
+                                kotlinx.coroutines.delay(1_500)
+                                v.evaluateJavascript(fr.mescourses.core.leclerc.LeclercRoutes.CAPTCHA_PROBE_JS) { r2 ->
+                                    if (r2?.trim('"')?.toIntOrNull() == 0 && !captchaReloaded) {
+                                        captchaReloaded = true
+                                        v.reload()
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -382,9 +422,11 @@ fun RetailerWebScreen(retailer: Retailer, startUrl: String, mode: WebMode, onClo
 
                     override fun onPageFinished(v: WebView?, url: String?) {
                         // Leclerc : la fenêtre de connexion aurait une hauteur nulle dans la WebView (page blanche).
-                        if (retailer == Retailer.LECLERC && url?.contains("leclercdrive.fr") == true) {
-                            v?.evaluateJavascript(fr.mescourses.core.leclerc.LeclercRoutes.LAYOUT_FIX_JS, null)
-                        }
+                        if (retailer == Retailer.LECLERC && url?.contains("leclercdrive.fr") == true && v != null) {
+                            v.evaluateJavascript(fr.mescourses.core.leclerc.LeclercRoutes.LAYOUT_FIX_JS, null)
+                            v.evaluateJavascript(fr.mescourses.core.leclerc.LeclercRoutes.CAPTCHA_FIX_JS, null)
+                            checkCaptcha(v)
+                        } else if (!isPopup) captcha = false
                         // Carrefour : retour sur la boutique après la page de connexion, on teste la session dans cette page.
                         if (!isPopup && isCarrefour && mode == WebMode.LOGIN && visitedLogin && url?.startsWith(CarrefourRoutes.ORIGIN) == true) {
                             scope.launch {

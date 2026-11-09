@@ -8,6 +8,13 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- Applications des enseignes : ouvertes depuis le panier quand elles sont installées (Android 11+). -->
+    <queries>
+        <package android:name="com.carrefour.fid.android" />
+        <package android:name="com.infomil.leclercdrive" />
+        <package android:name="com.auchan.android" />
+    </queries>
+
     <application
         android:name=".MesCoursesApp"
         android:allowBackup="true"

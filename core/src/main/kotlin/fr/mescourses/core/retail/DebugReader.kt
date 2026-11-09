@@ -23,6 +23,7 @@ object DebugReader {
                         when {
                             LeclercParsers.isStorePage(body) -> "✅ Page de drive reconnue (marqueur lstProduitsLight)"
                             LeclercParsers.isExpiredPage(body) -> "⛔ Page « session expirée »"
+                            LeclercParsers.isErrorPage(body) -> "⛔ Page d'erreur Leclerc (« service momentanément indisponible ») : requête refusée (format ou adresse), pas l'anti-robot"
                             else -> "⛔ Pas une page de drive : anti-robot (DataDome) ou autre page"
                         },
                     )

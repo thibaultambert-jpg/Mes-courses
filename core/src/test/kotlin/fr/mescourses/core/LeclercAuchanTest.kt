@@ -80,12 +80,43 @@ class LeclercAuchanTest {
         val client = LeclercClient(transport, { store }, rateLimitWaitMs = 0)
         val cart = client.addToCart(Product(id = "2612", name = "Lait"), 1)
         val post = transport.calls.single { it.first == "POST" }
+        assertTrue(post.third!!.startsWith("d="), post.third)
         val payload = Json.parseToJsonElement(URLDecoder.decode(post.third!!.removePrefix("d="), Charsets.UTF_8)).jsonObject
+        // Chemin court (sans la ville) : le chemin long renvoie 404.
+        assertTrue(post.second.endsWith("/magasin-053701-053701/panier.aspx?op=1"), post.second)
         assertEquals(3, payload["iQuantite"]!!.jsonPrimitive.content.toInt()) // 2 déjà au panier + 1
         assertEquals("1", payload["eTypeAction"]!!.jsonPrimitive.content)
         assertEquals("053701", payload["sNoPointLivraison"]!!.jsonPrimitive.content)
         assertEquals(19.33, cart.total)
         assertEquals(3, cart.quantityOf("2612"))
+    }
+
+    @Test fun leclerc_reponse_reelle_du_panier() {
+        val cart = assertNotNull(LeclercParsers.parseCartEvents(res("/leclerc/cart_events_real.json")))
+        assertEquals(1, cart.quantityOf("135279"))
+        assertEquals(6.98, cart.total)
+        val withCity = LeclercStore("159201", "159201", "fd14-courses.leclercdrive.fr", "Colombes", "magasin-159201-159201-Colombes-Michelet")
+        assertEquals("https://fd14-courses.leclercdrive.fr/magasin-159201-159201/panier.aspx?op=1", LeclercRoutes.cartOp(withCity))
+    }
+
+    @Test fun leclerc_essaie_les_formats_du_panier() = runTest {
+        val errorPage = "<form action=\"./pgeWCSD002_Erreur.aspx\">Désolé, ce service est momentanément indisponible.</form>"
+        var posts = 0
+        val transport = FakeTransport { method, path, _ ->
+            when {
+                method == "GET" -> ok(res("/leclerc/cart.html"))
+                else -> { posts++; if (posts < 2) ok(errorPage) else ok(res("/leclerc/cart_events.json")) }
+            }
+        }
+        val client = LeclercClient(transport, { store }, rateLimitWaitMs = 0)
+        assertEquals(3, client.addToCart(Product(id = "2612", name = "Lait"), 1).quantityOf("2612"))
+        assertEquals(2, posts)
+        // Le format accepté est retenu : un seul essai la fois suivante.
+        client.setQuantity("2612", 3)
+        assertEquals(3, posts)
+        // Tous refusés : message clair, pas « anti-robot ».
+        val refusing = LeclercClient(FakeTransport { m, _, _ -> if (m == "GET") ok(res("/leclerc/cart.html")) else ok(errorPage) }, { store }, rateLimitWaitMs = 0)
+        assertFailsWith<CarrefourException.Rejected> { refusing.addToCart(Product(id = "2612", name = "Lait"), 1) }
     }
 
     @Test fun leclerc_retrait_diminue() = runTest {
@@ -125,7 +156,7 @@ class LeclercAuchanTest {
         val first = LeclercClient.storeOf(stores[0])
         assertEquals(LeclercStore("053701", "053701", "fd9-courses.leclercdrive.fr", "La Ville-aux-Dames", "magasin-053701-053701-La-Ville-aux-Dames"), first)
         // Les routes gardent le nom de la ville : sans lui, certains drives répondent « page introuvable ».
-        assertEquals("https://fd9-courses.leclercdrive.fr/magasin-053701-053701-La-Ville-aux-Dames/panier.aspx?op=1", LeclercRoutes.cartOp(first!!))
+        assertEquals("https://fd9-courses.leclercdrive.fr/magasin-053701-053701/panier.aspx?op=1", LeclercRoutes.cartOp(first!!))
         assertTrue(stores[1].name.contains("relais"))
         assertTrue(transport.calls.last().second.contains("latitude=47.36"))
     }
@@ -150,7 +181,7 @@ class LeclercAuchanTest {
         // urlSiteCourse donne la page d'accueil en .aspx : les autres pages partent du chemin sans .aspx.
         val st = LeclercStore("159201", host = "fd14-courses.leclercdrive.fr", path = "magasin-159201-159201-colombes-michelet.aspx")
         assertEquals("https://fd14-courses.leclercdrive.fr/magasin-159201-159201-colombes-michelet/recherche.aspx?TexteRecherche=lait", LeclercRoutes.search(st, "lait"))
-        assertEquals("https://fd14-courses.leclercdrive.fr/magasin-159201-159201-colombes-michelet/panier.aspx?op=1", LeclercRoutes.cartOp(st))
+        assertEquals("https://fd14-courses.leclercdrive.fr/magasin-159201-159201/panier.aspx?op=1", LeclercRoutes.cartOp(st))
         assertEquals("https://fd14-courses.leclercdrive.fr/magasin-159201-159201-colombes-michelet.aspx", LeclercRoutes.storePage(st))
         assertEquals("magasin-159201-159201-colombes-michelet.aspx", LeclercParsers.pathOf("https://fd14-courses.leclercdrive.fr/magasin-159201-159201-colombes-michelet.aspx"))
         val noAspx = LeclercStore("053701", host = "fd9-courses.leclercdrive.fr")

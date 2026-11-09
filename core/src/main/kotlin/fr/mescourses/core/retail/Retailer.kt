@@ -4,10 +4,15 @@ import fr.mescourses.core.cart.ProductMemory
 import fr.mescourses.core.carrefour.Product
 
 /** Enseignes de drive gérées par l'application. */
-enum class Retailer(val label: String, val site: String) {
-    CARREFOUR("Carrefour", "carrefour.fr"),
-    LECLERC("E.Leclerc", "leclercdrive.fr"),
-    AUCHAN("Auchan", "auchan.fr");
+enum class Retailer(
+    val label: String,
+    val site: String,
+    /** Application Android officielle de l'enseigne (ouverte depuis le panier si elle est installée). */
+    val appPackage: String,
+) {
+    CARREFOUR("Carrefour", "carrefour.fr", "com.carrefour.fid.android"),
+    LECLERC("E.Leclerc", "leclercdrive.fr", "com.infomil.leclercdrive"),
+    AUCHAN("Auchan", "auchan.fr", "com.auchan.android");
 
     companion object {
         fun parse(name: String?): Retailer = entries.firstOrNull { it.name.equals(name, ignoreCase = true) } ?: CARREFOUR

@@ -25,6 +25,8 @@ sealed class CarrefourException(val code: String, message: String) : Exception(m
     class RateLimited(who: String = "Carrefour") : CarrefourException("trop_de_requetes", "$who limite les requêtes, réessaie dans un instant.")
     class NoDrive(who: String = "Carrefour", detail: String? = null) :
         CarrefourException("drive_non_choisi", detail?.let { "Drive $who : $it" } ?: "Aucun drive $who choisi : choisis ton magasin.")
+    /** L'enseigne a refusé l'opération (page d'erreur), sans que ce soit une vérification anti-robot. */
+    class Rejected(who: String, detail: String) : CarrefourException("refuse", "$who : $detail.")
     class Forbidden(path: String) : CarrefourException("interdit", "Route interdite par l'application : $path")
     class Http(val status: Int, who: String = "Carrefour") : CarrefourException("erreur_http", "$who a répondu $status.")
     class Network(cause: String, who: String = "Carrefour") : CarrefourException("reseau", "Connexion à $who impossible : $cause")
