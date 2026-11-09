@@ -50,11 +50,20 @@ object LeclercRoutes {
     const val LAYOUT_FIX_JS = """(function(){if(window.__mcLayoutFix)return;window.__mcLayoutFix=1;var st=document.createElement('style');st.id='mc-layout-fix';st.textContent='html,body{height:100%!important;min-height:100%!important}';(document.head||document.documentElement).appendChild(st);function fix(){document.querySelectorAll('.modal.modal-active').forEach(function(m){if(m.getBoundingClientRect().height>=50)return;var s=m.style;[['position','fixed'],['top','0'],['bottom','0'],['left','0'],['right','0'],['height','auto'],['max-height','none'],['overflow-y','auto']].forEach(function(p){s.setProperty(p[0],p[1],'important');});m.setAttribute('data-mc-fix','1');m.scrollTop=0;});}fix();new MutationObserver(fix).observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['class','style']});})()"""
 
     /**
+     * Vérification anti-robot (DataDome) : la page ne contient qu'un cadre `geo.captcha-delivery.com` en `100vh`, qui
+     * peut s'afficher avec une hauteur nulle dans la WebView (page blanche). On lui impose la taille de l'écran en pixels.
+     */
+    const val CAPTCHA_FIX_JS = """(function(){if(window.__mcCaptchaFix)return;window.__mcCaptchaFix=1;function fix(){var f=document.querySelectorAll('iframe[src*="captcha-delivery"]');if(!f.length)return;var w=Math.max(innerWidth,document.documentElement.clientWidth||0,320),h=Math.max(innerHeight,document.documentElement.clientHeight||0,480);var m=document.querySelector('meta[name=viewport]');if(m&&m.getAttribute('content')==='width=1280')m.setAttribute('content','width=device-width, initial-scale=1');[document.documentElement,document.body].forEach(function(e){if(!e)return;e.style.setProperty('height',h+'px','important');e.style.setProperty('min-height',h+'px','important');e.style.setProperty('margin','0','important');e.style.setProperty('background','#fff','important');});f.forEach(function(i){var s=i.style;[['position','fixed'],['top','0'],['left','0'],['display','block'],['visibility','visible'],['opacity','1'],['border','0'],['width',w+'px'],['height',h+'px'],['min-height',h+'px'],['max-height','none'],['z-index','2147483647']].forEach(function(p){if(s.getPropertyValue(p[0])!==p[1]||s.getPropertyPriority(p[0])!=='important')s.setProperty(p[0],p[1],'important');});i.setAttribute('data-mc-fix','1');});}fix();addEventListener('resize',fix);new MutationObserver(fix).observe(document.documentElement,{subtree:true,childList:true});})()"""
+
+    /** Hauteur du cadre anti-robot DataDome, -1 s'il n'y en a pas. */
+    const val CAPTCHA_PROBE_JS = """(function(){var f=document.querySelector('iframe[src*="captcha-delivery"]');return f?Math.round(f.getBoundingClientRect().height):-1;})()"""
+
+    /**
      * Mode « ordinateur » : `www.leclercdrive.fr` est adaptative et choisit sa version mobile d'après la largeur de
      * l'écran (`meta viewport` = largeur de l'appareil), quel que soit le navigateur annoncé. On impose une largeur de
      * bureau pour obtenir la version ordinateur (vue d'ensemble et zoom au doigt dans la WebView).
      */
-    const val DESKTOP_VIEWPORT_JS = """(function(){var m=document.querySelector('meta[name=viewport]');if(!m){m=document.createElement('meta');m.name='viewport';(document.head||document.documentElement).appendChild(m);}if(m.getAttribute('content')!=='width=1280')m.setAttribute('content','width=1280');})()"""
+    const val DESKTOP_VIEWPORT_JS = """(function(){if(document.querySelector('iframe[src*="captcha-delivery"]'))return;var m=document.querySelector('meta[name=viewport]');if(!m){m=document.createElement('meta');m.name='viewport';(document.head||document.documentElement).appendChild(m);}if(m.getAttribute('content')!=='width=1280')m.setAttribute('content','width=1280');})()"""
 
     /** Jamais appelées : commande, paiement, réservation de créneau. */
     val FORBIDDEN = listOf("/commande", "/paiement", "/validation", "/creneau")
