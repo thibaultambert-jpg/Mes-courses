@@ -53,6 +53,37 @@ class ShoppingCleanupTest {
         assertEquals(listOf("poulet", "persil", "œufs"), items.map { it.name })
     }
 
+    @Test fun placard_elargi_et_personnalise() {
+        listOf("farine de blé", "sucre en poudre", "cassonade", "cumin moulu", "paprika fumé", "herbes de Provence",
+            "feuilles de laurier", "levure chimique", "maïzena", "bouillon de volaille", "concentré de tomate", "miel", "noix de muscade")
+            .forEach { assertTrue(Pantry.isStaple(it), it) }
+        listOf("sucrine", "lait de soja", "piment frais", "poivron vert")
+            .forEach { assertFalse(Pantry.isStaple(it), it) }
+        // Liste personnalisée : le miel s'achète, le riz est toujours au placard.
+        val perso = Pantry.DEFAULTS - "Miel" + "Riz"
+        assertFalse(Pantry.isStaple("miel", perso))
+        assertTrue(Pantry.isStaple("riz basmati", perso))
+        assertFalse(Pantry.isStaple("riz basmati"))
+    }
+
+    @Test fun ingredient_de_base() {
+        assertEquals("fromage de chèvre", FoodName.clean("fromage de chèvre émietté"))
+        assertEquals("framboises", FoodName.clean("framboises pour la décoration"))
+        assertEquals("beurre", FoodName.clean("beurre ou margarine"))
+        assertEquals("avocats", FoodName.clean("avocats bien mûrs"))
+        assertEquals("oignon", FoodName.clean("oignon moyen"))
+        assertEquals("carottes", FoodName.clean("carottes râpées"))
+        assertEquals("cerises", FoodName.clean("cerises dénoyautées"))
+        // Produits vendus tels quels : on garde le nom.
+        assertEquals("fromage râpé", FoodName.clean("fromage râpé"))
+        assertEquals("amandes effilées", FoodName.clean("amandes effilées"))
+        assertEquals("jambon cuit", FoodName.clean("tranches de jambon cuit"))
+    }
+
+    @Test fun recherche_au_drive_simplifiee() {
+        assertEquals("fromage de chèvre", fr.mescourses.core.cart.CartPlanner.searchQuery(ShoppingItem(name = "fromage de chèvre émietté")))
+    }
+
     @Test fun oeufs_par_douze() {
         fun eggs(vararg q: Double) = ShoppingListMerger.merge(q.map { ShoppingItem(name = "œufs", quantity = it) } + ShoppingItem(name = "jaune d'oeuf", quantity = 1.0))
             .single()

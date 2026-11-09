@@ -35,7 +35,8 @@ object CartPlanner {
 
     /** Termes à chercher : on retire les précisions inutiles pour un moteur de recherche drive. */
     fun searchQuery(item: ShoppingItem, preferOrganic: Boolean = false): String {
-        val base = item.name
+        // Nom simplifié (« fromage de chèvre émietté » → fromage de chèvre), aussi pour les articles déjà dans la liste.
+        val base = fr.mescourses.core.ingredients.FoodName.clean(item.name)
             .replace(Regex("""(?i)\b(frais|fraîche|fraiches|fraîches|bio|émincé|émincée|haché|hachée|en dés|râpé|râpée)\b"""), " ")
             .replace(Regex("\\s+"), " ").trim().ifEmpty { item.name }
             .let { if (ShoppingListMerger.isEgg(it)) "oeufs x12" else it }
