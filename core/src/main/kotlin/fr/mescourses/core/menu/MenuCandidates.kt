@@ -68,7 +68,7 @@ data class Candidate(
             outOfSeason.takeIf { it.isNotEmpty() }?.let { "hors saison : ${it.joinToString(", ")}" },
             if (fromCookbook) (if (recipe.favorite) "favori" else "déjà cuisiné") else null,
         )
-        return "$number. ${recipe.title} [${facts.joinToString(" · ")}] — ${mainIngredients.take(6).joinToString(", ")}"
+        return "$number. ${recipe.title} [${facts.joinToString(" · ")}] — ${mainIngredients.take(4).joinToString(", ")}"
     }
 
     companion object {

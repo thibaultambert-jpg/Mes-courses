@@ -265,7 +265,7 @@ class AppContainer(context: Context) {
     fun menuTools(): List<AgentTool> = MenuTools(
         draft, recipes, ::defaultPortions, candidates,
         wishes = { currentWishes },
-        search = { words -> candidateFinder.search(words, currentWishes ?: MenuWishes(settings.current.meals, defaultPortions())) },
+        search = { words -> candidateFinder.search(words, currentWishes ?: MenuWishes(settings.current.meals, defaultPortions()), limit = 4) },
     ).all()
 
     fun shoppingSystemPrompt(): String = ShoppingPrompt.system(settings.current.preferOrganic, settings.current.preferences, activeRetailer.value)

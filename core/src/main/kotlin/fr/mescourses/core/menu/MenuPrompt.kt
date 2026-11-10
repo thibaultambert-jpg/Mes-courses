@@ -97,7 +97,7 @@ object MenuPrompt {
         appendLine("- add_guests : quand l'utilisateur AJOUTE des convives à un plat ; set_dish_people : quand il donne le nombre TOTAL de personnes.")
         appendLine("Les outils renvoient le bilan du menu (saison, ingrédients partagés, composition) : corrige ce qu'il signale.")
         appendLine("Chaque message de l'utilisateur commence par l'état actuel du menu entre crochets : appuie-toi dessus.")
-        appendLine("Après un outil, réponds en une ou deux phrases, sans recopier les recettes.")
+        appendLine("IMPORTANT : n'écris pas ta réflexion et ne recopie ni les recettes ni leurs ingrédients. Appelle directement l'outil, puis réponds en UNE phrase.")
     }
 
     fun firstRequestWeb(wishes: MenuWishes): String =
@@ -121,7 +121,8 @@ object MenuPrompt {
         if (dishes.isEmpty()) "[Menu actuel : vide]"
         else "[Menu actuel :\n" + dishes.mapIndexed { i, d ->
             "${i + 1}. ${d.title} (${d.portions.label()})" +
-                if (d.mainIngredients.isNotEmpty()) " — ingrédients : ${d.mainIngredients.joinToString(", ")}" else ""
+                // Recette d'un site : quelques ingrédients suffisent au modèle (le contexte d'un téléphone est compté).
+                if (d.mainIngredients.isNotEmpty()) " — ingrédients : ${d.mainIngredients.take(if (d.sourceUrl != null) 4 else 8).joinToString(", ")}" else ""
         }.joinToString("\n") + "]"
 
     const val IMPROVE_SHARING =

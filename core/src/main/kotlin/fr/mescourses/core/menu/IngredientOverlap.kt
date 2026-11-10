@@ -43,12 +43,16 @@ object IngredientOverlap {
         )
     }
 
+    private const val SUMMARY_MAX = 6
+
     /** Bilan renvoyé au LLM après chaque modification du menu. */
     fun summary(report: Report): String {
         if (!report.hasData) return ""
-        val shared = if (report.shared.isEmpty()) "aucun"
-        else report.shared.joinToString(", ") { "${it.name} (plats ${it.dishes.joinToString(", ")})" }
-        val isolated = report.isolated.joinToString(", ") { "${it.name} (plat ${it.dishes.single()})" }
+        // Bilan borné : avec de vraies recettes, la liste complète remplirait le contexte du modèle.
+        fun <T> short(list: List<T>, text: (T) -> String) =
+            list.take(SUMMARY_MAX).joinToString(", ", transform = text) + if (list.size > SUMMARY_MAX) "… et ${list.size - SUMMARY_MAX} autres" else ""
+        val shared = if (report.shared.isEmpty()) "aucun" else short(report.shared) { "${it.name} (plats ${it.dishes.joinToString(", ")})" }
+        val isolated = short(report.isolated) { "${it.name} (plat ${it.dishes.single()})" }
         return buildString {
             append("Ingrédients partagés : $shared.")
             if (report.isolated.isNotEmpty()) {

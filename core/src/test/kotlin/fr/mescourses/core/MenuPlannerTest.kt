@@ -253,6 +253,29 @@ class MenuPlannerTest {
         assertTrue(MenuComposer.score(salmon, chosen, wishes) - salmon.base > MenuComposer.score(beef, chosen, wishes) - beef.base)
     }
 
+    @Test fun mieux_mutualiser_sans_modele() {
+        // Tarte et velouté partagent poireaux, crème et comté ; le boeuf aux carottes ne partage rien.
+        val menu = listOf(leekTart, beef)
+        val swap = MenuComposer.improveSharing(all, wishes.copy(novelty = Novelty.DECOUVERTES), menu.map { Chosen.of(it) to it })
+        assertNotNull(swap)
+        assertEquals(1, swap.index)
+        assertTrue(swap.sharedAfter > swap.sharedBefore)
+        assertFalse(swap.candidate == summer, "pas de plat hors saison pour gagner un ingrédient")
+        // Rien à gagner : pas d'échange.
+        assertNull(MenuComposer.improveSharing(listOf(leekTart, beef), wishes, menu.map { Chosen.of(it) to it }))
+    }
+
+    @Test fun bilans_et_prompt_bornes_pour_le_contexte_du_telephone() {
+        val many = (1..18).map { i -> candidate("Recette numéro $i aux poireaux", "3 poireaux", "20 cl de crème", "200 g de riz", "100 g de comté", "2 carottes", "1 oignon", "ingrédient$i") }
+        val prompt = MenuPrompt.systemWeb(today, wishes.copy(meals = 5), many, noHistory)
+        assertTrue(prompt.length < 4500, "prompt de ${prompt.length} caractères")
+        assertTrue("n'écris pas ta réflexion" in prompt)
+        val dishes = many.take(5).map { it.toDish(Portions(2)) }
+        val summary = fr.mescourses.core.menu.IngredientOverlap.summary(fr.mescourses.core.menu.IngredientOverlap.compute(dishes))
+        assertTrue(summary.length < 600, summary)
+        assertTrue(MenuPrompt.context(dishes).length < 700)
+    }
+
     @Test fun autre_recette_pour_une_place() {
         val others = listOf(Chosen.of(leekTart), Chosen.of(salmon))
         val next = MenuComposer.replacement(all, wishes.copy(novelty = Novelty.DECOUVERTES), others, exclude = setOf(leekTart, salmon, chicken))

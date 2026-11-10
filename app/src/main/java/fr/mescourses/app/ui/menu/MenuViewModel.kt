@@ -335,7 +335,9 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
             _state.update { it.copy(busy = true) }
             try {
                 c.chef.keepAwake("Le chef ajuste ton menu…") {
-                    if (!c.model.owns(OWNER)) startConversation()
+                    // Conversation neuve à chaque demande : le message porte déjà l'état du menu, et le contexte
+                    // du modèle (limité sur téléphone) ne grossit plus d'un échange à l'autre.
+                    startConversation()
                     exchange(MenuPrompt.context(c.draft.get()) + "\n" + t, shownAs = shownAs ?: t)
                 }
             } catch (e: Exception) {
@@ -400,10 +402,42 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
         send(MenuPrompt.inventRequest(text, index?.plus(1)), shownAs = "Invente une recette" + if (text.isNotEmpty()) " : $text" else "")
     }
 
-    fun improveSharing() = send(MenuPrompt.IMPROVE_SHARING)
+    /**
+     * « Mieux mutualiser ». Avec des recettes des sites : échange calculé par le compositeur (immédiat, sans modèle).
+     * Sans candidates (plats inventés hors ligne) : on demande au chef.
+     */
+    fun improveSharing() {
+        val pool = c.candidates.all()
+        if (pool.isEmpty()) { send(MenuPrompt.IMPROVE_SHARING); return }
+        if (_state.value.busy) return
+        viewModelScope.launch {
+            val dishes = c.draft.get()
+            val wishes = c.currentWishes ?: config()
+            val swap = MenuComposer.improveSharing(
+                pool, wishes, dishes.map { d -> Chosen.of(d) to c.candidates.of(d) },
+                exclude = pool.filter { it.recipe.sourceUrl in rejected || it.recipe.title in rejected }.toSet(),
+            )
+            if (swap == null) {
+                _state.update { it.copy(message = "Le menu partage déjà bien ses ingrédients : aucune recette trouvée ne ferait mieux.") }
+            } else {
+                val old = dishes[swap.index]
+                rejected += old.sourceUrl ?: old.title
+                c.draft.set(dishes.toMutableList().also { it[swap.index] = swap.candidate.toDish(old.portions) })
+                _state.update {
+                    it.copy(message = "« ${old.title} » remplacé par « ${swap.candidate.recipe.title} » : ${swap.sharedAfter} ingrédients partagés avec les autres plats (au lieu de ${swap.sharedBefore}).")
+                }
+            }
+        }
+    }
+
+    /** Marqueurs internes du modèle (« <channel|> », « <start_of_turn> »…) qui n'ont rien à faire dans une bulle. */
+    private val modelMarkers = Regex("""<[^<>\s]*\|[^<>\s]*>|</?(start|end)_of_turn>""")
+
+    private fun isContextFull(e: Exception) =
+        e.message.orEmpty().let { "exceeds available" in it || "state entries" in it || "context" in it.lowercase() && "exceed" in it.lowercase() }
 
     /** Envoie un message au LLM et suit les appels d'outils ; renvoie le texte de la réponse. */
-    private suspend fun exchange(prompt: String, shownAs: String?): String {
+    private suspend fun exchange(prompt: String, shownAs: String?, retry: Boolean = true): String {
         _state.update { s -> s.copy(busy = true, chat = if (shownAs != null) s.chat + ChatLine(true, shownAs) else s.chat) }
         val answer = StringBuilder()
         try {
@@ -414,8 +448,8 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                         _state.update { s ->
                             val chat = s.chat.toMutableList()
                             val last = chat.lastOrNull()
-                            if (last != null && !last.fromUser && !last.tool) chat[chat.lastIndex] = last.copy(text = last.text + ev.text)
-                            else chat += ChatLine(false, ev.text)
+                            if (last != null && !last.fromUser && !last.tool) chat[chat.lastIndex] = last.copy(text = (last.text + ev.text).replace(modelMarkers, ""))
+                            else chat += ChatLine(false, ev.text.replace(modelMarkers, ""))
                             s.copy(chat = chat)
                         }
                     }
@@ -426,7 +460,17 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                 }
             } }
         } catch (e: Exception) {
-            _state.update { it.copy(chat = it.chat + ChatLine(false, "⚠️ ${e.message}", tool = true, ok = false)) }
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            if (isContextFull(e)) {
+                // Mémoire de travail du modèle pleine : on repart d'une conversation vide, une fois.
+                if (retry) {
+                    startConversation()
+                    return exchange(prompt, shownAs = null, retry = false)
+                }
+                _state.update { it.copy(chat = it.chat + ChatLine(false, "⚠️ Demande trop longue pour l'assistant du téléphone : reformule-la plus court, ou utilise les boutons des plats.", tool = true, ok = false)) }
+            } else {
+                chatError(e)
+            }
         }
         return answer.toString()
     }

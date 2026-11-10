@@ -110,6 +110,30 @@ object MenuComposer {
         return picked
     }
 
+    /** Un échange qui rend la liste de courses plus courte : le plat [index] cède sa place à [candidate]. */
+    data class Swap(val index: Int, val candidate: Candidate, val sharedBefore: Int, val sharedAfter: Int)
+
+    private fun shared(keys: Set<String>, others: List<Chosen>) = keys.count { k -> others.any { k in it.keys } }
+
+    /**
+     * « Mieux mutualiser », sans LLM : cherche le plat à remplacer par une candidate qui partage davantage
+     * d'ingrédients avec le reste du menu, sans dégrader le menu (saison, composition, variété).
+     * [dishes] : chaque plat du menu avec sa candidate d'origine si elle est connue. Null = rien à gagner.
+     */
+    fun improveSharing(pool: List<Candidate>, wishes: MenuWishes, dishes: List<Pair<Chosen, Candidate?>>, exclude: Set<Candidate> = emptySet()): Swap? {
+        val w = wishes.copy(meals = dishes.size)
+        val taken = dishes.mapNotNull { it.second }.toSet() + exclude
+        return dishes.indices.mapNotNull { i ->
+            val others = dishes.filterIndexed { j, _ -> j != i }.map { it.first }
+            val (current, origin) = dishes[i]
+            val before = shared(current.keys, others)
+            val best = pool.filterNot { it in taken }
+                .filter { shared(it.keys, others) > before && (origin == null || score(it, others, w) >= score(origin, others, w)) }
+                .maxByOrNull { score(it, others, w) } ?: return@mapNotNull null
+            Swap(i, best, before, shared(best.keys, others))
+        }.maxByOrNull { it.sharedAfter - it.sharedBefore }
+    }
+
     /** Meilleure candidate pour une place du menu, les autres plats étant fixés. */
     fun replacement(pool: List<Candidate>, wishes: MenuWishes, others: List<Chosen>, exclude: Set<Candidate>): Candidate? =
         compose(pool, wishes.copy(meals = others.size + 1), others, exclude).firstOrNull()
