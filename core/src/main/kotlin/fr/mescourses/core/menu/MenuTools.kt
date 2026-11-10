@@ -32,8 +32,12 @@ class MenuTools(
     private val search: (suspend (String) -> List<Candidate>)? = null,
 ) {
     /** Avec des candidates : le menu se compose par numéros ; sans (hors ligne) : le chef invente, comme avant. */
-    fun all(): List<AgentTool> =
-        if (pool.size > 0) listOfNotNull(pickMenu, swapDish, pickDish, removeDish, searchRecipes.takeIf { search != null }, createDish, addGuests, setDishPeople)
+    /**
+     * [adjusting] : le menu existe déjà et l'utilisateur demande une retouche. « propose_menu » est alors retiré : un
+     * petit modèle s'en sert pour tout, et réécrit le menu entier (plats perdus) au lieu de toucher un seul plat.
+     */
+    fun all(adjusting: Boolean = false): List<AgentTool> =
+        if (pool.size > 0) listOfNotNull(pickMenu.takeUnless { adjusting }, swapDish, pickDish, removeDish, searchRecipes.takeIf { search != null }, createDish, addGuests, setDishPeople)
         else listOf(proposeMenu, replaceDish, addDish, removeDish, createDish, addGuests, setDishPeople)
 
     private fun tool(name: String, description: String, parameters: JsonObject, run: suspend (JsonObject) -> JsonElement) =
@@ -111,7 +115,8 @@ class MenuTools(
     val pickMenu = tool(
         "propose_menu",
         "Remplace le menu par les recettes candidates choisies.",
-        params { integerArray("numeros", "Numéros des recettes candidates retenues, un par plat du menu") },
+        // Une chaîne plutôt qu'un tableau : le modèle du téléphone écrit souvent des tableaux mal formés ([1,2,]).
+        params { string("numeros", "Numéros des recettes candidates retenues, séparés par des virgules. Exemple : 3, 7, 12") },
     ) { args -> proposeNumbers(args.intList("numeros").ifEmpty { args.intList("plats") }) }
 
     val swapDish = tool(

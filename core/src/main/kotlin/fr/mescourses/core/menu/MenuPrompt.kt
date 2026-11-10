@@ -70,6 +70,8 @@ object MenuPrompt {
         candidates: List<Candidate>,
         history: MenuHistory,
         preferences: String = "",
+        /** Le menu existe déjà : le modèle ne fait que des retouches (pas de propose_menu). */
+        adjusting: Boolean = false,
     ): String = buildString {
         appendLine("Tu es « Mes courses », un assistant qui compose le menu de la semaine d'une famille à partir de vraies recettes trouvées sur des sites de cuisine. Tu parles français, de façon concise.")
         appendLine("Nous sommes le ${DateResolver.label(today)}.")
@@ -90,7 +92,8 @@ object MenuPrompt {
         if (history.lastWeekIngredients.isNotEmpty()) appendLine("- Déjà beaucoup mangé la semaine dernière, à ne pas répéter : ${history.lastWeekIngredients.take(10).joinToString(", ")}.")
         appendLine()
         appendLine("OUTILS :")
-        appendLine("- propose_menu : le menu complet, avec les NUMÉROS des candidates retenues.")
+        if (adjusting) appendLine("Le menu existe déjà. Fais UNIQUEMENT la retouche demandée, sur le plat concerné, avec UN seul outil. Ne touche à aucun autre plat. Si la demande n'est pas claire, pose une question au lieu d'agir.")
+        else appendLine("- propose_menu : le menu complet, avec les NUMÉROS des candidates retenues, séparés par des virgules (numeros = \"3, 7, 12\").")
         appendLine("- replace_dish (numéro du plat + numéro de la candidate), add_dish (numéro de la candidate), remove_dish.")
         appendLine("- search_recipes : si aucune candidate ne convient à ce que demande l'utilisateur, cherche sur les sites ; les résultats deviennent des candidates.")
         appendLine("- create_dish : seulement si l'utilisateur demande une recette inventée par toi (« invente », « crée une recette »).")

@@ -263,19 +263,19 @@ class AppContainer(context: Context) {
     val candidateFinder = CandidateFinder(recipeSearch, importer, recipes, menuHistory, pantry = { settings.current.pantryList() }, catalog = catalog)
 
     /** Prompt du menu : choix parmi les candidates des sites, ou invention des plats s'il n'y en a pas. */
-    suspend fun menuSystemPrompt(wishes: MenuWishes): String {
+    suspend fun menuSystemPrompt(wishes: MenuWishes, adjusting: Boolean = false): String {
         val today = LocalDate.now()
         val cookbook = recipes.all()
         val pool = candidates.all()
         return if (pool.isEmpty()) MenuPrompt.system(today, wishes, cookbook, settings.current.preferences)
-        else MenuPrompt.systemWeb(today, wishes, pool, MenuHistory(menuHistory.all(), cookbook, today), settings.current.preferences)
+        else MenuPrompt.systemWeb(today, wishes, pool, MenuHistory(menuHistory.all(), cookbook, today), settings.current.preferences, adjusting)
     }
 
-    fun menuTools(): List<AgentTool> = MenuTools(
+    fun menuTools(adjusting: Boolean = false): List<AgentTool> = MenuTools(
         draft, recipes, ::defaultPortions, candidates,
         wishes = { currentWishes },
         search = { words -> candidateFinder.search(words, currentWishes ?: MenuWishes(settings.current.meals, defaultPortions()), limit = 4) },
-    ).all()
+    ).all(adjusting)
 
     fun shoppingSystemPrompt(): String = ShoppingPrompt.system(settings.current.preferOrganic, settings.current.preferences, activeRetailer.value)
 

@@ -6,7 +6,9 @@ import fr.mescourses.app.AppContainer
 import fr.mescourses.app.llm.ChatEvent
 import fr.mescourses.app.llm.ModelStatus
 import fr.mescourses.app.work.Validation
+import fr.mescourses.core.menu.Candidate
 import fr.mescourses.core.menu.CandidateFinder
+import fr.mescourses.core.menu.MenuCommand
 import fr.mescourses.core.menu.Chosen
 import fr.mescourses.core.menu.CookingTime
 import fr.mescourses.core.menu.DishKind
@@ -62,6 +64,11 @@ data class MenuUiState(
     val chat: List<ChatLine> = emptyList(),
     val validation: Validation? = null,
     val message: String? = null,
+    /** Une retouche peut être annulée (le menu d'avant est gardé). */
+    val canUndo: Boolean = false,
+    /** Recettes proposées par « Ajouter un plat » ; null = fenêtre fermée. */
+    val picker: List<Candidate>? = null,
+    val pickerBusy: Boolean = false,
 )
 
 class MenuViewModel(private val c: AppContainer) : ViewModel() {
@@ -221,9 +228,30 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     }
     fun consumeMessage() = _state.update { it.copy(message = null) }
 
-    private suspend fun startConversation() {
-        c.model.startConversation(OWNER, c.menuSystemPrompt(config()), c.menuTools())
+    /** [adjusting] : retouche d'un menu existant (le modèle n'a alors pas l'outil qui réécrit tout le menu). */
+    private suspend fun startConversation(adjusting: Boolean = false) {
+        this.adjusting = adjusting
+        c.model.startConversation(OWNER, c.menuSystemPrompt(config(), adjusting), c.menuTools(adjusting))
     }
+    private var adjusting = false
+
+    /** Menu d'avant la dernière retouche, pour « Annuler ». */
+    private var before: List<MenuDish>? = null
+
+    private suspend fun snapshot() {
+        before = c.draft.get()
+        _state.update { it.copy(canUndo = true) }
+    }
+
+    fun undo() = viewModelScope.launch {
+        val old = before ?: return@launch
+        before = null
+        c.draft.set(old)
+        _state.update { it.copy(canUndo = false, chat = it.chat + ChatLine(false, "↩ Dernière retouche annulée", tool = true)) }
+    }
+
+    private fun say(text: String, ok: Boolean = true) =
+        _state.update { it.copy(chat = it.chat + ChatLine(false, (if (ok) "✅ " else "⚠️ ") + text, tool = true, ok = ok)) }
 
     private fun progress(text: String?) {
         _state.update { it.copy(progress = text) }
@@ -329,24 +357,153 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     /** Message libre pour ajuster le menu. */
     fun send(text: String, shownAs: String? = null) {
         val t = text.trim()
-        if (t.isEmpty() || !_state.value.model.available || _state.value.busy) return
+        if (t.isEmpty() || _state.value.busy) return
+        // Demande claire (convives, ajouter, retirer, remplacer un plat) : l'appli l'exécute elle-même, sans le modèle.
+        val command = if (shownAs == null) MenuCommand.parse(t, dishes.value.size) else null
+        if (command == null && !_state.value.model.available) {
+            _state.update { it.copy(chat = it.chat + ChatLine(true, shownAs ?: t)) }
+            say("L'assistant n'est pas chargé. Sans lui, je comprends : « ajoute 2 adultes au plat 1 », « retire le plat 3 », « ajoute un plat », « remplace le plat 2 ».", ok = false)
+            return
+        }
         job = viewModelScope.launch {
             exchanging = true
             _state.update { it.copy(busy = true) }
             try {
-                c.chef.keepAwake("Le chef ajuste ton menu…") {
+                snapshot()
+                if (command != null) {
+                    _state.update { it.copy(chat = it.chat + ChatLine(true, t)) }
+                    c.chef.keepAwake("Le chef ajuste ton menu…") { execute(command) }
+                } else c.chef.keepAwake("Le chef ajuste ton menu…") {
                     // Conversation neuve à chaque demande : le message porte déjà l'état du menu, et le contexte
                     // du modèle (limité sur téléphone) ne grossit plus d'un échange à l'autre.
-                    startConversation()
+                    startConversation(adjusting = c.candidates.size > 0)
                     exchange(MenuPrompt.context(c.draft.get()) + "\n" + t, shownAs = shownAs ?: t)
                 }
             } catch (e: Exception) {
                 _state.update { it.copy(chat = it.chat + ChatLine(false, "⚠️ ${e.message}", tool = true, ok = false)) }
             } finally {
                 exchanging = false
-                _state.update { it.copy(busy = false) }
+                _state.update { it.copy(busy = false, progress = null) }
             }
         }
+    }
+
+    private fun wishes() = c.currentWishes ?: config().also { c.currentWishes = it }
+
+    /** Meilleure recette disponible à ajouter au menu, compte tenu des plats déjà là ; cherche au besoin. */
+    private suspend fun bestToAdd(): Candidate? {
+        val wishes = wishes()
+        suspend fun pick(): Candidate? {
+            val dishes = c.draft.get()
+            val pool = c.candidates.all()
+            val taken = (dishes.mapNotNull { c.candidates.of(it) } + pool.filter { it.recipe.sourceUrl in rejected || it.recipe.title in rejected }).toSet()
+            return MenuComposer.replacement(pool, wishes, dishes.map(Chosen::of), taken)
+        }
+        return pick() ?: run {
+            progress("Recherche d'autres recettes…")
+            val seen = rejected + c.candidates.all().mapNotNull { it.recipe.sourceUrl }
+            val more = runCatching { c.candidateFinder.find(wishes, round = ++searchRound, exclude = seen) { progress(it) } }.getOrNull()
+            c.candidates.add(more?.candidates.orEmpty())
+            pick()
+        }
+    }
+
+    /** Première recette trouvée pour des mots donnés qui n'est pas déjà au menu. */
+    private suspend fun searched(words: String): Candidate? {
+        progress("Recherche de « $words »…")
+        val titles = c.draft.get().map { it.title }.toSet()
+        val found = runCatching { c.candidateFinder.search(words, wishes(), limit = 6, exclude = rejected) }.getOrNull().orEmpty()
+        c.candidates.add(found)
+        return found.firstOrNull { it.recipe.title !in titles }
+    }
+
+    /** Exécute une demande comprise sans le modèle, et dit ce qui a été fait. */
+    private suspend fun execute(command: MenuCommand) {
+        val list = c.draft.get()
+        when (command) {
+            is MenuCommand.AddGuests -> {
+                val d = list[command.dish]
+                val p = Portions(d.portions.adults + command.adults, d.portions.children + command.children)
+                c.draft.set(list.toMutableList().also { it[command.dish] = d.copy(portions = p) })
+                say("Plat ${command.dish + 1} « ${d.title} » : ${p.label()}")
+            }
+            is MenuCommand.SetPeople -> {
+                val d = list[command.dish]
+                val p = Portions(command.adults, command.children)
+                c.draft.set(list.toMutableList().also { it[command.dish] = d.copy(portions = p) })
+                say("Plat ${command.dish + 1} « ${d.title} » : ${p.label()}")
+            }
+            is MenuCommand.Remove -> {
+                c.draft.set(list.toMutableList().also { it.removeAt(command.dish) })
+                say("« ${list[command.dish].title} » retiré")
+            }
+            is MenuCommand.AddDish -> {
+                val next = command.words?.let { searched(it) } ?: bestToAdd()
+                if (next == null) say("Aucune recette trouvée" + (command.words?.let { " pour « $it »" } ?: "") + ". Essaie « Ajouter un plat » pour chercher toi-même.", ok = false)
+                else {
+                    c.draft.set(c.draft.get() + next.toDish(wishes().portions))
+                    say("« ${next.recipe.title} » ajouté (plat ${list.size + 1})")
+                }
+            }
+            is MenuCommand.Replace -> {
+                val old = list[command.dish]
+                if (command.words == null) {
+                    swap(command.dish)
+                    val now = c.draft.get().getOrNull(command.dish)
+                    if (now != null && now.title != old.title) say("Plat ${command.dish + 1} remplacé par « ${now.title} »") else say("Pas d'autre recette trouvée pour le plat ${command.dish + 1}.", ok = false)
+                } else {
+                    val next = searched(command.words)
+                    if (next == null) say("Aucune recette trouvée pour « ${command.words} ».", ok = false)
+                    else {
+                        rejected += old.sourceUrl ?: old.title
+                        c.draft.set(list.toMutableList().also { it[command.dish] = next.toDish(old.portions) })
+                        say("Plat ${command.dish + 1} remplacé par « ${next.recipe.title} »")
+                    }
+                }
+            }
+        }
+    }
+
+    // --- « Ajouter un plat » : choix parmi les recettes disponibles ---
+
+    private fun available(): List<Candidate> {
+        val inMenu = dishes.value.mapNotNull { c.candidates.of(it) }.toSet()
+        return c.candidates.all().filter { it !in inMenu && it.recipe.sourceUrl !in rejected && it.recipe.title !in rejected }
+    }
+
+    /** Ouvre la liste des recettes disponibles (celles trouvées pour ce menu ; cherchées si l'appli a été relancée). */
+    fun openPicker() {
+        _state.update { it.copy(picker = available()) }
+        if (available().size >= 4) return
+        viewModelScope.launch {
+            _state.update { it.copy(pickerBusy = true) }
+            val more = runCatching { c.candidateFinder.find(wishes(), round = ++searchRound, exclude = rejected) }.getOrNull()
+            c.candidates.add(more?.candidates.orEmpty())
+            _state.update { s -> s.copy(pickerBusy = false, picker = s.picker?.let { available() }) }
+        }
+    }
+
+    fun closePicker() = _state.update { it.copy(picker = null, pickerBusy = false) }
+
+    /** Recherche libre depuis la fenêtre : les résultats passent en tête de liste. */
+    fun searchPicker(text: String) {
+        val words = text.trim()
+        if (words.isEmpty()) { _state.update { it.copy(picker = available()) }; return }
+        viewModelScope.launch {
+            _state.update { it.copy(pickerBusy = true) }
+            val found = runCatching { c.candidateFinder.search(words, wishes(), limit = 12, exclude = rejected) }.getOrNull().orEmpty()
+            c.candidates.add(found)
+            val titles = dishes.value.map { it.title }.toSet()
+            _state.update { s -> s.copy(pickerBusy = false, picker = s.picker?.let { found.filter { it.recipe.title !in titles } }) }
+            if (found.isEmpty()) _state.update { it.copy(message = "Aucune recette trouvée pour « $words ».") }
+        }
+    }
+
+    fun addCandidate(candidate: Candidate) = viewModelScope.launch {
+        snapshot()
+        c.candidates.add(listOf(candidate))
+        c.draft.set(c.draft.get() + candidate.toDish(wishes().portions))
+        _state.update { it.copy(picker = null, message = "« ${candidate.recipe.title} » ajouté au menu.") }
     }
 
     /**
@@ -433,6 +590,9 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     /** Marqueurs internes du modèle (« <channel|> », « <start_of_turn> »…) qui n'ont rien à faire dans une bulle. */
     private val modelMarkers = Regex("""<[^<>\s]*\|[^<>\s]*>|</?(start|end)_of_turn>""")
 
+    /** Le modèle a écrit un appel d'outil illisible (« [1,2,] ») : fréquent sur un petit modèle, on redemande. */
+    private fun isBadToolCall(e: Exception) = "parse tool call" in e.message.orEmpty().lowercase()
+
     private fun isContextFull(e: Exception) =
         e.message.orEmpty().let { "exceeds available" in it || "state entries" in it || "context" in it.lowercase() && "exceed" in it.lowercase() }
 
@@ -461,10 +621,16 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
             } }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            if (isContextFull(e)) {
+            if (isBadToolCall(e)) {
+                if (retry) {
+                    startConversation(adjusting)
+                    return exchange(prompt, shownAs = null, retry = false)
+                }
+                say("Le chef n'a pas réussi à faire cette retouche. Reformule plus simplement (un seul changement à la fois), ou utilise les boutons des plats.", ok = false)
+            } else if (isContextFull(e)) {
                 // Mémoire de travail du modèle pleine : on repart d'une conversation vide, une fois.
                 if (retry) {
-                    startConversation()
+                    startConversation(adjusting)
                     return exchange(prompt, shownAs = null, retry = false)
                 }
                 _state.update { it.copy(chat = it.chat + ChatLine(false, "⚠️ Demande trop longue pour l'assistant du téléphone : reformule-la plus court, ou utilise les boutons des plats.", tool = true, ok = false)) }
@@ -496,7 +662,8 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
 
     fun clearDraft() = viewModelScope.launch {
         c.draft.set(emptyList())
-        _state.update { it.copy(chat = emptyList()) }
+        before = null
+        _state.update { it.copy(chat = emptyList(), canUndo = false) }
         step.value = if (week.value.isNotEmpty()) MenuStep.SEMAINE else MenuStep.REGLAGES
     }
 

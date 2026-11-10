@@ -348,6 +348,29 @@ class MenuPlannerTest {
     private suspend fun run(name: String, json: String) = tools.getValue(name).execute(Json.parseToJsonElement(json) as JsonObject).jsonObject
     private fun JsonObject.text() = (this["message"] ?: this["erreur"])!!.jsonPrimitive.content
 
+    @Test fun demandes_courantes_comprises_sans_le_modele() {
+        val c = fr.mescourses.core.menu.MenuCommand
+        fun p(text: String) = c.parse(text, 4)
+        assertEquals(fr.mescourses.core.menu.MenuCommand.AddGuests(1, 3, 2), p("ajoute 3 adultes et 2 enfants au plat 2"))
+        assertEquals(fr.mescourses.core.menu.MenuCommand.AddGuests(0, 2, 0), p("Ajoute 2 adultes au plat 1"))
+        assertEquals(fr.mescourses.core.menu.MenuCommand.AddGuests(2, 2, 0), p("Rajoute deux invités sur le 3ème plat"))
+        assertEquals(fr.mescourses.core.menu.MenuCommand.SetPeople(3, 6, 0), p("Le dernier plat pour 6 personnes"))
+        assertEquals(fr.mescourses.core.menu.MenuCommand.Remove(1), p("Supprime le plat 2"))
+        assertEquals(fr.mescourses.core.menu.MenuCommand.Remove(0), p("retire le premier plat"))
+        assertEquals(fr.mescourses.core.menu.MenuCommand.AddDish(null), p("Ajouté un plat"))
+        assertEquals(fr.mescourses.core.menu.MenuCommand.AddDish(null), p("Ajouté un 5eme plat"))
+        assertEquals(fr.mescourses.core.menu.MenuCommand.AddDish("poisson"), p("ajoute un plat de poisson"))
+        assertEquals(fr.mescourses.core.menu.MenuCommand.Replace(2, "curry de legumes"), p("Remplace le plat 3 par un curry de légumes"))
+        assertEquals(fr.mescourses.core.menu.MenuCommand.Replace(2, null), p("change le plat 3"))
+        // Ce qui n'est pas un ordre clair part au chef.
+        assertNull(p("Je ne voulais pas supprimer un plat"))
+        assertNull(p("Tu as supprimé le 5eme plat"))
+        assertNull(p("Plus rapide à préparer"))
+        assertNull(p("Plus végétarien"))
+        assertNull(p("ajoute 2 adultes"))
+        assertNull(p("supprime le plat 9"))
+    }
+
     @Test fun le_modele_choisit_par_numeros() = runTest {
         assertEquals(setOf("propose_menu", "replace_dish", "add_dish", "remove_dish", "search_recipes", "create_dish", "add_guests", "set_dish_people"), tools.keys)
         // Tolérance : nombres en texte, numéro inconnu.

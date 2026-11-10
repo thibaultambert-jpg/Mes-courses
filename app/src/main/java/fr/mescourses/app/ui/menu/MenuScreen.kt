@@ -30,6 +30,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
+import fr.mescourses.core.menu.Candidate
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -169,7 +177,7 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit, onOpenS
             }
             if (step == MenuStep.PROPOSITION && dishes.isNotEmpty() && state.validation == null) {
                 BottomActionBar {
-                    OutlinedButton(onClick = { chatOpen = true }, enabled = ready) {
+                    OutlinedButton(onClick = { chatOpen = true }) {
                         Icon(Icons.Filled.ChatBubbleOutline, null, Modifier.size(18.dp))
                         Spacer(Modifier.size(6.dp))
                         Text("Ajuster")
@@ -210,7 +218,7 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit, onOpenS
                         dishes = dishes, favorites = favorites, overlap = overlap, insights = insights, preview = preview,
                         state = state, ready = ready,
                         onPortions = vm::changePortions, onAnother = vm::anotherRecipe, onInvent = { inventFor = it ?: -1 },
-                        onOpen = onOpenPreview, onRemove = vm::removeDish,
+                        onOpen = onOpenPreview, onRemove = vm::removeDish, onAdd = vm::openPicker,
                         onImprove = vm::improveSharing, onClear = vm::clearDraft,
                     )
                     MenuStep.SEMAINE -> WeekStep(
@@ -234,7 +242,15 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit, onOpenS
         ChatSheet(
             chat = state.chat, busy = state.busy, ready = ready, modelLoading = state.model == ModelStatus.Loading,
             onSend = vm::send, onStop = vm::stop, onImprove = vm::improveSharing,
+            canUndo = state.canUndo, onUndo = { vm.undo() }, onAddDish = { chatOpen = false; vm.openPicker() },
             onDismiss = { chatOpen = false },
+        )
+    }
+
+    state.picker?.let { recipes ->
+        AddDishSheet(
+            recipes = recipes, busy = state.pickerBusy,
+            onSearch = vm::searchPicker, onPick = { vm.addCandidate(it) }, onOpen = onOpenPreview, onDismiss = vm::closePicker,
         )
     }
 }
@@ -452,6 +468,7 @@ private fun ProposalStep(
     onInvent: (Int?) -> Unit,
     onOpen: (String) -> Unit,
     onRemove: (Int) -> Unit,
+    onAdd: () -> Unit,
     onImprove: () -> Unit,
     onClear: () -> Unit,
 ) {
@@ -498,6 +515,13 @@ private fun ProposalStep(
                 onRemove = { onRemove(i) },
                 modifier = Modifier.animateItem(),
             )
+        }
+        item {
+            Button(onClick = onAdd, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Filled.Add, null, Modifier.size(18.dp))
+                Spacer(Modifier.size(6.dp))
+                Text("Ajouter un plat")
+            }
         }
         item {
             OutlinedButton(onClick = { onInvent(null) }, enabled = ready && !state.busy, modifier = Modifier.fillMaxWidth()) {
@@ -831,6 +855,9 @@ private fun ChatSheet(
     onSend: (String) -> Unit,
     onStop: () -> Unit,
     onImprove: () -> Unit,
+    canUndo: Boolean,
+    onUndo: () -> Unit,
+    onAddDish: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -843,7 +870,7 @@ private fun ChatSheet(
         Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 16.dp)) {
             Text("Ajuster le menu", style = MaterialTheme.typography.titleLarge)
             Text(
-                "Demande en français : invités sur un plat, remplacer une recette, plus rapide…",
+                "Une demande à la fois : invités sur un plat, ajouter, retirer ou remplacer un plat…",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -854,7 +881,8 @@ private fun ChatSheet(
             )
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxWidth().height(320.dp).padding(vertical = 8.dp),
+                // La liste rétrécit quand le clavier s'ouvre : le champ de saisie reste visible au-dessus de lui.
+                modifier = Modifier.fillMaxWidth().weight(1f, fill = false).heightIn(min = 72.dp, max = 320.dp).padding(vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (chat.isEmpty()) item {
@@ -863,6 +891,8 @@ private fun ChatSheet(
                 items(chat) { ChatBubble(it) }
             }
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (canUndo) SuggestionChip(onClick = onUndo, enabled = !busy, label = { Text("↩ Annuler la retouche") })
+                SuggestionChip(onClick = onAddDish, enabled = !busy, label = { Text("＋ Ajouter un plat") })
                 SuggestionChip(onClick = onImprove, enabled = ready && !busy, label = { Text("♻ Mieux mutualiser") })
                 CHAT_SUGGESTIONS.forEach { s ->
                     SuggestionChip(onClick = { input = s }, enabled = !busy, label = { Text(s) })
@@ -876,17 +906,87 @@ private fun ChatSheet(
                     placeholder = { Text("« ajoute 3 adultes et 2 enfants au plat 2 »") },
                     shape = RoundedCornerShape(28.dp),
                     maxLines = 3,
-                    enabled = ready && !busy,
+                    enabled = !busy,
                 )
                 Spacer(Modifier.size(8.dp))
                 if (busy) {
                     FilledIconButton(onClick = onStop) { Icon(Icons.Filled.Stop, "Arrêter") }
                 } else {
-                    FilledIconButton(onClick = { onSend(input); input = "" }, enabled = ready && input.isNotBlank()) {
+                    FilledIconButton(onClick = { onSend(input); input = "" }, enabled = input.isNotBlank()) {
                         Icon(Icons.AutoMirrored.Filled.Send, "Envoyer")
                     }
                 }
             }
+        }
+    }
+}
+
+/** « Ajouter un plat » : les recettes disponibles pour ce menu, et une recherche dans le catalogue ou sur les sites. */
+@Composable
+private fun AddDishSheet(
+    recipes: List<Candidate>,
+    busy: Boolean,
+    onSearch: (String) -> Unit,
+    onPick: (Candidate) -> Unit,
+    onOpen: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var query by remember { mutableStateOf("") }
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 16.dp)) {
+            Text("Ajouter un plat", style = MaterialTheme.typography.titleLarge)
+            Text(
+                "Recettes disponibles pour ce menu. Touche une recette pour l'ajouter, ou cherche autre chose.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Un plat, un ingrédient…") },
+                    shape = RoundedCornerShape(28.dp),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { onSearch(query) }),
+                )
+                Spacer(Modifier.size(8.dp))
+                FilledIconButton(onClick = { onSearch(query) }, enabled = !busy) { Icon(Icons.Filled.Search, "Chercher") }
+            }
+            if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().weight(1f, fill = false).heightIn(min = 72.dp, max = 460.dp).padding(vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (recipes.isEmpty() && !busy) item {
+                    Text("Aucune recette disponible : lance une recherche ci-dessus.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp))
+                }
+                items(recipes, key = { it.recipe.sourceUrl ?: it.recipe.title }) { c ->
+                    Card(onClick = { onPick(c) }, modifier = Modifier.fillMaxWidth()) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(c.recipe.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    listOfNotNull(
+                                        c.kind.label, c.minutes?.let { "$it min" }, c.siteName ?: if (c.fromCookbook) "Mon livre" else null,
+                                        c.seasonal.takeIf { it.isNotEmpty() }?.let { "🍂 " + it.take(2).joinToString(", ") },
+                                    ).joinToString(" · "),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    c.mainIngredients.take(5).joinToString(", "),
+                                    style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            c.recipe.sourceUrl?.let { url -> TextButton(onClick = { onOpen(url) }) { Text("Voir") } }
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
         }
     }
 }
