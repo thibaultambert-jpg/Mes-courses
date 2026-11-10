@@ -87,13 +87,6 @@ object RecipeSites {
             browseUrl = "https://www.ptitchef.com/recettes",
         ),
         RecipeSite(
-            id = "ricardo", name = "Ricardo", domain = "ricardocuisine.com",
-            homeUrl = "https://www.ricardocuisine.com/",
-            recipeUrl = Regex("""ricardocuisine\.com/recettes/\d+-"""),
-            browseUrl = "https://www.ricardocuisine.com/recettes/plats-principaux?currentPage=1&grouping-type=3&content-type=recipe&sort=alpha&searchValue=",
-            note = "Québécois : unités parfois en tasses.",
-        ),
-        RecipeSite(
             id = "chefsimon", name = "Chef Simon", domain = "chefsimon.com",
             homeUrl = "https://chefsimon.com/",
             recipeUrl = Regex("""chefsimon\.com/recettes/[^/]+$"""),

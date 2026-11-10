@@ -13,7 +13,7 @@ import org.jsoup.Jsoup
 
 /**
  * Extrait une recette d'une page web grâce aux données structurées schema.org/Recipe (JSON-LD),
- * présentes sur Marmiton, 750g, Cuisine AZ, Journal des Femmes, Ricardo, etc.
+ * présentes sur Marmiton, 750g, Cuisine AZ, Journal des Femmes, etc.
  */
 object RecipeJsonLdExtractor {
 
