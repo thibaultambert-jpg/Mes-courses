@@ -17,6 +17,11 @@ data class CatalogSource(
     val recipeUrl: Regex,
     /** Rythme de lecture des fiches : certains sites refusent les lectures trop rapprochées. */
     val requestsPerSecond: Double = 1.5,
+    /**
+     * Pour un site sans sitemap exploitable : rubriques de recettes paginées. L'adresse donnée est la page 1, les
+     * suivantes s'obtiennent avec « ?page=2 », « ?page=3 »… Une recette rangée dans plusieurs rubriques n'est lue qu'une fois.
+     */
+    val listings: List<String> = emptyList(),
 )
 
 object CatalogSources {
@@ -45,12 +50,37 @@ object CatalogSources {
             null, Regex("""hellofresh\.fr/recipes/[^/]+-[0-9a-f]{24}$"""),
         ),
         CatalogSource("jow", listOf("https://jow.fr/sitemap.xml"), null, Regex("""jow\.fr/recipes/[^/]+$""")),
+        // 750g ne publie pas de sitemap de recettes : on suit ses rubriques de plats, page après page.
+        CatalogSource(
+            "750g", emptyList(), null, Regex("""750g\.com/[^/]+-r\d+\.htm$"""),
+            requestsPerSecond = 1.0,
+            listings = listOf(
+                "https://www.750g.com/recettes_sante.htm",
+                "https://www.750g.com/recettes-plats/restauration-rapide/",
+                "https://www.750g.com/recettes-plats/desserts-sales/",
+                "https://www.750g.com/recettes-plats/traditionnels/",
+                "https://www.750g.com/recettes-plats/pates/",
+                "https://www.750g.com/recettes-plats/pates/lasagnes/",
+                "https://www.750g.com/recettes-plats/riz/",
+                "https://www.750g.com/recettes-plats/riz/risottos/",
+                "https://www.750g.com/recettes-plats/viandes/",
+                "https://www.750g.com/recettes-plats/viandes/blanches/",
+                "https://www.750g.com/recettes-plats/produits-mer/",
+                "https://www.750g.com/recettes-plats/legumes/",
+                "https://www.750g.com/recettes-plats/legumes/aubergine/",
+                "https://www.750g.com/recettes-plats/cereales/",
+                "https://www.750g.com/recettes-plats/fromages/",
+            ),
+        ),
         // Les sitemaps de recettes du Journal des Femmes sont fermés (410) : seules les recettes en vidéo sont listées.
         CatalogSource(
             "jdf", listOf("https://cuisine.journaldesfemmes.fr/sitemap/video-recipe/"),
             null, Regex("""journaldesfemmes\.fr/recette/\d+-[^/]+$"""),
         ),
     )
+
+    /** Sites lus par leurs rubriques : collectés à part des sites à sitemap (workflow « Catalogue — sites par rubriques »). */
+    val byListings: List<CatalogSource> get() = all.filter { it.listings.isNotEmpty() }
 
     fun byId(id: String): CatalogSource? = all.firstOrNull { it.siteId == id }
 }
@@ -62,10 +92,26 @@ object CatalogSources {
 class SiteCrawler(private val fetch: suspend (url: String) -> String) {
 
     /** Toutes les fiches recettes annoncées par le site, sans doublon, avec leur date de modification si elle est donnée. */
-    suspend fun pages(source: CatalogSource, maxSitemaps: Int = 400): List<Sitemap.Page> {
+    /** [listingPages] : pages lues au plus par rubrique (le téléphone ne regarde que les premières, où arrivent les nouveautés). */
+    suspend fun pages(source: CatalogSource, maxSitemaps: Int = 400, listingPages: Int = 500): List<Sitemap.Page> {
         val queue = ArrayDeque(source.sitemaps)
         val seen = HashSet<String>()
         val pages = LinkedHashMap<String, Sitemap.Page>()
+        for (listing in source.listings) {
+            // Une rubrique s'arrête à la première page qui n'apporte aucune recette nouvelle pour elle (ou qui n'existe pas).
+            val inListing = HashSet<String>()
+            for (n in 1..listingPages) {
+                val html = try {
+                    fetch(if (n == 1) listing else "$listing?page=$n")
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    break
+                }
+                val links = links(html, listing).filter { source.recipeUrl.containsMatchIn(it) }
+                if (links.count { inListing.add(it) } == 0) break
+                links.forEach { pages.putIfAbsent(it, Sitemap.Page(it, null)) }
+            }
+        }
         while (queue.isNotEmpty() && seen.size < maxSitemaps) {
             val url = queue.removeFirst()
             if (!seen.add(url)) continue
@@ -77,6 +123,21 @@ class SiteCrawler(private val fetch: suspend (url: String) -> String) {
             }
         }
         return pages.values.toList()
+    }
+
+    private val href = Regex("""href\s*=\s*["']([^"'#?\s]+)""", RegexOption.IGNORE_CASE)
+
+    /** Liens d'une page, en adresses complètes, sans paramètres ni ancre. */
+    private fun links(html: String, base: String): List<String> {
+        val origin = Regex("""^https?://[^/]+""").find(base)?.value.orEmpty()
+        return href.findAll(html).map { it.groupValues[1] }.mapNotNull { link ->
+            when {
+                link.startsWith("http") -> link
+                link.startsWith("//") -> "https:$link"
+                link.startsWith("/") -> origin + link
+                else -> null
+            }
+        }.distinct().toList()
     }
 
     /** Lit une fiche ; null si la page n'a pas de recette lisible ou si elle n'a rien à faire au catalogue. */

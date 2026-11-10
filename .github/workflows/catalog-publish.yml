@@ -36,9 +36,12 @@ jobs:
           run="${RUN:-$(gh run list --workflow catalog.yml --limit 1 --json databaseId -q '.[0].databaseId')}"
           echo "Collecte : run $run"
           gh run download "$run" --dir parts
+          # Sites lus par rubriques (750g) : collectés par un autre workflow.
+          extra="$(gh run list --workflow catalog-extra.yml --limit 1 --json databaseId -q '.[0].databaseId' || true)"
+          if [ -n "$extra" ]; then gh run download "$extra" --dir parts || echo "Pas encore de fichier pour les sites par rubriques."; fi
           mkdir -p catalog
           # Pour chaque site, le fichier du dernier passage (il contient tout ce qui a été lu avant).
-          for site in cuisineaz ptitchef marmiton chefsimon hellofresh jow jdf; do
+          for site in cuisineaz ptitchef marmiton chefsimon hellofresh jow jdf 750g; do
             last=$(ls -d parts/catalog-$site-* 2>/dev/null | sort -V | tail -1)
             if [ -n "$last" ]; then cp "$last/$site.jsonl" catalog/; fi
           done

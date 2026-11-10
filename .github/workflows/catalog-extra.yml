@@ -1,0 +1,37 @@
+name: Catalogue — sites par rubriques
+
+# Sites sans sitemap de recettes (750g) : lus par leurs rubriques paginées, à part de la collecte principale pour ne pas
+# attendre qu'elle se termine. Se lance en poussant tools/catalog/extra.conf.
+on:
+  workflow_dispatch:
+  push:
+    branches: ["claude/**"]
+    paths:
+      - "tools/catalog/extra.conf"
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  pass1:
+    strategy:
+      fail-fast: false
+      matrix:
+        site: ["750g"]
+    uses: ./.github/workflows/catalog-pass.yml
+    with:
+      site: ${{ matrix.site }}
+      pass: "1"
+
+  pass2:
+    needs: pass1
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        site: ["750g"]
+    uses: ./.github/workflows/catalog-pass.yml
+    with:
+      site: ${{ matrix.site }}
+      pass: "2"
