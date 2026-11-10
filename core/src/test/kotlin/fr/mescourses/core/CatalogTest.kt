@@ -112,6 +112,29 @@ class CatalogTest {
         assertTrue(fr.mescourses.core.catalog.CatalogSources.all.map { it.siteId }.containsAll(listOf("cuisineaz", "ptitchef", "marmiton", "jow")))
     }
 
+    @Test fun site_sans_sitemap_lu_par_ses_rubriques_paginees() = kotlinx.coroutines.test.runTest {
+        fun list(vararg ids: Int) = ids.joinToString("") { """<a class="card" href="/tarte-$it-r$it.htm">x</a><a href="/recettes-plats/pates/">rubrique</a>""" }
+        val site = mapOf(
+            "https://www.750g.com/recettes-plats/pates/" to list(1, 2),
+            "https://www.750g.com/recettes-plats/pates/?page=2" to list(3) + """<a href="https://www.750g.com/tarte-1-r1.htm?utm=x">encore</a>""",
+            // Après la dernière page, le site ressert des recettes déjà vues : on s'arrête.
+            "https://www.750g.com/recettes-plats/pates/?page=3" to list(1, 2),
+            // Sous-rubrique : les mêmes recettes, plus une.
+            "https://www.750g.com/recettes-plats/pates/lasagnes/" to list(2, 4),
+        )
+        val fetched = mutableListOf<String>()
+        val crawler = fr.mescourses.core.catalog.SiteCrawler { url -> fetched += url; site[url] ?: error("404") }
+        val source = fr.mescourses.core.catalog.CatalogSource(
+            "750g", emptyList(), null, Regex("""750g\.com/[^/]+-r\d+\.htm$"""),
+            listings = listOf("https://www.750g.com/recettes-plats/pates/", "https://www.750g.com/recettes-plats/pates/lasagnes/"),
+        )
+        // Chaque recette une seule fois, même présente dans deux rubriques ou sur deux pages.
+        assertEquals((1..4).map { "https://www.750g.com/tarte-$it-r$it.htm" }.toSet(), crawler.pages(source).map { it.url }.toSet())
+        assertEquals(4, crawler.pages(source).size)
+        assertFalse("https://www.750g.com/recettes-plats/pates/?page=4" in fetched, fetched.toString())
+        assertNotNull(fr.mescourses.core.catalog.CatalogSources.byId("750g"))
+    }
+
     // ---------- Recherche locale et mise à jour ----------
 
     private fun local(url: String, title: String, category: String?, rating: String?, vararg ingredients: String) =

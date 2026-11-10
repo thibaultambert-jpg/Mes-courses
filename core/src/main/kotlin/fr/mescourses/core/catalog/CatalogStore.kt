@@ -160,7 +160,7 @@ class CatalogUpdater(
             val name = RecipeSites.byId(source.siteId)?.name ?: source.siteId
             onProgress("Nouveautés de $name…")
             val pages = try {
-                crawler.pages(source)
+                crawler.pages(source, listingPages = 2)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 failed += name
