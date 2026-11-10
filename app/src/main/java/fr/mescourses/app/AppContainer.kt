@@ -11,8 +11,10 @@ import fr.mescourses.app.data.AppDatabase
 import fr.mescourses.app.data.MIGRATION_1_2
 import fr.mescourses.app.data.MIGRATION_2_3
 import fr.mescourses.app.data.MIGRATION_3_4
+import fr.mescourses.app.data.MIGRATION_4_5
 import fr.mescourses.app.data.RoomMealPlanRepository
 import fr.mescourses.app.data.RoomMenuDraftRepository
+import fr.mescourses.app.data.RoomMenuHistoryRepository
 import fr.mescourses.app.data.RoomProductMemory
 import fr.mescourses.app.data.RoomRecipeRepository
 import fr.mescourses.app.data.RoomShoppingRepository
@@ -33,7 +35,10 @@ import fr.mescourses.core.leclerc.LeclercClient
 import fr.mescourses.core.retail.Retailer
 import fr.mescourses.core.retail.RetailerProductMemory
 import fr.mescourses.core.carrefour.ShoppingPrompt
-import fr.mescourses.core.menu.MenuConfig
+import fr.mescourses.core.menu.CandidateFinder
+import fr.mescourses.core.menu.CandidatePool
+import fr.mescourses.core.menu.MenuHistory
+import fr.mescourses.core.menu.MenuWishes
 import fr.mescourses.core.menu.MenuPrompt
 import fr.mescourses.core.menu.MenuTools
 import fr.mescourses.core.menu.MenuValidator
@@ -75,12 +80,13 @@ class AppContainer(context: Context) {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val db = Room.databaseBuilder(context, AppDatabase::class.java, "mes-courses.db")
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
         .build()
     val recipes = RoomRecipeRepository(db.recipeDao())
     val plan = RoomMealPlanRepository(db.mealDao())
     val shopping = RoomShoppingRepository(db.shoppingDao())
     val draft = RoomMenuDraftRepository(db.menuDraftDao())
+    val menuHistory = RoomMenuHistoryRepository(db.menuHistoryDao())
     private val roomProductMemory = RoomProductMemory(db.ingredientProductDao())
     /** Mémoire des choix de l'enseigne donnée (les identifiants produit diffèrent d'une enseigne à l'autre). */
     fun productMemory(r: Retailer = activeRetailer.value): ProductMemory = RetailerProductMemory(r, roomProductMemory)
@@ -240,10 +246,27 @@ class AppContainer(context: Context) {
 
     fun defaultPortions(): Portions = settings.current.let { Portions(it.householdSize, it.children) }
 
-    suspend fun menuSystemPrompt(config: MenuConfig): String =
-        MenuPrompt.system(LocalDate.now(), config, recipes.all(), settings.current.preferences)
+    /** Recettes trouvées sur les sites pour le menu en cours ; vide = le chef invente les plats (hors ligne). */
+    val candidates = CandidatePool()
+    /** Envies du menu en cours, pour le bilan que les outils renvoient au modèle. */
+    @Volatile var currentWishes: MenuWishes? = null
 
-    fun menuTools(): List<AgentTool> = MenuTools(draft, recipes, ::defaultPortions).all()
+    val candidateFinder = CandidateFinder(recipeSearch, importer, recipes, menuHistory, pantry = { settings.current.pantryList() })
+
+    /** Prompt du menu : choix parmi les candidates des sites, ou invention des plats s'il n'y en a pas. */
+    suspend fun menuSystemPrompt(wishes: MenuWishes): String {
+        val today = LocalDate.now()
+        val cookbook = recipes.all()
+        val pool = candidates.all()
+        return if (pool.isEmpty()) MenuPrompt.system(today, wishes, cookbook, settings.current.preferences)
+        else MenuPrompt.systemWeb(today, wishes, pool, MenuHistory(menuHistory.all(), cookbook, today), settings.current.preferences)
+    }
+
+    fun menuTools(): List<AgentTool> = MenuTools(
+        draft, recipes, ::defaultPortions, candidates,
+        wishes = { currentWishes },
+        search = { words -> candidateFinder.search(words, currentWishes ?: MenuWishes(settings.current.meals, defaultPortions())) },
+    ).all()
 
     fun shoppingSystemPrompt(): String = ShoppingPrompt.system(settings.current.preferOrganic, settings.current.preferences, activeRetailer.value)
 
@@ -259,5 +282,8 @@ class AppContainer(context: Context) {
         draft = draft,
         childFactor = { settings.current.childFactor },
         pantry = { settings.current.pantryList() },
+        history = menuHistory,
+        // Recette déjà lue pendant la recherche ; sinon (app relancée entre-temps) on relit la page.
+        webRecipe = { url -> candidates.byUrl(url)?.recipe ?: importer.import(url) },
     )
 }

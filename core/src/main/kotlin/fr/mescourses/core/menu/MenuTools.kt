@@ -34,7 +34,7 @@ class MenuTools(
     /** Avec des candidates : le menu se compose par numéros ; sans (hors ligne) : le chef invente, comme avant. */
     fun all(): List<AgentTool> =
         if (pool.size > 0) listOfNotNull(pickMenu, swapDish, pickDish, removeDish, searchRecipes.takeIf { search != null }, createDish, addGuests, setDishPeople)
-        else listOf(proposeMenu, replaceDish, addDish, removeDish, addGuests, setDishPeople)
+        else listOf(proposeMenu, replaceDish, addDish, removeDish, createDish, addGuests, setDishPeople)
 
     private fun tool(name: String, description: String, parameters: JsonObject, run: suspend (JsonObject) -> JsonElement) =
         object : AgentTool {

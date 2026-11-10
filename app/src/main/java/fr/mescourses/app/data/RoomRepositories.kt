@@ -3,6 +3,7 @@ package fr.mescourses.app.data
 import fr.mescourses.core.model.Ingredient
 import fr.mescourses.core.model.ItemSource
 import fr.mescourses.core.model.MenuDish
+import fr.mescourses.core.model.MenuHistoryEntry
 import fr.mescourses.core.model.PlannedMeal
 import fr.mescourses.core.model.Portions
 import fr.mescourses.core.model.Recipe
@@ -11,6 +12,7 @@ import fr.mescourses.core.model.ShoppingItem
 import fr.mescourses.core.model.stripAccents
 import fr.mescourses.core.repository.MealPlanRepository
 import fr.mescourses.core.repository.MenuDraftRepository
+import fr.mescourses.core.repository.MenuHistoryRepository
 import fr.mescourses.core.repository.RecipeRepository
 import fr.mescourses.core.repository.ShoppingRepository
 import kotlinx.coroutines.flow.Flow
@@ -104,6 +106,7 @@ class RoomMenuDraftRepository(private val dao: MenuDraftDao) : MenuDraftReposito
     private fun MenuDraftEntity.toModel() = MenuDish(
         title, description, Portions(adults, children), recipeId,
         runCatching { json.decodeFromString(stringsSer, mainIngredients) }.getOrDefault(emptyList()),
+        sourceUrl, imageUrl, totalMinutes, invented,
     )
 
     override fun observe(): Flow<List<MenuDish>> = dao.observe().map { l -> l.map { it.toModel() } }
@@ -113,9 +116,26 @@ class RoomMenuDraftRepository(private val dao: MenuDraftDao) : MenuDraftReposito
             MenuDraftEntity(
                 i, d.title, d.description, d.portions.adults, d.portions.children, d.recipeId,
                 json.encodeToString(stringsSer, d.mainIngredients),
+                d.sourceUrl, d.imageUrl, d.totalMinutes, d.invented,
             )
         },
     )
+}
+
+class RoomMenuHistoryRepository(private val dao: MenuHistoryDao) : MenuHistoryRepository {
+    override suspend fun all(): List<MenuHistoryEntry> = dao.all().map {
+        MenuHistoryEntry(
+            it.id, it.date, it.title, it.sourceUrl, it.kind,
+            runCatching { json.decodeFromString(stringsSer, it.mainIngredients) }.getOrDefault(emptyList()),
+        )
+    }
+
+    override suspend fun add(entries: List<MenuHistoryEntry>) {
+        if (entries.isEmpty()) return
+        dao.insertAll(entries.map { MenuHistoryEntity(0, it.date, it.title, it.sourceUrl, it.kind, json.encodeToString(stringsSer, it.mainIngredients)) })
+        // Un an suffit largement (la variété se joue sur quelques semaines).
+        dao.deleteBefore(java.time.LocalDate.now().minusYears(1).toString())
+    }
 }
 
 private fun ShoppingItemEntity.toModel() = ShoppingItem(
