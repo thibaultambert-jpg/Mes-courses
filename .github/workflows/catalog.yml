@@ -1,0 +1,31 @@
+name: Catalogue de recettes
+
+# Outils du catalogue local de recettes. Pour l'instant : la sonde des sites (sitemaps, volumes, fiches lisibles).
+on:
+  workflow_dispatch:
+  push:
+    branches: ["claude/**"]
+    paths:
+      - "tools/catalog/**"
+      - ".github/workflows/catalog.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sonde des sites
+        run: python3 tools/catalog/probe.py | tee probe.md
+      - name: Résumé
+        if: always()
+        run: cat probe.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sonde-sites
+          path: probe.md
