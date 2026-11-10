@@ -77,6 +77,17 @@ object CatalogSources {
             "jdf", listOf("https://cuisine.journaldesfemmes.fr/sitemap/video-recipe/"),
             null, Regex("""journaldesfemmes\.fr/recette/\d+-[^/]+$"""),
         ),
+        // Cuisine Actuelle : pas de sitemap de recettes non plus ; quatre rubriques couvrent le site.
+        CatalogSource(
+            "cuisineactuelle", emptyList(), null, Regex("""cuisineactuelle\.fr/recettes/[^/]+-\d+$"""),
+            requestsPerSecond = 1.0,
+            listings = listOf(
+                "https://www.cuisineactuelle.fr/recettes-de-cuisine/plat",
+                "https://www.cuisineactuelle.fr/recettes-de-cuisine/aperitif",
+                "https://www.cuisineactuelle.fr/recettes-de-cuisine/entree",
+                "https://www.cuisineactuelle.fr/recettes-de-cuisine/dessert",
+            ),
+        ),
     )
 
     /** Sites lus par leurs rubriques : collectés à part des sites à sitemap (workflow « Catalogue — sites par rubriques »). */

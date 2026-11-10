@@ -1,7 +1,8 @@
 name: Catalogue — sites par rubriques
 
-# Sites sans sitemap de recettes (750g) : lus par leurs rubriques paginées, à part de la collecte principale pour ne pas
-# attendre qu'elle se termine. Se lance en poussant tools/catalog/extra.conf.
+# Sites sans sitemap de recettes (750g, Cuisine Actuelle) : lus par leurs rubriques paginées, à part de la collecte
+# principale pour ne pas attendre qu'elle se termine. Se lance en poussant tools/catalog/extra.conf, qui nomme les sites
+# à lire (SITES) : un site déjà en cours de collecte ne doit pas y figurer.
 on:
   workflow_dispatch:
   push:
@@ -9,28 +10,36 @@ on:
     paths:
       - "tools/catalog/extra.conf"
 
-concurrency:
-  group: ${{ github.workflow }}
-  cancel-in-progress: false
-
 jobs:
+  sites:
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.read.outputs.list }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        run: |
+          . tools/catalog/extra.conf
+          echo "list=$(printf '%s\n' $SITES | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+
   pass1:
+    needs: sites
     strategy:
       fail-fast: false
       matrix:
-        site: ["750g"]
+        site: ${{ fromJSON(needs.sites.outputs.list) }}
     uses: ./.github/workflows/catalog-pass.yml
     with:
       site: ${{ matrix.site }}
       pass: "1"
 
   pass2:
-    needs: pass1
+    needs: [sites, pass1]
     if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
-        site: ["750g"]
+        site: ${{ fromJSON(needs.sites.outputs.list) }}
     uses: ./.github/workflows/catalog-pass.yml
     with:
       site: ${{ matrix.site }}
