@@ -17,7 +17,7 @@ import kotlin.test.assertTrue
 class MenuToolsTest {
     private val recipes = InMemoryRecipes()
     private val draft = InMemoryDraft()
-    private val tools = MenuTools(draft, recipes) { Portions(2, 1) }.all().associateBy { it.name }
+    private val tools = MenuTools(draft, recipes, { Portions(2, 1) }).all().associateBy { it.name }
 
     private suspend fun run(name: String, json: String) =
         tools.getValue(name).execute(Json.parseToJsonElement(json) as JsonObject).jsonObject

@@ -1,11 +1,13 @@
 package fr.mescourses.core.menu
 
 import fr.mescourses.core.model.MenuDish
+import fr.mescourses.core.model.MenuHistoryEntry
 import fr.mescourses.core.model.PlannedMeal
 import fr.mescourses.core.model.Recipe
 import fr.mescourses.core.model.RecipeStatus
 import fr.mescourses.core.repository.MealPlanRepository
 import fr.mescourses.core.repository.MenuDraftRepository
+import fr.mescourses.core.repository.MenuHistoryRepository
 import fr.mescourses.core.repository.RecipeRepository
 import fr.mescourses.core.repository.ShoppingRepository
 import fr.mescourses.core.shopping.ShoppingListMerger
@@ -34,6 +36,10 @@ class MenuValidator(
     private val today: () -> LocalDate = { LocalDate.now() },
     /** Produits du placard (Réglages) : jamais ajoutés à la liste. */
     private val pantry: () -> List<String> = { fr.mescourses.core.shopping.Pantry.DEFAULTS },
+    /** Historique durable des menus (variété des semaines suivantes). */
+    private val history: MenuHistoryRepository? = null,
+    /** Recette d'un plat venu d'un site, d'après son adresse : déjà lue pendant la recherche, sinon relue sur la page. */
+    private val webRecipe: suspend (url: String) -> Recipe? = { null },
 ) {
     suspend fun validate(onProgress: suspend (done: Int, total: Int, current: String) -> Unit = { _, _, _ -> }): ValidationResult {
         val dishes = draft.get()
@@ -45,11 +51,19 @@ class MenuValidator(
         val index = CookbookIndex(recipes.all())
         // Ingrédients déjà prévus par les plats précédents : proposés aux recettes suivantes.
         val bought = LinkedHashSet<String>()
+        val past = mutableListOf<MenuHistoryEntry>()
 
         dishes.forEachIndexed { i, dish ->
             onProgress(i, dishes.size, dish.title)
-            val existing = dish.recipeId?.let { recipes.get(it) } ?: index.find(dish.title)?.takeUnless { it.banned }
-            val recipe = existing ?: generate(dish, bought.toList()) ?: run { failures += dish.title; return@forEachIndexed }
+            // Dans l'ordre : recette du livre, recette du site (aucune génération), puis recette écrite par le chef.
+            val existing = dish.recipeId?.let { recipes.get(it) }
+                ?: dish.sourceUrl?.let { index.byUrl(it) }
+                ?: index.find(dish.title)?.takeUnless { it.banned || dish.sourceUrl != null }
+            val fromSite = if (existing == null) dish.sourceUrl?.let { url -> runCatching { webRecipe(url) }.getOrNull() } else null
+            val recipe = existing
+                ?: fromSite?.copy(id = 0, tags = (fromSite.tags + "menu").distinct())
+                ?: generate(dish, bought.toList())
+                ?: run { failures += dish.title; return@forEachIndexed }
             recipe.ingredients.map { it.name.lowercase() }.filter { it.length > 2 }.forEach { bought += it }
 
             val saved = recipe.copy(
@@ -65,8 +79,18 @@ class MenuValidator(
             shopping.add(list)
             items += list.size
             plan.add(PlannedMeal(date = date, recipeId = id, recipeTitle = saved.title, portions = dish.portions))
+            val names = saved.ingredients.map { it.name }
+            past += MenuHistoryEntry(
+                date = date,
+                title = saved.title,
+                sourceUrl = saved.sourceUrl,
+                kind = DishKinds.of(saved.title, names).name,
+                mainIngredients = names.filterNot { fr.mescourses.core.shopping.Pantry.isStaple(it, pantry()) }
+                    .map { IngredientOverlap.key(fr.mescourses.core.ingredients.FoodName.clean(it)) }.filter { it.isNotEmpty() }.distinct(),
+            )
         }
         onProgress(dishes.size, dishes.size, "")
+        history?.add(past)
         // Les plats en échec restent dans le brouillon pour pouvoir réessayer.
         draft.set(dishes.filter { it.title in failures })
         return ValidationResult(created, reused, items, failures)

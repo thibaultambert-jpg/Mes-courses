@@ -2,7 +2,7 @@ package fr.mescourses.core
 
 import fr.mescourses.core.cart.CartPlanner
 import fr.mescourses.core.carrefour.Product
-import fr.mescourses.core.menu.MenuConfig
+import fr.mescourses.core.menu.MenuWishes
 import fr.mescourses.core.menu.MenuPrompt
 import fr.mescourses.core.menu.MenuTextParser
 import fr.mescourses.core.menu.RecipeResponseParser
@@ -78,7 +78,7 @@ class MenuParsingTest {
             Recipe(title = "Hachis parmentier", lastCookedAt = "2026-11-01"),
             Recipe(title = "Vieux plat", lastCookedAt = "2026-01-01"),
         )
-        val p = MenuPrompt.system(LocalDate.of(2026, 11, 7), MenuConfig(5, Portions(2, 1), "rapide"), cookbook)
+        val p = MenuPrompt.system(LocalDate.of(2026, 11, 7), MenuWishes(5, Portions(2, 1), wishes = "rapide"), cookbook)
         assertTrue("bio" in p && "saison" in p && "sains" in p)
         assertTrue("Mutualise les ingrédients" in p && "ingrédients : a, b, c" in p)
         assertTrue("poireau" in p)

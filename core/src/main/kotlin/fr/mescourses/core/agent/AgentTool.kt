@@ -55,6 +55,12 @@ class ParamsBuilder {
             putJsonObject("items") { put("type", "string") }
         })
 
+    fun integerArray(name: String, description: String, required: Boolean = true) =
+        add(name, required, buildJsonObject {
+            put("type", "array"); put("description", description)
+            putJsonObject("items") { put("type", "integer") }
+        })
+
     private fun add(name: String, isRequired: Boolean, schema: JsonObject) {
         props[name] = schema
         if (isRequired) required += name
@@ -92,6 +98,15 @@ fun JsonObject.strList(key: String): List<String> = when (val v = this[key]) {
     is JsonPrimitive -> v.contentOrNull.orEmpty().split('\n', ';', ',').map { it.trim() }.filter { it.isNotEmpty() }
     else -> emptyList()
 }
+
+/** Liste de nombres : vrai tableau, nombres en texte, ou chaîne « 1, 4 et 7 ». */
+fun JsonObject.intList(key: String): List<Int> = when (val v = this[key]) {
+    is JsonArray -> v.flatMap { e -> (e as? JsonPrimitive)?.contentOrNull?.let { numbersIn(it) } ?: emptyList() }
+    is JsonPrimitive -> numbersIn(v.contentOrNull.orEmpty())
+    else -> emptyList()
+}
+
+private fun numbersIn(text: String): List<Int> = Regex("""\d+""").findAll(text).mapNotNull { it.value.toIntOrNull() }.toList()
 
 fun toolOk(message: String, data: JsonElement? = null): JsonObject = buildJsonObject {
     put("ok", true)

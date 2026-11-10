@@ -68,6 +68,26 @@ data class MenuDish(
     val recipeId: Long? = null,
     /** Ingrédients principaux annoncés par le LLM, pour mesurer ce qui est partagé entre les plats. */
     val mainIngredients: List<String> = emptyList(),
+    /** Adresse de la recette quand le plat vient d'un site : ses ingrédients sont lus sur la page, pas générés. */
+    val sourceUrl: String? = null,
+    val imageUrl: String? = null,
+    val totalMinutes: Int? = null,
+    /** Recette créée par le chef (LLM) à la demande de l'utilisateur. */
+    val invented: Boolean = false,
+)
+
+/** Un plat d'un menu validé, gardé pour varier les semaines suivantes (jamais effacé avec le menu). */
+@Serializable
+data class MenuHistoryEntry(
+    val id: Long = 0,
+    /** Date de validation du menu (ISO yyyy-MM-dd). */
+    val date: String,
+    val title: String,
+    val sourceUrl: String? = null,
+    /** Nom de [fr.mescourses.core.menu.DishKind]. */
+    val kind: String = "",
+    /** Clés des ingrédients frais du plat (voir ShoppingListMerger.key). */
+    val mainIngredients: List<String> = emptyList(),
 )
 
 /** Un plat du menu de la semaine validé, à cocher une fois cuisiné. */

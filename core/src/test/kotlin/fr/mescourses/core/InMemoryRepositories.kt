@@ -1,12 +1,14 @@
 package fr.mescourses.core
 
 import fr.mescourses.core.model.MenuDish
+import fr.mescourses.core.model.MenuHistoryEntry
 import fr.mescourses.core.model.PlannedMeal
 import fr.mescourses.core.model.Recipe
 import fr.mescourses.core.model.ShoppingItem
 import fr.mescourses.core.model.stripAccents
 import fr.mescourses.core.repository.MealPlanRepository
 import fr.mescourses.core.repository.MenuDraftRepository
+import fr.mescourses.core.repository.MenuHistoryRepository
 import fr.mescourses.core.repository.RecipeRepository
 import fr.mescourses.core.repository.ShoppingRepository
 import kotlinx.coroutines.flow.Flow
@@ -56,4 +58,10 @@ class InMemoryDraft : MenuDraftRepository {
     override fun observe(): Flow<List<MenuDish>> = state
     override suspend fun get() = state.value
     override suspend fun set(dishes: List<MenuDish>) { state.value = dishes }
+}
+
+class InMemoryHistory : MenuHistoryRepository {
+    val state = MutableStateFlow<List<MenuHistoryEntry>>(emptyList())
+    override suspend fun all() = state.value
+    override suspend fun add(entries: List<MenuHistoryEntry>) { state.value = state.value + entries }
 }

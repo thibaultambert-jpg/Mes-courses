@@ -8,18 +8,11 @@ import fr.mescourses.core.model.RecipeStatus
 import fr.mescourses.core.season.Seasonality
 import java.time.LocalDate
 
-/** Réglages d'une génération de menu. */
-data class MenuConfig(
-    val meals: Int,
-    val portions: Portions,
-    val wishes: String = "",
-)
-
 object MenuPrompt {
 
     fun system(
         today: LocalDate,
-        config: MenuConfig,
+        config: MenuWishes,
         cookbook: List<Recipe>,
         preferences: String = "",
     ): String {
@@ -46,7 +39,7 @@ object MenuPrompt {
             if (recent.isNotEmpty()) appendLine("- Déjà mangés ces 3 dernières semaines, à éviter : ${recent.joinToString(" ; ")}.")
             appendLine()
             appendLine("Le menu demandé : ${config.meals} repas, par défaut pour ${config.portions.label()}.")
-            if (config.wishes.isNotBlank()) appendLine("Envies de la semaine : ${config.wishes}")
+            wishLines(config).forEach(::appendLine)
             appendLine()
             appendLine("OUTILS :")
             appendLine("- propose_menu : pour proposer le menu complet, une ligne par plat : « Titre — courte description — ingrédients : a, b, c » (3 à 6 ingrédients principaux).")
@@ -59,7 +52,66 @@ object MenuPrompt {
         }
     }
 
-    fun firstRequest(config: MenuConfig): String =
+    /** Les envies du formulaire, en clair pour le modèle. */
+    private fun wishLines(w: MenuWishes): List<String> = buildList {
+        if (w.hasQuotas) add("Composition voulue : ${w.compositionLabel()} ; le reste est libre.")
+        w.time.maxMinutes?.let { add("Temps en cuisine : $it minutes au plus par repas.") }
+        if (w.useUp.isNotEmpty()) add("À écouler en priorité (déjà à la maison) : ${w.useUp.joinToString(", ")}.")
+        if (w.wishes.isNotBlank()) add("Envies de la semaine : ${w.wishes}")
+    }
+
+    /**
+     * Prompt du menu bâti sur de vraies recettes : le modèle ne rédige rien, il choisit parmi les [candidates]
+     * (numérotées comme dans le vivier) celles qui vont le mieux ensemble.
+     */
+    fun systemWeb(
+        today: LocalDate,
+        wishes: MenuWishes,
+        candidates: List<Candidate>,
+        history: MenuHistory,
+        preferences: String = "",
+    ): String = buildString {
+        appendLine("Tu es « Mes courses », un assistant qui compose le menu de la semaine d'une famille à partir de vraies recettes trouvées sur des sites de cuisine. Tu parles français, de façon concise.")
+        appendLine("Nous sommes le ${DateResolver.label(today)}.")
+        appendLine()
+        appendLine("RECETTES CANDIDATES (numéro, titre, [type · durée · saison], ingrédients à acheter) :")
+        candidates.forEachIndexed { i, c -> appendLine(c.line(i + 1)) }
+        appendLine()
+        appendLine("COMMENT CHOISIR, par ordre d'importance :")
+        appendLine("1. Le menu compte exactement ${wishes.meals} plats, par défaut pour ${wishes.portions.label()}.")
+        if (wishes.hasQuotas) appendLine("2. Respecte la composition voulue : ${wishes.compositionLabel()} ; le reste est libre.")
+        else appendLine("2. Varie les types : du végé, du poisson 1 à 2 fois, peu de viande.")
+        appendLine("3. Préfère les recettes aux produits de saison ; évite celles marquées « hors saison ».")
+        appendLine("4. Liste de courses courte : choisis des recettes qui partagent leurs ingrédients frais (un légume, une crème, un fromage entamé sert à 2 plats).")
+        appendLine("5. Varie quand même : pas deux fois la même protéine ni deux plats qui se ressemblent.")
+        if (wishes.useUp.isNotEmpty()) appendLine("- À écouler en priorité (déjà à la maison) : ${wishes.useUp.joinToString(", ")}.")
+        if (wishes.wishes.isNotBlank()) appendLine("- Envies de la semaine : ${wishes.wishes}")
+        if (preferences.isNotBlank()) appendLine("- Préférences du foyer : $preferences")
+        if (history.lastWeekIngredients.isNotEmpty()) appendLine("- Déjà beaucoup mangé la semaine dernière, à ne pas répéter : ${history.lastWeekIngredients.take(10).joinToString(", ")}.")
+        appendLine()
+        appendLine("OUTILS :")
+        appendLine("- propose_menu : le menu complet, avec les NUMÉROS des candidates retenues.")
+        appendLine("- replace_dish (numéro du plat + numéro de la candidate), add_dish (numéro de la candidate), remove_dish.")
+        appendLine("- search_recipes : si aucune candidate ne convient à ce que demande l'utilisateur, cherche sur les sites ; les résultats deviennent des candidates.")
+        appendLine("- create_dish : seulement si l'utilisateur demande une recette inventée par toi (« invente », « crée une recette »).")
+        appendLine("- add_guests : quand l'utilisateur AJOUTE des convives à un plat ; set_dish_people : quand il donne le nombre TOTAL de personnes.")
+        appendLine("Les outils renvoient le bilan du menu (saison, ingrédients partagés, composition) : corrige ce qu'il signale.")
+        appendLine("Chaque message de l'utilisateur commence par l'état actuel du menu entre crochets : appuie-toi dessus.")
+        appendLine("Après un outil, réponds en une ou deux phrases, sans recopier les recettes.")
+    }
+
+    fun firstRequestWeb(wishes: MenuWishes): String =
+        "Choisis les ${wishes.meals} recettes candidates qui composent le meilleur menu de la semaine" +
+            (if (wishes.hasQuotas) " (${wishes.compositionLabel()})" else "") +
+            " : de saison, variées, et qui partagent des ingrédients. Utilise l'outil propose_menu avec leurs numéros."
+
+    /** Demande d'une recette inventée, à la place d'un plat ([replace], à partir de 1) ou en plus. */
+    fun inventRequest(idea: String, replace: Int?): String =
+        "Invente une recette" + (if (idea.isNotBlank()) " : $idea" else " de saison qui réutilise des ingrédients des autres plats") + ". " +
+            (if (replace != null) "Elle remplace le plat $replace : utilise create_dish avec numero = $replace." else "Ajoute-la au menu avec create_dish.") +
+            " Donne ses ingrédients principaux."
+
+    fun firstRequest(config: MenuWishes): String =
         "Propose un menu de ${config.meals} plats pour ${config.portions.label()}" +
             (if (config.wishes.isNotBlank()) ", en tenant compte de : ${config.wishes}" else "") +
             ". Choisis des plats qui partagent des ingrédients. Utilise l'outil propose_menu."

@@ -1,0 +1,323 @@
+package fr.mescourses.core.menu
+
+import fr.mescourses.core.ingredients.FoodName
+import fr.mescourses.core.model.MenuDish
+import fr.mescourses.core.model.Portions
+import fr.mescourses.core.model.Recipe
+import fr.mescourses.core.model.stripAccents
+import fr.mescourses.core.recipes.RecipeFilter
+import fr.mescourses.core.recipes.RecipeFilters
+import fr.mescourses.core.recipes.RecipeHit
+import fr.mescourses.core.recipes.RecipeImporter
+import fr.mescourses.core.recipes.RecipeSearcher
+import fr.mescourses.core.recipes.RecipeSite
+import fr.mescourses.core.recipes.RecipeSites
+import fr.mescourses.core.repository.MenuHistoryRepository
+import fr.mescourses.core.repository.RecipeRepository
+import fr.mescourses.core.season.Seasonality
+import fr.mescourses.core.shopping.Pantry
+import fr.mescourses.core.shopping.ShoppingListMerger
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import java.time.LocalDate
+import java.time.temporal.ChronoField
+
+/**
+ * Une vraie recette (lue sur un site ou tirée du livre) qui peut entrer au menu, avec ce qu'il faut pour la
+ * comparer aux autres : saison, type de plat, ingrédients à acheter.
+ */
+data class Candidate(
+    val recipe: Recipe,
+    val kind: DishKind,
+    /** Produits vraiment de saison de la recette, et ceux qui ne le sont pas ce mois-ci. */
+    val seasonal: List<String>,
+    val outOfSeason: List<String>,
+    /** Clés des ingrédients à acheter (hors placard), pour mesurer ce que les plats partagent. */
+    val keys: Set<String>,
+    /** Les mêmes, lisibles, dans l'ordre de la recette (8 au plus). */
+    val mainIngredients: List<String>,
+    val missing: List<PlateBalance.Component>,
+    val protein: String?,
+    val fromCookbook: Boolean,
+    /** Note propre à la recette, indépendante du reste du menu. */
+    val base: Double,
+) {
+    val minutes: Int? get() = listOfNotNull(recipe.prepMinutes, recipe.cookMinutes).takeIf { it.isNotEmpty() }?.sum()
+    val siteName: String? get() = recipe.sourceUrl?.let { RecipeSites.forUrl(it)?.name }
+
+    fun toDish(portions: Portions) = MenuDish(
+        title = recipe.title,
+        description = recipe.description.orEmpty(),
+        portions = portions,
+        recipeId = recipe.id.takeIf { it != 0L },
+        mainIngredients = mainIngredients,
+        sourceUrl = recipe.sourceUrl,
+        imageUrl = recipe.imageUrl,
+        totalMinutes = minutes,
+    )
+
+    /** Ligne du prompt : « 3. Gratin de chou-fleur [viande · 35 min · saison : chou-fleur] — chou-fleur, jambon, lait ». */
+    fun line(number: Int): String {
+        val facts = listOfNotNull(
+            kind.label,
+            minutes?.let { "$it min" },
+            seasonal.takeIf { it.isNotEmpty() }?.let { "saison : ${it.joinToString(", ")}" },
+            outOfSeason.takeIf { it.isNotEmpty() }?.let { "hors saison : ${it.joinToString(", ")}" },
+            if (fromCookbook) (if (recipe.favorite) "favori" else "déjà cuisiné") else null,
+        )
+        return "$number. ${recipe.title} [${facts.joinToString(" · ")}] — ${mainIngredients.take(6).joinToString(", ")}"
+    }
+
+    companion object {
+        fun of(recipe: Recipe, wishes: MenuWishes, history: MenuHistory, today: LocalDate, pantry: List<String>, fromCookbook: Boolean, rating: Double? = null): Candidate {
+            val bought = recipe.ingredients.map { FoodName.clean(it.name) }.filter { it.isNotBlank() && !Pantry.isStaple(it, pantry) }
+            val keys = bought.map(IngredientOverlap::key).filter { it.isNotEmpty() }.toSet()
+            val names = recipe.ingredients.map { it.name }
+            val season = Seasonality.report(listOf(recipe.title) + names, today.month)
+            val missing = PlateBalance.missing(listOf(recipe.title) + names)
+            val useUp = wishes.useUp.map(IngredientOverlap::key).filter { it.isNotEmpty() }
+                .count { u -> keys.any { it == u || " $u " in " $it " } }
+            val base = min(season.seasonal.size, 4) * 2.0 -
+                season.outOfSeason.size * 4.0 +
+                (if (missing.isEmpty()) 2.0 else -2.0 * missing.size) +
+                useUp * 3.0 -
+                history.repetition(keys) +
+                (rating?.let { (it - 3.5).coerceIn(-1.0, 1.5) } ?: 0.0) +
+                (if (recipe.favorite) 1.0 else 0.0)
+            return Candidate(
+                recipe = recipe,
+                kind = DishKinds.of(recipe.title, names),
+                seasonal = season.seasonal,
+                outOfSeason = season.outOfSeason,
+                keys = keys,
+                mainIngredients = bought.distinctBy(IngredientOverlap::key).take(8),
+                missing = missing,
+                protein = PlateBalance.protein(listOf(recipe.title) + names),
+                fromCookbook = fromCookbook,
+                base = base,
+            )
+        }
+
+        private fun min(a: Int, b: Int) = if (a < b) a else b
+    }
+}
+
+/** Candidates de la session, numérotées à partir de 1 : le LLM désigne une recette par son numéro. */
+class CandidatePool {
+    private val items = ArrayList<Candidate>()
+
+    @Synchronized fun set(list: List<Candidate>) { items.clear(); add(list) }
+
+    /** Ajoute les candidates nouvelles (même adresse ou même titre = déjà là) et renvoie leurs numéros. */
+    @Synchronized fun add(list: List<Candidate>): List<Int> = list.map { c ->
+        val existing = items.indexOfFirst { same(it, c) }
+        if (existing >= 0) existing + 1 else { items += c; items.size }
+    }
+
+    @Synchronized fun all(): List<Candidate> = items.toList()
+    @Synchronized fun get(number: Int): Candidate? = items.getOrNull(number - 1)
+    @Synchronized fun numberOf(c: Candidate): Int = items.indexOf(c) + 1
+    val size: Int @Synchronized get() = items.size
+
+    @Synchronized fun byUrl(url: String): Candidate? {
+        val key = RecipeSites.normalize(url)
+        return items.firstOrNull { it.recipe.sourceUrl?.let(RecipeSites::normalize) == key }
+    }
+
+    /** La candidate d'où vient un plat du menu, s'il en vient. */
+    fun of(dish: MenuDish): Candidate? = dish.sourceUrl?.let(::byUrl)
+        ?: all().firstOrNull { (dish.recipeId != null && it.recipe.id == dish.recipeId) || it.recipe.title == dish.title }
+
+    private fun same(a: Candidate, b: Candidate): Boolean {
+        val ua = a.recipe.sourceUrl?.let(RecipeSites::normalize)
+        val ub = b.recipe.sourceUrl?.let(RecipeSites::normalize)
+        return (ua != null && ua == ub) || ShoppingListMerger.key(a.recipe.title) == ShoppingListMerger.key(b.recipe.title)
+    }
+}
+
+data class FindResult(
+    /** Les meilleures d'abord (note propre). */
+    val candidates: List<Candidate>,
+    val queries: List<String>,
+    /** Sites qui n'ont répondu à aucune recherche. */
+    val failedSites: List<String>,
+)
+
+/**
+ * Cherche les recettes du menu sur les sites de « Découvrir » : recherches bâties sur les légumes de saison et les
+ * envies, tri des résultats (bannis, déjà mangés, trop longs), puis lecture des vraies fiches (ingrédients, durées).
+ * Aucun LLM ici : le modèle choisit ensuite parmi ces candidates.
+ */
+class CandidateFinder(
+    private val searcher: RecipeSearcher,
+    private val importer: RecipeImporter,
+    private val recipes: RecipeRepository,
+    private val history: MenuHistoryRepository,
+    private val pantry: () -> List<String> = { Pantry.DEFAULTS },
+    private val today: () -> LocalDate = { LocalDate.now() },
+    private val sites: List<RecipeSite> = RecipeSites.searchable,
+) {
+    companion object {
+        const val MAX_IMPORTS = 24
+        private const val PER_SITE = 8
+        private val meats = listOf("poulet", "porc", "dinde")
+        private val stopWords = setOf(
+            "un", "une", "des", "le", "la", "les", "de", "du", "au", "aux", "et", "ou", "avec", "pour", "sans", "en", "ce", "cette",
+            "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche", "soir", "midi", "semaine", "weekend",
+            "je", "on", "veux", "voudrais", "aimerais", "envie", "plutot", "plus", "moins", "tres", "bien", "plat", "plats", "repas",
+        )
+
+        /** Envies proposées en un toucher, avec les mots envoyés aux sites. */
+        val QUICK_WISHES = linkedMapOf(
+            "Petit budget" to "économique",
+            "Les enfants aiment" to "enfant",
+            "Léger" to "léger",
+            "Réconfortant" to "réconfortant",
+            "Cuisine du monde" to "cuisine du monde",
+            "Batch cooking" to "batch cooking",
+        )
+
+        /** Mots utiles d'une envie libre : « une raclette samedi » → « raclette ». */
+        fun wishQuery(wish: String): String? {
+            QUICK_WISHES.entries.firstOrNull { it.key.equals(wish.trim(), ignoreCase = true) }?.let { return it.value }
+            val words = wish.lowercase().replace(Regex("[^\\p{L}\\p{N} '-]"), " ").split(' ', '\'')
+                .filter { it.length > 1 && it.stripAccents() !in stopWords }
+            return words.takeIf { it.size in 1..4 }?.joinToString(" ")
+        }
+    }
+
+    /**
+     * Recherches de la semaine. Les légumes de saison tournent d'une semaine à l'autre (et ceux de la semaine
+     * dernière passent en dernier) ; chaque recherche vise un type de plat selon la composition demandée.
+     */
+    fun queries(wishes: MenuWishes, history: MenuHistory, date: LocalDate = today(), round: Int = 0): List<String> {
+        val w = wishes.normalized()
+        val vegetables = Seasonality.seasonalVegetables(date.month).ifEmpty { Seasonality.forMonth(date.month).vegetables }.sorted()
+        val shift = (date.get(ChronoField.ALIGNED_WEEK_OF_YEAR) * 3 + round * 5) % vegetables.size
+        val rotated = (vegetables.drop(shift) + vegetables.take(shift)).sortedBy { history.usedLastWeek(it) }
+
+        val slots: List<DishKind?> = DishKind.entries.flatMap { k -> List(w.quota(k)) { k } } + List(w.meals - w.vegetarian - w.fish - w.meat) { null }
+        val count = (w.meals + 1).coerceIn(4, 6)
+        val quick = if (w.time == CookingTime.EXPRESS) " rapide" else ""
+        val seasonal = (0 until count).map { i ->
+            val vegetable = rotated[i % rotated.size]
+            when (slots[i * slots.size / count]) {
+                DishKind.VEGE -> "$vegetable végétarien"
+                DishKind.POISSON -> "$vegetable poisson"
+                DishKind.VIANDE -> "$vegetable ${meats[i % meats.size]}"
+                null -> vegetable
+            } + quick
+        }
+        val useUp = w.useUp.take(2).map { it.trim() + quick }
+        val wished = w.wishList().mapNotNull(::wishQuery).take(2)
+        // Les restes à écouler et les envies d'abord : ce sont les demandes explicites.
+        return (useUp + wished + seasonal).filter { it.isNotBlank() }.distinct()
+    }
+
+    /** Lance les recherches, lit les fiches et renvoie les candidates notées. [exclude] : adresses déjà écartées. */
+    suspend fun find(
+        wishes: MenuWishes,
+        round: Int = 0,
+        exclude: Set<String> = emptySet(),
+        onProgress: (String) -> Unit = {},
+    ): FindResult {
+        val w = wishes.normalized()
+        val date = today()
+        val cookbook = recipes.all()
+        val past = MenuHistory(history.all(), cookbook, date)
+        val queries = queries(w, past, date, round)
+
+        onProgress("Recherche sur ${sites.size} sites de recettes…")
+        val (lists, failed) = searchAll(queries) { done -> onProgress("Recherche sur ${sites.size} sites de recettes… ($done/${queries.size})") }
+        val index = CookbookIndex(cookbook)
+        val excluded = exclude.map(RecipeSites::normalize).toSet()
+        val hits = RecipeSearcher.interleave(lists.map { l -> l.filter { acceptable(it, w, index, past, excluded) } })
+            .distinctBy { RecipeSites.normalize(it.url) }
+            .distinctBy { ShoppingListMerger.key(it.title) }
+            .take((w.meals * 3).coerceIn(12, MAX_IMPORTS))
+
+        val fromSites = import(hits, w, past, date, index) { done -> onProgress("Lecture des recettes… ($done/${hits.size})") }
+        val fromBook = cookbookCandidates(cookbook, w, past, date)
+        return FindResult((fromSites + fromBook).sortedByDescending { it.base }, queries, failed)
+    }
+
+    /** Recherche à la demande (outil du LLM, « autre recette ») : quelques candidates pour des mots donnés. */
+    suspend fun search(text: String, wishes: MenuWishes, limit: Int = 6, exclude: Set<String> = emptySet()): List<Candidate> {
+        val date = today()
+        val cookbook = recipes.all()
+        val past = MenuHistory(history.all(), cookbook, date)
+        val index = CookbookIndex(cookbook)
+        val excluded = exclude.map(RecipeSites::normalize).toSet()
+        val (lists, _) = searchAll(listOf(text.trim())) {}
+        val hits = lists.flatten().filter { acceptable(it, wishes, index, past, excluded) }
+            .distinctBy { RecipeSites.normalize(it.url) }.take(limit)
+        return import(hits, wishes, past, date, index) {}.sortedByDescending { it.base }
+    }
+
+    private suspend fun searchAll(queries: List<String>, onDone: (Int) -> Unit): Pair<List<List<RecipeHit>>, List<String>> = coroutineScope {
+        val gate = Semaphore(3)
+        var done = 0
+        val results = queries.map { q ->
+            async {
+                gate.withPermit { runCatching { searcher.search(q, sites, PER_SITE) }.getOrNull() }.also { synchronized(gate) { onDone(++done) } }
+            }
+        }.awaitAll()
+        val answered = results.filterNotNull()
+        val failed = sites.filter { s -> answered.isEmpty() || answered.all { s in it.failures.keys } }.map { it.name }
+        results.map { it?.hits ?: emptyList() } to failed
+    }
+
+    private fun acceptable(hit: RecipeHit, wishes: MenuWishes, index: CookbookIndex, past: MenuHistory, excluded: Set<String>): Boolean {
+        val max = wishes.time.maxMinutes
+        return RecipeSites.normalize(hit.url) !in excluded &&
+            !index.isBanned(hit.title) &&
+            !past.eatenRecently(hit.title, hit.url) &&
+            (max == null || hit.totalMinutes == null || hit.totalMinutes <= max) &&
+            RecipeFilters.badge(hit.title) != RecipeFilter.DESSERT
+    }
+
+    private suspend fun import(
+        hits: List<RecipeHit>,
+        wishes: MenuWishes,
+        past: MenuHistory,
+        date: LocalDate,
+        index: CookbookIndex,
+        onDone: (Int) -> Unit,
+    ): List<Candidate> = coroutineScope {
+        val gate = Semaphore(4)
+        var done = 0
+        val max = wishes.time.maxMinutes
+        val list = pantry()
+        hits.map { hit ->
+            async {
+                val recipe = gate.withPermit { runCatching { importer.import(hit.url) }.getOrNull() }
+                synchronized(gate) { onDone(++done) }
+                recipe?.takeIf { it.ingredients.size >= 3 && !index.isBanned(it.title) }
+                    ?.let { r ->
+                        // Une recette déjà dans le livre (même adresse) garde son identité : favori, notes, compteur.
+                        val known = r.sourceUrl?.let { url -> index.byUrl(url) }
+                        Candidate.of(known ?: r.copy(imageUrl = r.imageUrl ?: hit.imageUrl), wishes, past, date, list, fromCookbook = known != null, rating = hit.rating)
+                    }
+                    ?.takeIf { c -> max == null || (c.minutes ?: hit.totalMinutes ?: 0) <= max }
+            }
+        }.awaitAll().filterNotNull().distinctBy { ShoppingListMerger.key(it.recipe.title) }
+    }
+
+    /** Recettes du livre proposées à côté des découvertes : favoris d'abord, puis les plus anciennes. */
+    private fun cookbookCandidates(cookbook: List<Recipe>, wishes: MenuWishes, past: MenuHistory, date: LocalDate): List<Candidate> {
+        val wanted = kotlin.math.ceil(wishes.meals * wishes.novelty.cookbookShare * 2).toInt()
+        if (wanted == 0) return emptyList()
+        val max = wishes.time.maxMinutes
+        val list = pantry()
+        return cookbook.asSequence()
+            .filter { !it.banned && it.ingredients.size >= 3 && !past.eatenRecently(it.title, it.sourceUrl) }
+            .map { Candidate.of(it, wishes, past, date, list, fromCookbook = true) }
+            .filter { c -> max == null || (c.minutes ?: 0) <= max }
+            .sortedWith(compareByDescending<Candidate> { it.recipe.favorite }.thenByDescending { it.base }.thenBy { it.recipe.lastCookedAt ?: "" })
+            .take(wanted)
+            .toList()
+    }
+}

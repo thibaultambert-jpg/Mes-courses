@@ -23,7 +23,7 @@ object IngredientOverlap {
     )
 
     /** Clé de regroupement : « Poireaux » = « poireau », « crème fraîche épaisse » ≈ « crème fraîche ». */
-    private fun key(name: String): String = ShoppingListMerger.key(name)
+    fun key(name: String): String = ShoppingListMerger.key(name)
         .replace(Regex("""\b(bio|frais|fraiche|fraiches|gros|grosse|petit|petite|epaisse|liquide|entier|entiere)\b"""), " ")
         .replace(Regex("\\s+"), " ").trim()
 
