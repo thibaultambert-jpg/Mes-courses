@@ -75,6 +75,8 @@ les sites » de Découvrir garde la recherche en ligne en complément.
 - **Construction** : `tools/catalog` lit les sitemaps des sites (`core/.../catalog/SiteCrawler.kt`) puis chaque fiche, en
   plusieurs passages (workflow « Catalogue de recettes », lancé en poussant `tools/catalog/pass.conf`). Résultat : un
   fichier `<site>.jsonl.gz` par site.
+- **Publication** : pousser `tools/catalog/publish.conf` rassemble le dernier passage terminé de chaque site dans la
+  release « catalogue » ; la compilation suivante de l'APK embarque ces fichiers.
 - **Contrôle** : ouvrir `tools/catalog/viewer.html` dans un navigateur et y déposer les fichiers (ou l'archive .zip
   téléchargée depuis GitHub) : recherche, filtres, fiches à contrôler, tableau par site.
 - **Dans l'appli** : les fichiers placés dans `app/src/main/assets/catalog/` (avec un `version.txt`) sont chargés au
