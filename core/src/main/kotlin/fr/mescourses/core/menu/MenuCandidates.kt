@@ -1,5 +1,7 @@
 package fr.mescourses.core.menu
 
+import fr.mescourses.core.catalog.CatalogQuery
+import fr.mescourses.core.catalog.CatalogStore
 import fr.mescourses.core.ingredients.FoodName
 import fr.mescourses.core.model.MenuDish
 import fr.mescourses.core.model.Portions
@@ -159,10 +161,15 @@ class CandidateFinder(
     private val pantry: () -> List<String> = { Pantry.DEFAULTS },
     private val today: () -> LocalDate = { LocalDate.now() },
     private val sites: List<RecipeSite> = RecipeSites.searchable,
+    /** Catalogue local : s'il contient des recettes, le menu se compose sans réseau. */
+    private val catalog: CatalogStore? = null,
 ) {
     companion object {
         const val MAX_IMPORTS = 24
         private const val PER_SITE = 8
+        /** Catalogue : fiches demandées par recherche, et candidates gardées pour chacune. */
+        private const val LOCAL_FETCH = 40
+        private const val LOCAL_KEEP = 5
         private val meats = listOf("poulet", "porc", "dinde")
         private val stopWords = setOf(
             "un", "une", "des", "le", "la", "les", "de", "du", "au", "aux", "et", "ou", "avec", "pour", "sans", "en", "ce", "cette",
@@ -189,11 +196,14 @@ class CandidateFinder(
         }
     }
 
+    /** Une recherche de la semaine : le texte envoyé aux sites, et la même en critères pour le catalogue. */
+    data class Spec(val text: String, val words: String, val kind: DishKind? = null, val seasonal: Boolean = false)
+
     /**
      * Recherches de la semaine. Les légumes de saison tournent d'une semaine à l'autre (et ceux de la semaine
      * dernière passent en dernier) ; chaque recherche vise un type de plat selon la composition demandée.
      */
-    fun queries(wishes: MenuWishes, history: MenuHistory, date: LocalDate = today(), round: Int = 0): List<String> {
+    fun specs(wishes: MenuWishes, history: MenuHistory, date: LocalDate = today(), round: Int = 0): List<Spec> {
         val w = wishes.normalized()
         val vegetables = Seasonality.seasonalVegetables(date.month).ifEmpty { Seasonality.forMonth(date.month).vegetables }.sorted()
         val shift = (date.get(ChronoField.ALIGNED_WEEK_OF_YEAR) * 3 + round * 5) % vegetables.size
@@ -204,17 +214,66 @@ class CandidateFinder(
         val quick = if (w.time == CookingTime.EXPRESS) " rapide" else ""
         val seasonal = (0 until count).map { i ->
             val vegetable = rotated[i % rotated.size]
-            when (slots[i * slots.size / count]) {
+            val kind = slots[i * slots.size / count]
+            val text = when (kind) {
                 DishKind.VEGE -> "$vegetable végétarien"
                 DishKind.POISSON -> "$vegetable poisson"
                 DishKind.VIANDE -> "$vegetable ${meats[i % meats.size]}"
                 null -> vegetable
             } + quick
+            Spec(text, vegetable, kind, seasonal = true)
         }
-        val useUp = w.useUp.take(2).map { it.trim() + quick }
-        val wished = w.wishList().mapNotNull(::wishQuery).take(2)
+        val useUp = w.useUp.take(2).map { Spec(it.trim() + quick, it.trim()) }
+        val wished = w.wishList().mapNotNull(::wishQuery).take(2).map { Spec(it, it) }
         // Les restes à écouler et les envies d'abord : ce sont les demandes explicites.
-        return (useUp + wished + seasonal).filter { it.isNotBlank() }.distinct()
+        return (useUp + wished + seasonal).filter { it.text.isNotBlank() }.distinctBy { it.text }
+    }
+
+    fun queries(wishes: MenuWishes, history: MenuHistory, date: LocalDate = today(), round: Int = 0): List<String> =
+        specs(wishes, history, date, round).map { it.text }
+
+    private suspend fun local(): CatalogStore? = catalog?.takeIf { runCatching { it.count() }.getOrDefault(0) > 0 }
+
+    /** Candidates tirées du catalogue local pour une recherche : aucune lecture de page. */
+    private suspend fun fromCatalog(
+        store: CatalogStore, query: CatalogQuery, wishes: MenuWishes, past: MenuHistory, date: LocalDate, index: CookbookIndex, excluded: Set<String>,
+    ): List<Candidate> {
+        val list = pantry()
+        return store.search(query).asSequence()
+            .filter { e ->
+                RecipeSites.normalize(e.url) !in excluded && !index.isBanned(e.title) && !past.eatenRecently(e.title, e.url) && e.ingredients.size >= 3
+            }
+            .distinctBy { ShoppingListMerger.key(it.title) }
+            .map { e ->
+                val known = index.byUrl(e.url)
+                Candidate.of(known ?: e.toRecipe(), wishes, past, date, list, fromCookbook = known != null, rating = e.rating)
+            }
+            .sortedByDescending { it.base }
+            .toList()
+    }
+
+    private suspend fun findLocal(
+        store: CatalogStore, w: MenuWishes, round: Int, exclude: Set<String>, onProgress: (String) -> Unit,
+    ): FindResult {
+        val date = today()
+        val cookbook = recipes.all()
+        val past = MenuHistory(history.all(), cookbook, date)
+        val index = CookbookIndex(cookbook)
+        val excluded = exclude.map(RecipeSites::normalize).toSet()
+        val specs = specs(w, past, date, round)
+        onProgress("Recherche dans le catalogue de recettes…")
+        val seed = date.get(ChronoField.ALIGNED_WEEK_OF_YEAR) * 31 + date.year + round * 7
+        val lists = specs.map { spec ->
+            val query = CatalogQuery(
+                words = CatalogQuery.words(spec.words), courses = CatalogQuery.MEALS, kind = spec.kind,
+                // Les légumes de la semaine doivent donner des plats de saison ; une envie ou un reste à écouler, non.
+                month = date.monthValue.takeIf { spec.seasonal }, maxMinutes = w.time.maxMinutes, limit = LOCAL_FETCH, seed = seed,
+            )
+            fromCatalog(store, query, w, past, date, index, excluded).take(LOCAL_KEEP)
+        }
+        val fromCatalog = RecipeSearcher.interleave(lists).distinctBy { ShoppingListMerger.key(it.recipe.title) }.take(MAX_IMPORTS)
+        val fromBook = cookbookCandidates(cookbook, w, past, date)
+        return FindResult((fromCatalog + fromBook).sortedByDescending { it.base }, specs.map { it.text }, emptyList())
     }
 
     /** Lance les recherches, lit les fiches et renvoie les candidates notées. [exclude] : adresses déjà écartées. */
@@ -225,6 +284,7 @@ class CandidateFinder(
         onProgress: (String) -> Unit = {},
     ): FindResult {
         val w = wishes.normalized()
+        local()?.let { store -> findLocal(store, w, round, exclude, onProgress).takeIf { it.candidates.size >= w.meals }?.let { return it } }
         val date = today()
         val cookbook = recipes.all()
         val past = MenuHistory(history.all(), cookbook, date)
@@ -251,6 +311,13 @@ class CandidateFinder(
         val past = MenuHistory(history.all(), cookbook, date)
         val index = CookbookIndex(cookbook)
         val excluded = exclude.map(RecipeSites::normalize).toSet()
+        local()?.let { store ->
+            val base = CatalogQuery(words = CatalogQuery.words(text), courses = CatalogQuery.MEALS, maxMinutes = wishes.time.maxMinutes, limit = LOCAL_FETCH)
+            // « raclette », « crêpes » : pas toujours rangés parmi les plats, on élargit si rien ne sort.
+            val found = fromCatalog(store, base, wishes, past, date, index, excluded)
+                .ifEmpty { fromCatalog(store, base.copy(courses = emptySet()), wishes, past, date, index, excluded) }
+            if (found.isNotEmpty()) return found.take(limit)
+        }
         val (lists, _) = searchAll(listOf(text.trim())) {}
         val hits = lists.flatten().filter { acceptable(it, wishes, index, past, excluded) }
             .distinctBy { RecipeSites.normalize(it.url) }.take(limit)

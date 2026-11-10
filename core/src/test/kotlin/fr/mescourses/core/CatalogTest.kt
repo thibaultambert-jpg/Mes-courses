@@ -4,6 +4,7 @@ import fr.mescourses.core.catalog.CatalogEntry
 import fr.mescourses.core.catalog.CatalogPolicy
 import fr.mescourses.core.catalog.Course
 import fr.mescourses.core.catalog.Sitemap
+import fr.mescourses.core.catalog.toHit
 import fr.mescourses.core.menu.DishKind
 import fr.mescourses.core.recipes.RecipeJsonLdExtractor
 import kotlin.test.Test
@@ -109,5 +110,64 @@ class CatalogTest {
         assertEquals("2026-11-01", entry?.lastmod)
         assertNull(crawler.read(source, list[1]))
         assertTrue(fr.mescourses.core.catalog.CatalogSources.all.map { it.siteId }.containsAll(listOf("cuisineaz", "ptitchef", "marmiton", "jow")))
+    }
+
+    // ---------- Recherche locale et mise à jour ----------
+
+    private fun local(url: String, title: String, category: String?, rating: String?, vararg ingredients: String) =
+        CatalogEntry.of(RecipeJsonLdExtractor.extractDetails(page(title, category, rating, *ingredients), url)!!, "cuisineaz", url, "2026-11-01")
+
+    private val leek = local("https://www.cuisineaz.com/recettes/a-1.aspx", "Gratin de poireaux au jambon", "Plat", "4.6", "4 poireaux", "4 tranches de jambon", "300 g de pommes de terre", "20 cl de crème")
+    private val tart = local("https://www.cuisineaz.com/recettes/b-2.aspx", "Tarte aux pommes", "Dessert", "4.8", "4 pommes", "1 pâte brisée", "50 g de sucre")
+    private val curry = local("https://www.cuisineaz.com/recettes/c-3.aspx", "Curry de pois chiches", "Plat", null, "400 g de pois chiches", "200 g de riz", "1 oignon")
+
+    @Test fun recherche_dans_le_catalogue() = kotlinx.coroutines.test.runTest {
+        val store = InMemoryCatalog(listOf(curry, tart, leek))
+        val q = fr.mescourses.core.catalog.CatalogQuery
+        // Pluriel, accents et mots vides ne comptent pas ; le mot peut venir du titre ou des ingrédients.
+        assertEquals(listOf("gratin", "poireau"), q.words("Gratin de Poireaux"))
+        assertEquals(listOf(leek.url), store.search(q.of("poireaux jambon", emptySet(), 11)).map { it.url })
+        assertEquals(listOf(leek.url), store.search(q.of("pommes de terre", emptySet(), 11)).map { it.url })
+        // Les filtres de Découvrir deviennent des critères ; les bien notées passent devant.
+        val plats = q.of("", setOf(fr.mescourses.core.recipes.RecipeFilter.PLAT), 11)
+        assertEquals(setOf(Course.PLAT), plats.courses)
+        assertEquals(listOf(leek.url, curry.url), store.search(plats).map { it.url })
+        val vege = q.of("", setOf(fr.mescourses.core.recipes.RecipeFilter.VEGETARIEN, fr.mescourses.core.recipes.RecipeFilter.MAX_20), 11)
+        assertEquals(DishKind.VEGE, vege.kind)
+        assertEquals(20, vege.maxMinutes)
+        assertEquals(11, q.of("", setOf(fr.mescourses.core.recipes.RecipeFilter.SAISON), 11).month)
+        assertEquals("Tarte aux pommes", with(fr.mescourses.core.catalog.CatalogQuery(words = listOf("pomme"), courses = setOf(Course.DESSERT))) { store.search(this) }.single().toHit().title)
+    }
+
+    @Test fun mise_a_jour_ne_lit_que_les_nouveautes() = kotlinx.coroutines.test.runTest {
+        val source = fr.mescourses.core.catalog.CatalogSource("cuisineaz", listOf("https://x.fr/s.xml"), null, Regex("""cuisineaz\.com/recettes/[^/]+-\d+\.aspx$"""))
+        val site = mutableMapOf(
+            "https://x.fr/s.xml" to """<urlset><url><loc>${leek.url}</loc><lastmod>2026-11-01</lastmod></url>
+                <url><loc>https://www.cuisineaz.com/recettes/vieux-8.aspx</loc><lastmod>2026-01-01</lastmod></url>
+                <url><loc>https://www.cuisineaz.com/recettes/neuf-9.aspx</loc><lastmod>2026-11-08</lastmod></url>
+                <url><loc>https://www.cuisineaz.com/recettes/vide-7.aspx</loc><lastmod>2026-11-09</lastmod></url></urlset>""",
+            "https://www.cuisineaz.com/recettes/neuf-9.aspx" to page("Soupe de courge", "Soupe", "4.2", "1 courge", "2 carottes", "1 oignon"),
+            "https://www.cuisineaz.com/recettes/vide-7.aspx" to "<html></html>",
+        )
+        val fetched = mutableListOf<String>()
+        val store = InMemoryCatalog(listOf(leek))
+        var clock = 10L * fr.mescourses.core.catalog.CatalogUpdater.DAY_MS
+        val updater = fr.mescourses.core.catalog.CatalogUpdater(store, { url -> fetched += url; site[url] ?: error("404") }, listOf(source)) { clock }
+        assertTrue(updater.due())
+        val report = updater.update()
+        // La fiche connue et la page plus ancienne que le catalogue ne sont pas relues.
+        assertEquals(1, report.added)
+        assertEquals(setOf("https://x.fr/s.xml", "https://www.cuisineaz.com/recettes/neuf-9.aspx", "https://www.cuisineaz.com/recettes/vide-7.aspx"), fetched.toSet())
+        assertEquals(2, store.count())
+        assertFalse(updater.due())
+        // Le lendemain : rien de neuf, la page vide n'est pas relue ; une fiche modifiée l'est.
+        clock += 2 * fr.mescourses.core.catalog.CatalogUpdater.DAY_MS
+        fetched.clear()
+        assertEquals(0, updater.update().added)
+        assertEquals(listOf("https://x.fr/s.xml"), fetched)
+        site["https://x.fr/s.xml"] = site.getValue("https://x.fr/s.xml").replace("2026-11-08", "2026-11-12")
+        site["https://www.cuisineaz.com/recettes/neuf-9.aspx"] = page("Soupe de courge et carottes", "Soupe", "4.2", "1 courge", "2 carottes", "1 oignon")
+        assertEquals(1, updater.update().added)
+        assertEquals("Soupe de courge et carottes", store.byUrl("https://www.cuisineaz.com/recettes/neuf-9.aspx")?.title)
     }
 }

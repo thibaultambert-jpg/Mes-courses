@@ -193,6 +193,26 @@ class MenuPlannerTest {
         assertTrue(later.find(wishes.copy(novelty = Novelty.DECOUVERTES)).candidates.any { "Gratin" in it.recipe.title })
     }
 
+    @Test fun menu_compose_depuis_le_catalogue_sans_reseau() = runTest {
+        fun entry(n: Int, title: String, vararg ingredients: String): fr.mescourses.core.catalog.CatalogEntry {
+            val url = "https://www.marmiton.org/recettes/recette_cat-$n.aspx"
+            val html = """<script type="application/ld+json">{"@type":"Recipe","name":"$title","recipeCategory":"Plat principal","totalTime":"PT30M",
+                "recipeIngredient":[${ingredients.joinToString(",") { "\"$it\"" }}]}</script>"""
+            return fr.mescourses.core.catalog.CatalogEntry.of(fr.mescourses.core.recipes.RecipeJsonLdExtractor.extractDetails(html, url)!!, "marmiton", url)
+        }
+        val vegetables = Seasonality.seasonalVegetables(Month.NOVEMBER)
+        val catalog = InMemoryCatalog(vegetables.mapIndexed { i, v -> entry(i, "Poêlée de $v au poulet", "500 g de $v", "2 blancs de poulet", "200 g de riz") } +
+            entry(90, "Raclette", "800 g de fromage à raclette", "1 kg de pommes de terre", "8 tranches de jambon"))
+        val offline = CandidateFinder(RecipeSearcher { error("pas de réseau") }, RecipeImporter(listOf(PageFetcher { error("pas de réseau") })), recipes, history,
+            { emptyList() }, { today }, listOf(RecipeSites.byId("marmiton")!!), catalog)
+        val found = offline.find(wishes.copy(novelty = Novelty.DECOUVERTES))
+        assertTrue(found.candidates.size >= 3, "candidates : ${found.candidates.map { it.recipe.title }}")
+        assertTrue(found.candidates.all { it.recipe.sourceUrl!!.startsWith("https://www.marmiton.org") && it.minutes == 30 })
+        assertTrue(found.failedSites.isEmpty())
+        // L'outil de recherche du chef passe aussi par le catalogue.
+        assertEquals(listOf("Raclette"), offline.search("une raclette", wishes).map { it.recipe.title })
+    }
+
     @Test fun sites_injoignables() = runTest {
         val found = finder { error("pas de réseau") }.find(wishes.copy(novelty = Novelty.DECOUVERTES))
         assertTrue(found.candidates.isEmpty())

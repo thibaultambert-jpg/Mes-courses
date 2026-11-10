@@ -65,3 +65,24 @@ class InMemoryHistory : MenuHistoryRepository {
     override suspend fun all() = state.value
     override suspend fun add(entries: List<MenuHistoryEntry>) { state.value = state.value + entries }
 }
+
+class InMemoryCatalog(entries: List<fr.mescourses.core.catalog.CatalogEntry> = emptyList()) : fr.mescourses.core.catalog.CatalogStore {
+    val entries = LinkedHashMap<String, fr.mescourses.core.catalog.CatalogEntry>().apply { entries.forEach { put(it.url, it) } }
+    val empty = HashMap<String, String?>()
+    val metas = HashMap<String, String>()
+
+    override suspend fun count() = entries.size
+    override suspend fun countBySite() = entries.values.groupingBy { it.siteId }.eachCount()
+    override suspend fun search(query: fr.mescourses.core.catalog.CatalogQuery) = entries.values.filter(query::matches)
+        .sortedWith(
+            compareByDescending<fr.mescourses.core.catalog.CatalogEntry> { fr.mescourses.core.catalog.CatalogPolicy.wellRated(it) }
+                .thenByDescending { e -> query.seed?.let { (e.url.hashCode() * it) % 1000 } ?: (e.ratingCount ?: 0) },
+        ).take(query.limit)
+    override suspend fun byUrl(url: String) = entries[url]
+    override suspend fun upsert(entries: List<fr.mescourses.core.catalog.CatalogEntry>) { entries.forEach { this.entries[it.url] = it } }
+    override suspend fun known(siteId: String): Map<String, String?> =
+        entries.values.filter { it.siteId == siteId }.associate { it.url to it.lastmod } + empty
+    override suspend fun markEmpty(siteId: String, url: String, lastmod: String?) { empty[url] = lastmod }
+    override suspend fun meta(key: String) = metas[key]
+    override suspend fun setMeta(key: String, value: String) { metas[key] = value }
+}
