@@ -73,23 +73,41 @@ class CatalogTest {
         assertEquals(Course.AUTRE, entry("Nectarine rôtie", "Autre", "4.8", "4 nectarines", "1 c. à soupe de miel").course)
     }
 
-    @Test fun gros_site_plats_bien_notes_petit_site_tout() {
-        val big = CatalogPolicy.forSite(108_052)
-        val small = CatalogPolicy.forSite(3_747)
-        assertFalse(big.everything)
-        assertTrue(small.everything)
-        val goodDish = entry("Curry de pois chiches", "Plat", "4.5", "400 g de pois chiches", "20 cl de lait de coco", "200 g de riz")
-        val poorDish = entry("Curry de pois chiches", "Plat", "3.2", "400 g de pois chiches", "20 cl de lait de coco", "200 g de riz")
+    @Test fun toute_fiche_lisible_entre_au_catalogue() {
+        val good = entry("Curry de pois chiches", "Plat", "4.5", "400 g de pois chiches", "20 cl de lait de coco", "200 g de riz")
+        val poor = entry("Curry de pois chiches", "Plat", "3.2", "400 g de pois chiches", "20 cl de lait de coco", "200 g de riz")
         val unrated = entry("Curry de pois chiches", "Plat", null, "400 g de pois chiches", "20 cl de lait de coco", "200 g de riz")
         val dessert = entry("Mousse au chocolat", "Dessert", "4.9", "200 g de chocolat", "6 œufs")
-        assertTrue(big.accepts(goodDish))
-        assertFalse(big.accepts(poorDish))
-        assertFalse(big.accepts(unrated))
-        assertFalse(big.accepts(dessert))
-        // Petit site : tout, y compris les desserts et les recettes sans note.
-        assertTrue(listOf(goodDish, poorDish, unrated, dessert).all(small::accepts))
+        assertTrue(listOf(good, poor, unrated, dessert).all(CatalogPolicy::accepts))
+        // La note sert au classement, pas au tri à l'entrée.
+        assertTrue(CatalogPolicy.wellRated(good))
+        assertFalse(CatalogPolicy.wellRated(poor) || CatalogPolicy.wellRated(unrated))
         // Une fiche vide n'entre jamais.
-        assertFalse(small.accepts(entry("Astuce", null, null, "1 citron")))
+        assertFalse(CatalogPolicy.accepts(entry("Astuce", null, null, "1 citron")))
         assertNotNull(RecipeJsonLdExtractor.extractDetails(page("X", null, null, "a", "b")))
+    }
+
+    private val pages = mapOf(
+        "https://x.fr/sitemap.xml" to "<sitemapindex><sitemap><loc>https://x.fr/sitemap-recettes-1.xml</loc></sitemap><sitemap><loc>https://x.fr/sitemap-images-1.xml</loc></sitemap></sitemapindex>",
+        "https://x.fr/sitemap-recettes-1.xml" to """<urlset><url><loc>https://www.cuisineaz.com/recettes/curry-1.aspx</loc><lastmod>2026-11-01</lastmod></url>
+            <url><loc>https://www.cuisineaz.com/categories/plats-c1</loc></url><url><loc>https://www.cuisineaz.com/recettes/astuce-2.aspx</loc></url>
+            <url><loc>https://www.cuisineaz.com/recettes/curry-1.aspx</loc></url></urlset>""",
+        "https://www.cuisineaz.com/recettes/curry-1.aspx" to page("Curry de pois chiches", "Plat", "4.5", "400 g de pois chiches", "200 g de riz"),
+        "https://www.cuisineaz.com/recettes/astuce-2.aspx" to "<html>pas de recette ici</html>",
+    )
+
+    @Test fun collecte_d_un_site_par_son_sitemap() = kotlinx.coroutines.test.runTest {
+        val fetched = mutableListOf<String>()
+        val crawler = fr.mescourses.core.catalog.SiteCrawler { url -> fetched += url; pages[url] ?: error("404") }
+        val source = fr.mescourses.core.catalog.CatalogSource("cuisineaz", listOf("https://x.fr/sitemap.xml"), Regex("recette"), Regex("""cuisineaz\.com/recettes/[^/]+-\d+\.aspx$"""))
+        val list = crawler.pages(source)
+        // Le sitemap d'images n'est pas lu ; catégories et doublons écartés.
+        assertEquals(listOf("https://www.cuisineaz.com/recettes/curry-1.aspx", "https://www.cuisineaz.com/recettes/astuce-2.aspx"), list.map { it.url })
+        assertFalse("https://x.fr/sitemap-images-1.xml" in fetched)
+        val entry = crawler.read(source, list[0])
+        assertEquals("Curry de pois chiches", entry?.title)
+        assertEquals("2026-11-01", entry?.lastmod)
+        assertNull(crawler.read(source, list[1]))
+        assertTrue(fr.mescourses.core.catalog.CatalogSources.all.map { it.siteId }.containsAll(listOf("cuisineaz", "ptitchef", "marmiton", "jow")))
     }
 }

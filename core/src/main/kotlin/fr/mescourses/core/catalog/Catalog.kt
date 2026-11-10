@@ -131,27 +131,19 @@ data class CatalogEntry(
     }
 }
 
-/** Ce qu'on garde d'un site dans le catalogue. */
-data class CatalogPolicy(
-    /** Petit site (moins de [FULL_SITE_BELOW] recettes) : on prend tout, sans filtre de note ni de type de plat. */
-    val everything: Boolean,
-    val minRating: Double = 4.0,
-    val minRatingCount: Int = 3,
-) {
-    companion object {
-        const val FULL_SITE_BELOW = 5000
+/**
+ * Ce qui entre au catalogue : toute fiche lisible. Puisqu'il faut lire chaque fiche pour connaître sa note et son
+ * type, on la garde ; la note et le type de plat servent ensuite à trier et filtrer les recherches, pas à écarter.
+ */
+object CatalogPolicy {
+    /** « Bien noté » pour le classement des résultats et le choix des recettes du menu. */
+    const val GOOD_RATING = 4.0
+    const val MIN_RATING_COUNT = 3
 
-        fun forSite(recipeCount: Int) = CatalogPolicy(everything = recipeCount < FULL_SITE_BELOW)
-    }
+    fun accepts(entry: CatalogEntry): Boolean = entry.title.isNotBlank() && entry.ingredients.size >= 2
 
-    /** Une fiche lisible entre-t-elle au catalogue ? */
-    fun accepts(entry: CatalogEntry): Boolean {
-        if (entry.title.isBlank() || entry.ingredients.size < 2) return false
-        if (everything) return true
-        if (!entry.course.meal) return false
-        val rating = entry.rating ?: return false
-        return rating >= minRating && (entry.ratingCount ?: 0) >= minRatingCount
-    }
+    fun wellRated(entry: CatalogEntry): Boolean =
+        (entry.rating ?: 0.0) >= GOOD_RATING && (entry.ratingCount ?: 0) >= MIN_RATING_COUNT
 }
 
 /** Un fichier de sitemap : soit un index d'autres sitemaps, soit une liste d'adresses avec leur date de modification. */
