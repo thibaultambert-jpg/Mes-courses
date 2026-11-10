@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Sonde des sites
-        run: python3 tools/catalog/probe.py | tee probe.md
+        run: python3 tools/catalog/probe.py marmiton 750g jdf cuisineactuelle ricardo chefsimon elle picnic | tee probe.md
       - name: Résumé
         if: always()
         run: cat probe.md >> "$GITHUB_STEP_SUMMARY"

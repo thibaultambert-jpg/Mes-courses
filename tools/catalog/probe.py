@@ -25,6 +25,20 @@ SITES = [
     ("picnic", "picnic.app", r"picnic\.app/fr/recettes?/[^/]+/[^/]+$"),
     ("jow", "jow.fr", r"jow\.fr/recipes/[^/]+$"),
 ]
+# Page de liste des recettes de chaque site (« Parcourir »), pour les sites sans sitemap exploitable.
+BROWSE = {
+    "marmiton": "https://www.marmiton.org/recettes/index/categorie/plat-principal/",
+    "750g": "https://www.750g.com/home_rubrique_-_recettes.htm",
+    "jdf": "https://cuisine.journaldesfemmes.fr/toutes-les-recettes/",
+    "cuisineactuelle": "https://www.cuisineactuelle.fr/recettes-de-cuisine",
+    "ricardo": "https://www.ricardocuisine.com/recettes/plats-principaux?currentPage=1&grouping-type=3&content-type=recipe&sort=alpha&searchValue=",
+    "chefsimon": "https://chefsimon.com/recettes/tag/plat%20principal",
+    "elle": "https://www.elle.fr/Elle-a-Table/Recettes-de-cuisine",
+    "picnic": "https://picnic.app/fr/recettes/",
+}
+GUESSES = ["/sitemap.xml", "/sitemap_index.xml", "/sitemap-index.xml", "/sitemaps.xml", "/sitemap/sitemap.xml",
+           "/sitemap/index.xml", "/sitemaps/sitemap.xml", "/sitemap-recettes.xml", "/sitemap_recettes.xml", "/sitemap_recipes.xml"]
+SIDE = re.compile(r"image|video|news|article|tag|diaporama|qa|silo|static", re.I)
 CHALLENGE = ("challenge-platform", "Just a moment", "captcha-delivery", "cf-chl-")
 
 
@@ -91,6 +105,15 @@ def probe_recipe(url):
         })
     else:
         out["recette"] = None
+        # Pas de données schema.org : où sont les données de la page ?
+        out["indices"] = {
+            "__NEXT_DATA__": "__NEXT_DATA__" in html,
+            "scripts_json": len(re.findall(r'<script[^>]*type="application/json"', html)),
+            "ld_json": len(re.findall(r"application/ld\+json", html)),
+            "mot_ingredient": len(re.findall(r"ingr[ée]dient", html, re.I)),
+            "og_title": (re.findall(r'property="og:title" content="([^"]+)"', html) or [None])[0],
+            "itemprop": len(re.findall(r"itemprop=", html)),
+        }
     return out
 
 
@@ -101,9 +124,11 @@ def probe_site(sid, host, pattern):
     print(f"- robots.txt : {code}{' (' + err + ')' if err else ''}{' — page anti-robot' if blocked(robots) else ''}")
     queue = re.findall(r"(?im)^\s*sitemap:\s*(\S+)", robots)
     if not queue:
-        queue = [f"https://{host}/sitemap.xml", f"https://{host}/sitemap_index.xml"]
-        print("- aucun sitemap déclaré dans robots.txt : essai de /sitemap.xml et /sitemap_index.xml")
-    seen, files, total, samples, newest = set(), [], 0, [], ""
+        queue = [f"https://{host}{g}" for g in GUESSES]
+        print("- aucun sitemap déclaré dans robots.txt : essai des emplacements usuels")
+        rules = [l.strip() for l in robots.splitlines() if l.strip() and not l.strip().startswith("#")][:20]
+        print("  - robots.txt : " + " | ".join(rules))
+    seen, files, total, samples, newest, others = set(), [], 0, [], "", []
     while queue and len(seen) < MAX_SITEMAPS:
         sm = queue.pop(0)
         if sm in seen:
@@ -116,8 +141,10 @@ def probe_site(sid, host, pattern):
         locs = re.findall(r"<loc>\s*(?:<!\[CDATA\[)?\s*([^<\]\s]+)", xml)
         if "<sitemapindex" in xml:
             # Les sous-sitemaps qui parlent de recettes d'abord.
-            children = sorted(locs, key=lambda u: 0 if re.search(r"recette|recipe", u, re.I) else 1)
-            queue.extend(children)
+            # Les sitemaps de recettes passent devant tout le reste ; images, vidéos et articles en dernier.
+            first = [u for u in locs if re.search(r"recette|recipe", u, re.I) and not SIDE.search(u)]
+            last = [u for u in locs if u not in first]
+            queue = first + queue + sorted(last, key=lambda u: 1 if SIDE.search(u) else 0)
             files.append((sm, f"index de {len(locs)} sitemaps", 0))
             continue
         hits = [u for u in locs if rx.search(u.split("?")[0].split("#")[0])]
@@ -125,6 +152,8 @@ def probe_site(sid, host, pattern):
         if mods:
             newest = max(newest, max(mods))
         total += len(hits)
+        if not hits and len(locs) > 200 and not SIDE.search(sm):
+            others.append((sm, locs))
         files.append((sm, f"{len(locs)} adresses, lastmod {'oui' if mods else 'non'}", len(hits)))
         if hits and len(samples) < 2:
             samples.append(hits[len(hits) // 2])
@@ -133,8 +162,29 @@ def probe_site(sid, host, pattern):
     shown = [f for f in files if f[2] > 0][:8] + [f for f in files if f[2] == 0][:6]
     for sm, info, n in shown:
         print(f"  - `{sm}` : {info}" + (f", **{n} recettes**" if n else ""))
+    if total == 0:
+        # Adresses présentes mais d'une autre forme que celle connue de l'appli : en montrer quelques-unes.
+        for sm, locs in others[:3]:
+            step = max(1, len(locs) // 8)
+            print(f"  - exemples d'adresses de `{sm}` : " + " ; ".join(locs[::step][:8]))
+        if sid in BROWSE:
+            c, html, e = fetch(BROWSE[sid], 3_000_000)
+            links = sorted(set(re.findall(r'href="([^"#]+)"', html)))
+            full = [u if u.startswith("http") else f"https://{host}{u}" for u in links if u.startswith(("http", "/"))]
+            hits = [u for u in full if rx.search(u.split("?")[0])]
+            pages = [u for u in full if re.search(r"[?&/](page|p|currentPage)[=/-]?\d+", u)][:5]
+            print(f"- page de liste `{BROWSE[sid]}` : code {c}, {len(html)} octets, anti-robot {'oui' if blocked(html) else 'non'}, "
+                  f"{len(links)} liens dont **{len(hits)} recettes**")
+            if hits:
+                print("  - exemples : " + " ; ".join(hits[:4]))
+                samples.extend(hits[:2])
+            if pages:
+                print("  - pagination : " + " ; ".join(pages))
+            sm_links = [u for u in full if "sitemap" in u.lower()][:5]
+            if sm_links:
+                print("  - liens de sitemap dans la page : " + " ; ".join(sm_links))
     if not samples:
-        print("- aucune fiche à tester (pas d'adresse de recette dans les sitemaps)")
+        print("- aucune fiche à tester")
     for url in samples:
         r = probe_recipe(url)
         if r.get("recette"):
@@ -142,7 +192,7 @@ def probe_site(sid, host, pattern):
                   f"catégorie {r['categorie']!r}, durée {r['duree']}, image {'oui' if r['image'] else 'non'} — `{url}`")
         else:
             print(f"- fiche NON lisible : code {r['code']}, {r['octets']} octets, anti-robot {'oui' if r['anti_robot'] else 'non'}"
-                  f"{', ' + r['erreur'] if r['erreur'] else ''} — `{url}`")
+                  f"{', ' + r['erreur'] if r['erreur'] else ''} — `{url}` — indices : {r.get('indices')}")
 
 
 if __name__ == "__main__":
