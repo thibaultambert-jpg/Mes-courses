@@ -183,7 +183,7 @@ class RoomCatalogStore(private val dao: CatalogDao) : CatalogStore {
         }
         if (query.courses.isNotEmpty()) {
             where += "r.course IN (${query.courses.joinToString(",") { "?" }})"
-            args += query.courses.map { it.name }
+            args.addAll(query.courses.map { it.name })
         }
         query.kind?.let { where += "r.kind = ?"; args += it.name }
         query.month?.let { where += "(r.months & ?) != 0"; args += 1 shl (it - 1) }
@@ -191,7 +191,7 @@ class RoomCatalogStore(private val dao: CatalogDao) : CatalogStore {
         if (query.balanced) where += "r.balanced = 1"
         if (query.sites.isNotEmpty()) {
             where += "r.siteId IN (${query.sites.joinToString(",") { "?" }})"
-            args += query.sites
+            args.addAll(query.sites)
         }
         if (where.isNotEmpty()) sql.append(" WHERE ").append(where.joinToString(" AND "))
         sql.append(" ORDER BY r.good DESC, ")
