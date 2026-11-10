@@ -447,13 +447,14 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
             }
             is MenuCommand.Replace -> {
                 val old = list[command.dish]
-                if (command.words == null) {
+                val words = command.words
+                if (words == null) {
                     swap(command.dish)
                     val now = c.draft.get().getOrNull(command.dish)
                     if (now != null && now.title != old.title) say("Plat ${command.dish + 1} remplacé par « ${now.title} »") else say("Pas d'autre recette trouvée pour le plat ${command.dish + 1}.", ok = false)
                 } else {
-                    val next = searched(command.words)
-                    if (next == null) say("Aucune recette trouvée pour « ${command.words} ».", ok = false)
+                    val next = searched(words)
+                    if (next == null) say("Aucune recette trouvée pour « $words ».", ok = false)
                     else {
                         rejected += old.sourceUrl ?: old.title
                         c.draft.set(list.toMutableList().also { it[command.dish] = next.toDish(old.portions) })
