@@ -1,7 +1,7 @@
 name: Catalogue de recettes
 
 # Collecte du catalogue local de recettes : chaque site est lu en plusieurs passages successifs (un job GitHub
-# dure 6 h au plus), à un rythme lent. Un passage reprend où le précédent s'est arrêté.
+# dure 6 h au plus), à un rythme lent (réglé par site dans CatalogSources). Un passage reprend où le précédent s'est arrêté.
 # Lancement : modifier tools/catalog/pass.conf et pousser, ou « Run workflow ».
 on:
   workflow_dispatch:
@@ -61,8 +61,44 @@ jobs:
       site: ${{ matrix.site }}
       pass: "4"
 
-  bilan:
+  pass5:
     needs: pass4
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        site: [cuisineaz]
+    uses: ./.github/workflows/catalog-pass.yml
+    with:
+      site: ${{ matrix.site }}
+      pass: "5"
+
+  pass6:
+    needs: pass5
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        site: [cuisineaz]
+    uses: ./.github/workflows/catalog-pass.yml
+    with:
+      site: ${{ matrix.site }}
+      pass: "6"
+
+  pass7:
+    needs: pass6
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        site: [cuisineaz]
+    uses: ./.github/workflows/catalog-pass.yml
+    with:
+      site: ${{ matrix.site }}
+      pass: "7"
+
+  bilan:
+    needs: pass7
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
@@ -91,4 +127,4 @@ jobs:
         with:
           name: catalogue
           path: catalog/*.jsonl.gz
-          retention-days: 30
+          retention-days: 7

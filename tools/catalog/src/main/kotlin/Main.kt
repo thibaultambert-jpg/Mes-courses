@@ -21,7 +21,7 @@ import kotlin.system.exitProcess
 /**
  * Construit le catalogue local de recettes, site par site, en plusieurs passages.
  *
- * `build --site <id> --out <dossier> [--minutes 330] [--rate 1.5] [--limit N]`
+ * `build --site <id> --out <dossier> [--minutes 330] [--rate N] [--limit N]`
  *   Lit les fiches du site qui ne l'ont pas encore été et s'arrête au bout du temps donné. Dans le dossier :
  *   - `<id>.jsonl`    une recette du catalogue par ligne (JSON) ;
  *   - `<id>.seen.tsv` chaque adresse déjà traitée, sa date de modification et le résultat (ok, vide, erreur).
@@ -36,12 +36,11 @@ fun main(args: Array<String>) {
         "build" -> {
             val site = options["site"] ?: fail("--site manquant (${CatalogSources.all.joinToString { it.siteId }})")
             val source = CatalogSources.byId(site) ?: fail("site inconnu : $site")
-            val done = runBlocking {
-                Builder(source, out, options["rate"]?.toDoubleOrNull() ?: 1.5)
+            // S'il reste des fiches, le passage suivant reprend ici : ce n'est pas une erreur.
+            runBlocking {
+                Builder(source, out, options["rate"]?.toDoubleOrNull() ?: source.requestsPerSecond)
                     .run(Duration.ofMinutes(options["minutes"]?.toLongOrNull() ?: 330), options["limit"]?.toIntOrNull() ?: Int.MAX_VALUE)
             }
-            // Code 3 : il reste des fiches à lire (un autre passage est nécessaire).
-            if (!done) exitProcess(3)
         }
         "stats" -> stats(out)
         else -> fail("commandes : build, stats")
@@ -80,6 +79,9 @@ private class Http(requestsPerSecond: Double) {
         return String(plain, Charsets.UTF_8)
     }
 }
+
+/** Erreurs de suite au bout desquelles on n'insiste plus pendant ce passage. */
+private const val MAX_STREAK = 10
 
 private class Builder(private val source: CatalogSource, out: File, rate: Double) {
     private val http = Http(rate)
@@ -122,21 +124,21 @@ private class Builder(private val source: CatalogSource, out: File, rate: Double
                 streak++
                 // Le site refuse ou ralentit : on attend de plus en plus, puis on abandonne ce passage.
                 val code = (e as? Http.Status)?.code
-                if (code == 403 || code == 429 || code == 503) delay(15_000L * streak)
+                if (code == 403 || code == 429 || code == 503) delay((60_000L * streak).coerceAtMost(600_000L))
                 if (errors <= 5) println("  erreur ${e.message} — ${page.url}")
                 // Une page disparue ne reviendra pas : inutile de la redemander à chaque passage.
                 if (code == 404 || code == 410) "vide" else "erreur"
             }
             seenFile.appendText("${RecipeSites.normalize(page.url)}\t${page.lastmod.orEmpty()}\t$status\n")
             if (count % 500 == 0) println("  $count/${todo.size} — $ok recettes, $empty sans recette, $errors erreurs")
-            if (streak >= 25) {
-                println("  25 erreurs de suite : arrêt de ce passage pour ${source.siteId}")
+            if (streak >= MAX_STREAK) {
+                println("  $MAX_STREAK erreurs de suite : arrêt de ce passage pour ${source.siteId}")
                 break
             }
         }
         val left = todo.size - count
         println("${source.siteId} : $ok recettes ajoutées, $empty pages sans recette, $errors erreurs, $left fiches restantes")
-        return left <= 0 && streak < 25
+        return left <= 0 && streak < MAX_STREAK
     }
 }
 

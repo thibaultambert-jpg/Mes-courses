@@ -15,6 +15,8 @@ data class CatalogSource(
     val sitemapFilter: Regex? = null,
     /** Forme de l'adresse d'une fiche recette. */
     val recipeUrl: Regex,
+    /** Rythme de lecture des fiches : certains sites refusent les lectures trop rapprochées. */
+    val requestsPerSecond: Double = 1.5,
 )
 
 object CatalogSources {
@@ -22,6 +24,8 @@ object CatalogSources {
         CatalogSource(
             "cuisineaz", listOf("https://www.cuisineaz.com/xml/sitemap.xml"),
             Regex("""sitemap-cuisineaz-recette-\d+"""), Regex("""cuisineaz\.com/recettes/[^/]+-\d+\.aspx$"""),
+            // Cuisine AZ répond 403 quand on lit trop vite (constaté à 1,5 requête par seconde).
+            requestsPerSecond = 0.8,
         ),
         CatalogSource(
             "ptitchef", listOf("https://www.ptitchef.com/sitemap.xml"),

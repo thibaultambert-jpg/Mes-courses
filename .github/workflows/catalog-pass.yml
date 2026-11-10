@@ -38,11 +38,8 @@ jobs:
           set -a; . tools/catalog/pass.conf; set +a
           ARGS="build --site ${{ inputs.site }} --out $PWD/catalog --minutes ${MINUTES:-320}"
           if [ "${LIMIT:-0}" != "0" ]; then ARGS="$ARGS --limit $LIMIT"; fi
-          set +e
+          set -o pipefail
           ./gradlew -q -p tools/catalog run --args="$ARGS" | tee pass.log
-          code=${PIPESTATUS[0]}
-          # Code 3 : il reste des fiches pour le passage suivant, ce n'est pas une erreur.
-          if [ "$code" != "0" ] && [ "$code" != "3" ]; then exit "$code"; fi
           tail -3 pass.log >> "$GITHUB_STEP_SUMMARY"
 
       - name: Ranger l'état
@@ -58,4 +55,4 @@ jobs:
           name: catalog-${{ inputs.site }}-${{ inputs.pass }}
           path: catalog/${{ inputs.site }}.jsonl
           if-no-files-found: ignore
-          retention-days: 30
+          retention-days: 7
