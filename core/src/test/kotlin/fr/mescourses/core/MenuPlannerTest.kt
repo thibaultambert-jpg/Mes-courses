@@ -362,6 +362,9 @@ class MenuPlannerTest {
         assertEquals(fr.mescourses.core.menu.MenuCommand.AddDish("poisson"), p("ajoute un plat de poisson"))
         assertEquals(fr.mescourses.core.menu.MenuCommand.Replace(2, "curry de legumes"), p("Remplace le plat 3 par un curry de légumes"))
         assertEquals(fr.mescourses.core.menu.MenuCommand.Replace(2, null), p("change le plat 3"))
+        assertEquals(fr.mescourses.core.menu.MenuCommand.Replace(2, null, "jow"), p("Change le plat 3 par une recette de Jow"))
+        assertEquals(fr.mescourses.core.menu.MenuCommand.Replace(0, "gratin", "cuisineaz"), p("remplace le plat 1 par un gratin de Cuisine AZ"))
+        assertEquals(fr.mescourses.core.menu.MenuCommand.AddDish(null, "hellofresh"), p("ajoute une recette hello fresh"))
         // Ce qui n'est pas un ordre clair part au chef.
         assertNull(p("Je ne voulais pas supprimer un plat"))
         assertNull(p("Tu as supprimé le 5eme plat"))
@@ -369,6 +372,24 @@ class MenuPlannerTest {
         assertNull(p("Plus végétarien"))
         assertNull(p("ajoute 2 adultes"))
         assertNull(p("supprime le plat 9"))
+    }
+
+    @Test fun pas_trois_plats_du_meme_genre_et_proteines_partagees() {
+        val forms = fr.mescourses.core.menu.DishForms
+        assertEquals("tarte", forms.of("Quiche aux poireaux"))
+        assertEquals("pates", forms.of("Spaghettis à la carbonara"))
+        assertNull(forms.of("Poulet rôti aux panais"))
+        val w = wishes.copy(meals = 4)
+        fun tart(n: Int, veg: String) = candidate("Tarte $n au $veg", "1 pâte brisée", "500 g de $veg", "3 œufs")
+        val tarts = listOf(tart(1, "poireau"), tart(2, "brocoli"), tart(3, "chou"), tart(4, "potiron"))
+        val menu = MenuComposer.compose(tarts + chicken, w.copy(meals = 3))
+        assertEquals(2, menu.count { it.form == "tarte" }, menu.map { it.recipe.title }.toString())
+        assertTrue(chicken in menu)
+        // Une viande déjà achetée pour un plat est bienvenue une deuxième fois, pas une troisième.
+        val other = candidate("Poulet au curry et riz", "2 blancs de poulet", "200 g de riz", "1 oignon", "20 cl de lait de coco")
+        val once = MenuComposer.score(other, listOf(Chosen.of(chicken)), w) - MenuComposer.score(other, listOf(Chosen.of(beef)), w)
+        assertTrue(once > 0, "écart : $once")
+        assertTrue(MenuComposer.score(other, listOf(Chosen.of(chicken), Chosen.of(chicken)), w) < MenuComposer.score(other, listOf(Chosen.of(chicken)), w))
     }
 
     @Test fun le_modele_choisit_par_numeros() = runTest {

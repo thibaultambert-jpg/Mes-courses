@@ -271,10 +271,11 @@ class AppContainer(context: Context) {
         else MenuPrompt.systemWeb(today, wishes, pool, MenuHistory(menuHistory.all(), cookbook, today), settings.current.preferences, adjusting)
     }
 
-    fun menuTools(adjusting: Boolean = false): List<AgentTool> = MenuTools(
+    fun menuTools(adjusting: Boolean = false, maxChanges: Int? = null): List<AgentTool> = MenuTools(
         draft, recipes, ::defaultPortions, candidates,
         wishes = { currentWishes },
         search = { words -> candidateFinder.search(words, currentWishes ?: MenuWishes(settings.current.meals, defaultPortions()), limit = 4) },
+        maxChanges = maxChanges,
     ).all(adjusting)
 
     fun shoppingSystemPrompt(): String = ShoppingPrompt.system(settings.current.preferOrganic, settings.current.preferences, activeRetailer.value)

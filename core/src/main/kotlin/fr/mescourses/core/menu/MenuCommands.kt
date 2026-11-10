@@ -13,8 +13,9 @@ sealed interface MenuCommand {
     data class SetPeople(val dish: Int, val adults: Int, val children: Int) : MenuCommand
     data class Remove(val dish: Int) : MenuCommand
     /** [words] : ce que l'utilisateur veut (« curry de légumes ») ; null = la meilleure recette disponible. */
-    data class AddDish(val words: String?) : MenuCommand
-    data class Replace(val dish: Int, val words: String?) : MenuCommand
+    /** [site] : identifiant du site voulu (« une recette de Jow »), s'il est nommé. */
+    data class AddDish(val words: String?, val site: String? = null) : MenuCommand
+    data class Replace(val dish: Int, val words: String?, val site: String? = null) : MenuCommand
 
     companion object {
         private val numbers = mapOf(
@@ -30,6 +31,14 @@ sealed interface MenuCommand {
         private val replace = Regex("""\b(remplace[rsz]?|change[rsz]?|echange[rsz]?)\b""")
         private val negation = Regex("""\b(ne|n|pas|sans|jamais)\b""")
         private val people = Regex("""\b(adulte|enfant|personne|invite|convive)s?\b""")
+
+        /** Noms des sites tels qu'on les écrit (« jow », « cuisine az », « hello fresh ») → identifiant. */
+        private val sites: Map<String, String> = fr.mescourses.core.recipes.RecipeSites.all.flatMap { site ->
+            val name = site.name.lowercase().stripAccents().replace(Regex("[^a-z0-9 ]"), " ").trim()
+            listOf(name to site.id, name.replace(" ", "") to site.id)
+        }.toMap() + mapOf("hello fresh" to "hellofresh", "ptit chef" to "ptitchef", "petit chef" to "ptitchef")
+
+        private val filler = setOf("recette", "plat", "repas", "autre", "une", "un", "nouvelle", "nouveau", "site", "du", "de", "sur", "chez")
 
         private fun number(s: String): Int? = s.toIntOrNull() ?: numbers[s]
 
@@ -47,11 +56,16 @@ sealed interface MenuCommand {
 
         /** Ce qui suit « par », « avec », « de », « au(x) » après le mot « plat » : la recette voulue. */
         private fun wanted(text: String, after: Regex): String? =
-            after.find(text)?.groupValues?.last()?.trim()?.takeIf { it.length >= 3 && !people.containsMatchIn(it) }
+            after.find(text)?.groupValues?.last()?.split(' ')?.dropWhile { it in filler }?.joinToString(" ")?.trim()
+                ?.takeIf { it.length >= 3 && !people.containsMatchIn(it) }
 
         /** [size] : nombre de plats du menu. Renvoie null si la demande n'est pas claire : elle part alors au chef. */
         fun parse(message: String, size: Int): MenuCommand? {
-            val text = message.lowercase().stripAccents().replace(Regex("[^a-z0-9 ]"), " ").replace(Regex("\\s+"), " ").trim()
+            val full = message.lowercase().stripAccents().replace(Regex("[^a-z0-9 ]"), " ").replace(Regex("\\s+"), " ").trim()
+            // Site nommé : on le retient et on l'enlève de la phrase.
+            val named = sites.keys.sortedByDescending { it.length }.firstOrNull { Regex("\\b$it\\b").containsMatchIn(full) }
+            val site = named?.let(sites::get)
+            val text = if (named == null) full else full.replace(Regex("\\b(?:de |du |sur |chez |site )*$named\\b"), " ").replace(Regex("\\s+"), " ").trim()
             // « Je ne voulais pas supprimer un plat » : une phrase négative n'est pas un ordre.
             if (text.isEmpty() || negation.containsMatchIn(text) || text.split(' ').size > 14) return null
             val dish = dishRef(text, size)
@@ -69,9 +83,9 @@ sealed interface MenuCommand {
                 return if (isAdd) AddGuests(dish, adults, children) else SetPeople(dish, adults, children)
             }
             if (isRemove && dish != null && Regex("""\bplat\b""").containsMatchIn(text)) return Remove(dish)
-            if (isReplace && dish != null) return Replace(dish, wanted(text, Regex("""\bpar (?:un |une |du |de la |des |le |la |les )?(.+)$""")))
+            if (isReplace && dish != null) return Replace(dish, wanted(text, Regex("""\bpar (?:un |une |du |de la |des |le |la |les )?(.+)$""")), site)
             if (isAdd && dish == null && Regex("""\b(un|une|1) (?:autre |nouveau |nouvelle |\d+ ?(?:e|eme|ieme) |[a-z]+ieme )?(?:plat|recette|repas)\b""").containsMatchIn(text)) {
-                return AddDish(wanted(text, Regex("""\b(?:plat|recette|repas) (?:de |d |avec |au |aux |a la |a base de )(?:du |de la |des |le |la |les )?(.+)$""")))
+                return AddDish(wanted(text, Regex("""\b(?:plat|recette|repas) (?:de |d |avec |au |aux |a la |a base de )(?:du |de la |des |le |la |les )?(.+)$""")), site)
             }
             return null
         }

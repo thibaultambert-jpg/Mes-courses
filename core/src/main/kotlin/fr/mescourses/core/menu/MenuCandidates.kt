@@ -47,6 +47,9 @@ data class Candidate(
     /** Note propre à la recette, indépendante du reste du menu. */
     val base: Double,
 ) {
+    /** Forme du plat (pâtes, tarte, gratin…), pour ne pas en mettre trois au menu. */
+    val form: String? get() = DishForms.of(recipe.title)
+    val site: String? get() = siteName
     val minutes: Int? get() = listOfNotNull(recipe.prepMinutes, recipe.cookMinutes).takeIf { it.isNotEmpty() }?.sum()
     val siteName: String? get() = recipe.sourceUrl?.let { RecipeSites.forUrl(it)?.name }
 
@@ -169,7 +172,14 @@ class CandidateFinder(
         private const val PER_SITE = 8
         /** Catalogue : fiches demandées par recherche, et candidates gardées pour chacune. */
         private const val LOCAL_FETCH = 40
-        private const val LOCAL_KEEP = 5
+        private const val LOCAL_KEEP = 6
+        /** Par recherche, pas plus de tant de recettes d'un même site : sinon le mieux noté occupe tout le menu. */
+        private const val LOCAL_PER_SITE = 2
+
+        private fun perSite(list: List<Candidate>, max: Int): List<Candidate> {
+            val seen = HashMap<String?, Int>()
+            return list.filter { c -> (seen.merge(c.siteName, 1, Int::plus) ?: 1) <= max }
+        }
         private val meats = listOf("poulet", "porc", "dinde")
         private val stopWords = setOf(
             "un", "une", "des", "le", "la", "les", "de", "du", "au", "aux", "et", "ou", "avec", "pour", "sans", "en", "ce", "cette",
@@ -253,7 +263,7 @@ class CandidateFinder(
     }
 
     private suspend fun findLocal(
-        store: CatalogStore, w: MenuWishes, round: Int, exclude: Set<String>, onProgress: (String) -> Unit,
+        store: CatalogStore, w: MenuWishes, round: Int, exclude: Set<String>, draw: Int?, onProgress: (String) -> Unit,
     ): FindResult {
         val date = today()
         val cookbook = recipes.all()
@@ -262,16 +272,17 @@ class CandidateFinder(
         val excluded = exclude.map(RecipeSites::normalize).toSet()
         val specs = specs(w, past, date, round)
         onProgress("Recherche dans le catalogue de recettes…")
-        val seed = date.get(ChronoField.ALIGNED_WEEK_OF_YEAR) * 31 + date.year + round * 7
+        val seed = draw ?: (date.get(ChronoField.ALIGNED_WEEK_OF_YEAR) * 31 + date.year + round * 7)
         val lists = specs.map { spec ->
             val query = CatalogQuery(
                 words = CatalogQuery.words(spec.words), courses = CatalogQuery.MEALS, kind = spec.kind,
                 // Les légumes de la semaine doivent donner des plats de saison ; une envie ou un reste à écouler, non.
                 month = date.monthValue.takeIf { spec.seasonal }, maxMinutes = w.time.maxMinutes, limit = LOCAL_FETCH, seed = seed,
             )
-            fromCatalog(store, query, w, past, date, index, excluded).take(LOCAL_KEEP)
+            perSite(fromCatalog(store, query, w, past, date, index, excluded), LOCAL_PER_SITE).take(LOCAL_KEEP)
         }
-        val fromCatalog = RecipeSearcher.interleave(lists).distinctBy { ShoppingListMerger.key(it.recipe.title) }.take(MAX_IMPORTS)
+        // Aucun site ne fournit plus du tiers des candidates.
+        val fromCatalog = perSite(RecipeSearcher.interleave(lists).distinctBy { ShoppingListMerger.key(it.recipe.title) }, MAX_IMPORTS / 3).take(MAX_IMPORTS)
         val fromBook = cookbookCandidates(cookbook, w, past, date)
         return FindResult((fromCatalog + fromBook).sortedByDescending { it.base }, specs.map { it.text }, emptyList())
     }
@@ -281,10 +292,12 @@ class CandidateFinder(
         wishes: MenuWishes,
         round: Int = 0,
         exclude: Set<String> = emptySet(),
+        /** Tirage : deux recherches avec des nombres différents ne sortent pas les mêmes recettes du catalogue. */
+        seed: Int? = null,
         onProgress: (String) -> Unit = {},
     ): FindResult {
         val w = wishes.normalized()
-        local()?.let { store -> findLocal(store, w, round, exclude, onProgress).takeIf { it.candidates.size >= w.meals }?.let { return it } }
+        local()?.let { store -> findLocal(store, w, round, exclude, seed, onProgress).takeIf { it.candidates.size >= w.meals }?.let { return it } }
         val date = today()
         val cookbook = recipes.all()
         val past = MenuHistory(history.all(), cookbook, date)
@@ -305,19 +318,31 @@ class CandidateFinder(
     }
 
     /** Recherche à la demande (outil du LLM, « autre recette ») : quelques candidates pour des mots donnés. */
-    suspend fun search(text: String, wishes: MenuWishes, limit: Int = 6, exclude: Set<String> = emptySet()): List<Candidate> {
+    suspend fun search(
+        text: String, wishes: MenuWishes, limit: Int = 6, exclude: Set<String> = emptySet(),
+        /** Identifiants des sites voulus (« une recette de Jow ») ; vide = tous. */
+        sites: Set<String> = emptySet(),
+        seed: Int? = null,
+    ): List<Candidate> {
         val date = today()
         val cookbook = recipes.all()
         val past = MenuHistory(history.all(), cookbook, date)
         val index = CookbookIndex(cookbook)
         val excluded = exclude.map(RecipeSites::normalize).toSet()
         local()?.let { store ->
-            val base = CatalogQuery(words = CatalogQuery.words(text), courses = CatalogQuery.MEALS, maxMinutes = wishes.time.maxMinutes, limit = LOCAL_FETCH)
+            val words = CatalogQuery.words(text)
+            val base = CatalogQuery(
+                words = words, courses = CatalogQuery.MEALS, maxMinutes = wishes.time.maxMinutes, limit = LOCAL_FETCH, sites = sites,
+                // Sans mots (« une recette de Jow ») : des plats de saison, tirés au sort parmi les bien notés.
+                month = date.monthValue.takeIf { words.isEmpty() }, seed = seed,
+            )
             // « raclette », « crêpes » : pas toujours rangés parmi les plats, on élargit si rien ne sort.
             val found = fromCatalog(store, base, wishes, past, date, index, excluded)
                 .ifEmpty { fromCatalog(store, base.copy(courses = emptySet()), wishes, past, date, index, excluded) }
             if (found.isNotEmpty()) return found.take(limit)
+            if (sites.isNotEmpty()) return emptyList()
         }
+        if (text.isBlank()) return emptyList()
         val (lists, _) = searchAll(listOf(text.trim())) {}
         val hits = lists.flatten().filter { acceptable(it, wishes, index, past, excluded) }
             .distinctBy { RecipeSites.normalize(it.url) }.take(limit)

@@ -30,7 +30,11 @@ class MenuTools(
     private val today: () -> LocalDate = { LocalDate.now() },
     /** Recherche sur les sites à la demande du modèle (null = indisponible). */
     private val search: (suspend (String) -> List<Candidate>)? = null,
+    /** Retouches permises pendant cette demande (null = sans limite) : le modèle a tendance à en faire plusieurs. */
+    private val maxChanges: Int? = null,
 ) {
+    private var changes = 0
+
     /** Avec des candidates : le menu se compose par numéros ; sans (hors ligne) : le chef invente, comme avant. */
     /**
      * [adjusting] : le menu existe déjà et l'utilisateur demande une retouche. « propose_menu » est alors retiré : un
@@ -40,14 +44,32 @@ class MenuTools(
         if (pool.size > 0) listOfNotNull(pickMenu.takeUnless { adjusting }, swapDish, pickDish, removeDish, searchRecipes.takeIf { search != null }, createDish, addGuests, setDishPeople)
         else listOf(proposeMenu, replaceDish, addDish, removeDish, createDish, addGuests, setDishPeople)
 
-    private fun tool(name: String, description: String, parameters: JsonObject, run: suspend (JsonObject) -> JsonElement) =
+    private fun tool(name: String, description: String, parameters: JsonObject, changing: Boolean = true, run: suspend (JsonObject) -> JsonElement) =
         object : AgentTool {
             override val name = name
             override val description = description
             override val parameters = parameters
-            override suspend fun execute(args: JsonObject): JsonElement =
-                try { run(args) } catch (e: Exception) { toolError(e.message ?: e.toString()) }
+            override suspend fun execute(args: JsonObject): JsonElement {
+                if (changing && maxChanges != null && changes >= maxChanges) {
+                    return toolError("La retouche demandée est déjà faite : ne modifie rien d'autre. Réponds maintenant à l'utilisateur en une phrase.")
+                }
+                val result = try { run(args) } catch (e: Exception) { toolError(e.message ?: e.toString()) }
+                if (changing && (result as? JsonObject)?.get("ok")?.toString() == "true") changes++
+                return result
+            }
         }
+
+    /** La recette est-elle déjà au menu (même adresse ou même titre) ? [except] : position du plat qu'elle remplace. */
+    private fun alreadyThere(c: Candidate, dishes: List<MenuDish>, except: Int? = null): Boolean {
+        val url = c.recipe.sourceUrl?.let(fr.mescourses.core.recipes.RecipeSites::normalize)
+        val title = fr.mescourses.core.shopping.ShoppingListMerger.key(c.recipe.title)
+        return dishes.withIndex().any { (i, d) ->
+            i != except && ((url != null && d.sourceUrl?.let(fr.mescourses.core.recipes.RecipeSites::normalize) == url) ||
+                fr.mescourses.core.shopping.ShoppingListMerger.key(d.title) == title)
+        }
+    }
+
+    private fun duplicate(c: Candidate) = toolError("« ${c.recipe.title} » est déjà au menu : choisis une autre candidate.")
 
     private suspend fun index() = CookbookIndex(recipes.all())
 
@@ -105,11 +127,23 @@ class MenuTools(
     )
 
     private suspend fun proposeNumbers(numbers: List<Int>): JsonElement {
-        val picked = numbers.distinct().mapNotNull(pool::get)
-        if (picked.isEmpty()) return noCandidate()
+        val known = numbers.distinct().mapNotNull(pool::get)
+        if (known.isEmpty()) return noCandidate()
+        // Pas deux fois le même titre, et pas plus de deux plats de même forme (pâtes, tarte, gratin…).
+        val picked = ArrayList<Candidate>()
+        val refused = ArrayList<String>()
+        for (c in known) {
+            val sameForm = c.form != null && picked.count { it.form == c.form } >= DishForms.MAX
+            val sameTitle = picked.any { fr.mescourses.core.shopping.ShoppingListMerger.key(it.recipe.title) == fr.mescourses.core.shopping.ShoppingListMerger.key(c.recipe.title) }
+            if (sameForm || sameTitle) refused += c.recipe.title else picked += c
+        }
         draft.set(picked.map { it.toDish(defaultPortions()) })
         val unknown = numbers.distinct().filter { pool.get(it) == null }
-        return withOverlap("Menu de ${picked.size} plats enregistré" + if (unknown.isNotEmpty()) " (numéros inconnus ignorés : ${unknown.joinToString()})" else "")
+        return withOverlap(
+            "Menu de ${picked.size} plats enregistré" +
+                (if (unknown.isNotEmpty()) " (numéros inconnus ignorés : ${unknown.joinToString()})" else "") +
+                if (refused.isNotEmpty()) " (écartés, trop de plats du même genre : ${refused.joinToString()})" else "",
+        )
     }
 
     val pickMenu = tool(
@@ -129,6 +163,7 @@ class MenuTools(
     ) { args ->
         val (i, dishes) = numbered(args)
         val c = candidate(args) ?: return@tool noCandidate()
+        if (alreadyThere(c, dishes, except = i)) return@tool duplicate(c)
         draft.set(dishes.toMutableList().also { it[i] = c.toDish(dishes[i].portions) })
         withOverlap("Plat ${i + 1} remplacé par « ${c.recipe.title} »")
     }
@@ -139,6 +174,7 @@ class MenuTools(
         params { integer("candidat", "Numéro de la recette candidate à ajouter") },
     ) { args ->
         val c = candidate(args) ?: return@tool noCandidate()
+        if (alreadyThere(c, draft.get())) return@tool duplicate(c)
         val dishes = draft.get() + c.toDish(defaultPortions())
         draft.set(dishes)
         withOverlap("« ${c.recipe.title} » ajouté (plat ${dishes.size})")
@@ -148,6 +184,7 @@ class MenuTools(
         "search_recipes",
         "Cherche d'autres recettes sur les sites (ex. « curry de légumes ») et les ajoute aux candidates.",
         params { string("mots", "Mots à chercher : un plat ou un ingrédient") },
+        changing = false,
     ) { args ->
         val words = args.str("mots") ?: args.str("query") ?: return@tool toolError("mots manquants")
         val found = search?.invoke(words).orEmpty()

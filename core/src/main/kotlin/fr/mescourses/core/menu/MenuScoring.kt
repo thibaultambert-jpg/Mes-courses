@@ -34,16 +34,47 @@ object DishKinds {
     }
 }
 
+/**
+ * Forme d'un plat d'après son titre (pâtes, tarte salée, gratin…) : deux plats de même forme, ça passe ; trois, non.
+ */
+object DishForms {
+    private val forms = linkedMapOf(
+        "tarte" to listOf("tarte", "quiche", "tourte", "flamiche", "pissaladiere", "feuillete", "tatin", "cake"),
+        "pizza" to listOf("pizza", "flammekueche", "calzone", "focaccia"),
+        "pates" to RecipeFilter.PATES.require + listOf("carbonara", "bolognaise", "coquillette", "tortellini"),
+        "gratin" to listOf("gratin", "parmentier", "tartiflette", "moussaka", "crumble"),
+        "soupe" to listOf("soupe", "veloute", "potage", "bouillon", "minestrone", "gaspacho"),
+        "salade" to listOf("salade", "taboule", "poke", "bowl", "buddha"),
+        "riz" to listOf("risotto", "riz", "paella", "biryani", "pilaf"),
+        "curry" to listOf("curry", "dahl", "dal", "tajine", "couscous"),
+        "sandwich" to listOf("burger", "sandwich", "wrap", "croque", "tacos", "fajita", "kebab", "galette", "crepe"),
+        "oeufs" to listOf("omelette", "frittata", "tortilla", "oeuf"),
+    ).mapValues { (_, words) -> words.map { " " + ShoppingListMerger.key(it) + " " } }
+
+    fun of(title: String): String? {
+        val key = " " + ShoppingListMerger.key(title) + " "
+        return forms.entries.firstOrNull { (_, words) -> words.any { it in key } }?.key
+    }
+
+    /** Plats de même forme acceptés dans un menu. */
+    const val MAX = 2
+}
+
 /** Ce que le compositeur retient d'un plat déjà au menu. */
-data class Chosen(val keys: Set<String>, val kind: DishKind, val protein: String?, val fromCookbook: Boolean) {
+data class Chosen(
+    val keys: Set<String>, val kind: DishKind, val protein: String?, val fromCookbook: Boolean,
+    val form: String? = null, val site: String? = null,
+) {
     companion object {
-        fun of(c: Candidate) = Chosen(c.keys, c.kind, c.protein, c.fromCookbook)
+        fun of(c: Candidate) = Chosen(c.keys, c.kind, c.protein, c.fromCookbook, c.form, c.siteName)
 
         fun of(d: MenuDish) = Chosen(
             keys = d.mainIngredients.map(IngredientOverlap::key).filter { it.isNotEmpty() }.toSet(),
             kind = DishKinds.of(d.title, d.mainIngredients),
             protein = PlateBalance.protein(listOf(d.title) + d.mainIngredients),
             fromCookbook = d.recipeId != null,
+            form = DishForms.of(d.title),
+            site = d.sourceUrl?.let { fr.mescourses.core.recipes.RecipeSites.forUrl(it)?.name },
         )
     }
 }
@@ -81,9 +112,24 @@ object MenuComposer {
         val shared = c.keys.count { k -> chosen.any { k in it.keys } }
         s += min(shared, 4) * 1.5
         s -= (c.keys.size - shared) * 0.25
-        // Variété : pas deux fois la même protéine, ni deux plats presque identiques.
-        if (c.protein != null && chosen.any { it.protein == c.protein }) s -= 3
+        // Viande et poisson : la même pièce sert à deux plats (un seul achat), pas à trois.
+        if (c.protein != null) {
+            val same = chosen.count { it.protein == c.protein }
+            val bought = c.kind != DishKind.VEGE
+            s += when {
+                same == 0 -> 0.0
+                same == 1 -> if (bought) 2.5 else -3.0
+                else -> -8.0
+            }
+        }
+        // Variété : pas deux plats presque identiques, au plus deux plats de même forme (pâtes, tarte, gratin…).
         if (chosen.any { similar(c.keys, it.keys) }) s -= 8
+        if (c.form != null) {
+            val same = chosen.count { it.form == c.form }
+            if (same >= DishForms.MAX) s -= 100 else if (same == 1) s -= 5
+        }
+        // Les sites se partagent le menu : une recette d'un site déjà très présent passe après.
+        if (c.site != null) s -= chosen.count { it.site == c.site } * 1.5
         // Dosage classiques / découvertes.
         val target = (wishes.meals * wishes.novelty.cookbookShare).roundToInt()
         if (c.fromCookbook) s += if (chosen.count { it.fromCookbook } < target) 5 else -5
