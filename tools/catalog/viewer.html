@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Catalogue de recettes — contrôle</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --card: #fff; --text: #1d1d1b; --muted: #6b6a65; --line: #dedcd3;
+    --accent: #2f6b4f; --accent-soft: #e2efe7; --warn: #a4551a; --warn-soft: #f8e9da;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161715; --card: #20211f; --text: #ecebe6; --muted: #a09f98; --line: #363733;
+      --accent: #7cc49f; --accent-soft: #23372d; --warn: #e6a468; --warn-soft: #3b2c1e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, sans-serif; }
+  header { padding: 16px; border-bottom: 1px solid var(--line); }
+  h1 { margin: 0 0 4px; font-size: 20px; }
+  .muted { color: var(--muted); }
+  main { padding: 16px; max-width: 1200px; margin: 0 auto; }
+  #drop { border: 2px dashed var(--line); border-radius: 12px; padding: 28px 16px; text-align: center; background: var(--card); cursor: pointer; }
+  #drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  #drop input { display: none; }
+  .filters { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin: 16px 0; }
+  .filters label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+  input[type=search], select { font: inherit; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--text); width: 100%; }
+  .wide { grid-column: 1 / -1; }
+  .check { flex-direction: row !important; align-items: center; gap: 6px !important; font-size: 14px !important; color: var(--text) !important; padding-top: 18px; }
+  table { border-collapse: collapse; width: 100%; background: var(--card); border-radius: 10px; overflow: hidden; font-size: 13px; }
+  th, td { padding: 6px 10px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  .scroll { overflow-x: auto; }
+  #count { margin: 14px 0 8px; font-weight: 600; }
+  .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: flex; gap: 10px; min-width: 0; }
+  .card img, .noimg { width: 72px; height: 72px; border-radius: 8px; object-fit: cover; flex: none; background: var(--line); }
+  .card .body { min-width: 0; flex: 1; }
+  .card a { color: var(--text); font-weight: 600; text-decoration: none; }
+  .card a:hover { text-decoration: underline; }
+  .tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+  .tag { font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); }
+  .tag.warn { background: var(--warn-soft); color: var(--warn); }
+  .tag.plain { background: transparent; border: 1px solid var(--line); color: var(--muted); }
+  details { font-size: 12px; color: var(--muted); }
+  details ul { margin: 4px 0 0; padding-left: 18px; }
+  button { font: inherit; padding: 9px 16px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: var(--bg); cursor: pointer; margin: 14px auto; display: block; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Catalogue de recettes — contrôle</h1>
+  <div class="muted">Tout reste dans ton navigateur : aucun fichier n'est envoyé.</div>
+</header>
+<main>
+  <label id="drop">
+    <input id="file" type="file" multiple accept=".zip,.gz,.jsonl">
+    <strong>Dépose ici les fichiers du catalogue</strong> ou clique pour les choisir<br>
+    <span class="muted">Archive .zip téléchargée depuis GitHub, fichiers .jsonl.gz ou .jsonl — plusieurs à la fois si besoin.</span>
+    <div id="status" class="muted"></div>
+  </label>
+
+  <div id="app" class="hidden">
+    <div class="filters">
+      <label class="wide">Recherche (titre et ingrédients, tous les mots)
+        <input id="q" type="search" placeholder="poireau lardons, curry de légumes…"></label>
+      <label>Site<select id="site"></select></label>
+      <label>Type de plat<select id="course"></select></label>
+      <label>Composition<select id="kind">
+        <option value="">Toutes</option><option value="VEGE">Végétarien</option><option value="POISSON">Poisson</option><option value="VIANDE">Viande</option></select></label>
+      <label>De saison en<select id="month"></select></label>
+      <label>Note<select id="rating">
+        <option value="">Toutes</option><option value="good">Bien notées (≥ 4, 3 avis et plus)</option>
+        <option value="3">≥ 3</option><option value="4">≥ 4</option><option value="4.5">≥ 4,5</option><option value="none">Sans note</option></select></label>
+      <label>Temps total<select id="time">
+        <option value="">Tous</option><option value="30">≤ 30 min</option><option value="60">≤ 1 h</option><option value="none">Sans temps</option></select></label>
+      <label>À contrôler<select id="check">
+        <option value="">—</option><option value="noimg">Sans image</option><option value="autre">Type « Autre »</option>
+        <option value="nomonth">Jamais de saison</option><option value="few">Moins de 4 ingrédients</option>
+        <option value="nokeys">Aucun ingrédient reconnu</option><option value="dup">Titre en double sur le même site</option></select></label>
+      <label>Tri<select id="sort">
+        <option value="">Ordre du fichier</option><option value="rating">Meilleures notes</option><option value="votes">Plus d'avis</option>
+        <option value="time">Plus rapides</option><option value="title">Titre</option><option value="recent">Modifiées récemment</option></select></label>
+      <label class="check"><input id="meal" type="checkbox"> Repas du menu seulement</label>
+      <label class="check"><input id="balanced" type="checkbox"> Assiette complète</label>
+      <label class="check"><input id="images" type="checkbox" checked> Afficher les images</label>
+    </div>
+
+    <div class="scroll"><table id="stats"></table></div>
+    <div id="count"></div>
+    <div id="list" class="list"></div>
+    <button id="more" class="hidden">Afficher plus</button>
+  </div>
+</main>
+
+<script>
+const COURSES = { PLAT: 'Plat', SOUPE: 'Soupe', SALADE: 'Salade', ENTREE: 'Entrée', ACCOMPAGNEMENT: 'Accompagnement', DESSERT: 'Dessert', APERITIF: 'Apéritif', BOISSON: 'Boisson', AUTRE: 'Autre' };
+const KINDS = { VEGE: 'Végétarien', POISSON: 'Poisson', VIANDE: 'Viande' };
+const MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+const MEALS = new Set(['PLAT', 'SOUPE', 'SALADE']);
+const PAGE = 60;
+
+const $ = id => document.getElementById(id);
+const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const nb = n => n.toLocaleString('fr-FR');
+
+let all = [];        // toutes les fiches
+let seen = new Map(); // adresse -> position, pour ne garder qu'une fiche par adresse
+let shown = [];
+let limit = PAGE;
+
+/* ---------- Lecture des fichiers ---------- */
+
+async function eachLine(stream, onLine) {
+  const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
+  let rest = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    const parts = (rest + value).split('\n');
+    rest = parts.pop();
+    parts.forEach(onLine);
+  }
+  if (rest) onLine(rest);
+}
+
+function addLine(line) {
+  line = line.trim();
+  if (!line.startsWith('{')) return;
+  let e;
+  try { e = JSON.parse(line); } catch { return; }
+  if (!e.url || !e.title) return;
+  e.course ??= 'AUTRE'; e.kind ??= 'VEGE'; e.ingredients ??= []; e.months ??= []; e.keys ??= []; e.produce ??= [];
+  e.minutes = e.totalMinutes ?? ((e.prepMinutes ?? 0) + (e.cookMinutes ?? 0) || null);
+  e.text = norm(e.title + ' ' + e.ingredients.join(' '));
+  const at = seen.get(e.url);
+  if (at === undefined) { seen.set(e.url, all.length); all.push(e); } else all[at] = e;
+}
+
+/** Archive .zip (artefact GitHub) : on lit chaque fichier .jsonl ou .jsonl.gz qu'elle contient. */
+async function readZip(file) {
+  const buf = await file.arrayBuffer();
+  const v = new DataView(buf);
+  let end = buf.byteLength - 22;
+  while (end >= 0 && v.getUint32(end, true) !== 0x06054b50) end--;
+  if (end < 0) throw new Error('archive illisible');
+  const total = v.getUint16(end + 10, true);
+  let p = v.getUint32(end + 16, true);
+  for (let i = 0; i < total; i++) {
+    const method = v.getUint16(p + 10, true), size = v.getUint32(p + 20, true);
+    const n = v.getUint16(p + 28, true), x = v.getUint16(p + 30, true), c = v.getUint16(p + 32, true);
+    const local = v.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(new Uint8Array(buf, p + 46, n));
+    p += 46 + n + x + c;
+    if (!/\.jsonl(\.gz)?$/.test(name)) continue;
+    const start = local + 30 + v.getUint16(local + 26, true) + v.getUint16(local + 28, true);
+    let stream = new Blob([new Uint8Array(buf, start, size)]).stream();
+    if (method === 8) stream = stream.pipeThrough(new DecompressionStream('deflate-raw'));
+    else if (method !== 0) throw new Error('compression non gérée dans ' + name);
+    if (name.endsWith('.gz')) stream = stream.pipeThrough(new DecompressionStream('gzip'));
+    $('status').textContent = 'Lecture de ' + name + '…';
+    await eachLine(stream, addLine);
+  }
+}
+
+async function load(files) {
+  for (const file of files) {
+    $('status').textContent = 'Lecture de ' + file.name + '…';
+    try {
+      if (file.name.endsWith('.zip')) await readZip(file);
+      else if (file.name.endsWith('.gz')) await eachLine(file.stream().pipeThrough(new DecompressionStream('gzip')), addLine);
+      else await eachLine(file.stream(), addLine);
+    } catch (err) {
+      $('status').textContent = file.name + ' : ' + err.message;
+      return;
+    }
+  }
+  $('status').textContent = nb(all.length) + ' recettes chargées. Tu peux déposer d\'autres fichiers pour les ajouter.';
+  if (all.length) { $('app').classList.remove('hidden'); prepare(); apply(); }
+}
+
+/* ---------- Filtres ---------- */
+
+function options(select, first, entries) {
+  const keep = select.value;
+  select.innerHTML = `<option value="">${first}</option>` + entries.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join('');
+  select.value = keep;
+}
+
+function prepare() {
+  const sites = [...new Set(all.map(e => e.siteId))].sort();
+  options($('site'), 'Tous', sites.map(s => [s, s]));
+  options($('course'), 'Tous', Object.entries(COURSES));
+  options($('month'), 'Toute l\'année', MONTHS.map((m, i) => [i + 1, m]));
+  // Titres en double sur un même site.
+  const titles = new Map();
+  all.forEach(e => { const k = e.siteId + '|' + norm(e.title); titles.set(k, (titles.get(k) ?? 0) + 1); });
+  all.forEach(e => { e.dup = titles.get(e.siteId + '|' + norm(e.title)) > 1; });
+  stats(sites);
+}
+
+const good = e => (e.rating ?? 0) >= 4 && (e.ratingCount ?? 0) >= 3;
+
+function stats(sites) {
+  const pct = (n, t) => t ? Math.round(100 * n / t) + ' %' : '—';
+  const row = (name, list) => {
+    const t = list.length, c = f => list.filter(f).length;
+    return `<tr><td>${esc(name)}</td><td>${nb(t)}</td><td>${nb(c(e => MEALS.has(e.course)))}</td><td>${nb(c(e => e.course === 'DESSERT'))}</td>` +
+      `<td>${pct(c(e => e.course === 'AUTRE'), t)}</td><td>${pct(c(e => e.rating != null), t)}</td><td>${nb(c(good))}</td>` +
+      `<td>${pct(c(e => e.imageUrl), t)}</td><td>${pct(c(e => e.minutes), t)}</td><td>${pct(c(e => e.months.length), t)}</td></tr>`;
+  };
+  $('stats').innerHTML = '<tr><th>Site</th><th>Recettes</th><th>Repas</th><th>Desserts</th><th>Type « Autre »</th><th>Notées</th><th>Bien notées</th><th>Avec image</th><th>Avec temps</th><th>Avec saison</th></tr>' +
+    sites.map(s => row(s, all.filter(e => e.siteId === s))).join('') + (sites.length > 1 ? row('Total', all) : '');
+}
+
+function apply() {
+  const words = norm($('q').value).split(/\s+/).filter(Boolean);
+  const site = $('site').value, course = $('course').value, kind = $('kind').value;
+  const month = +$('month').value, rating = $('rating').value, time = $('time').value, check = $('check').value;
+  const meal = $('meal').checked, balanced = $('balanced').checked;
+
+  shown = all.filter(e =>
+    (!site || e.siteId === site) && (!course || e.course === course) && (!kind || e.kind === kind) &&
+    (!month || e.months.includes(month)) &&
+    (!meal || MEALS.has(e.course)) && (!balanced || e.balanced) &&
+    (!rating || (rating === 'good' ? good(e) : rating === 'none' ? e.rating == null : (e.rating ?? 0) >= +rating)) &&
+    (!time || (time === 'none' ? !e.minutes : e.minutes && e.minutes <= +time)) &&
+    (!check || (check === 'noimg' ? !e.imageUrl : check === 'autre' ? e.course === 'AUTRE' : check === 'nomonth' ? !e.months.length :
+      check === 'few' ? e.ingredients.length < 4 : check === 'nokeys' ? !e.keys.length : e.dup)) &&
+    words.every(w => e.text.includes(w)));
+
+  const by = {
+    rating: (a, b) => (b.rating ?? 0) - (a.rating ?? 0) || (b.ratingCount ?? 0) - (a.ratingCount ?? 0),
+    votes: (a, b) => (b.ratingCount ?? 0) - (a.ratingCount ?? 0),
+    time: (a, b) => (a.minutes ?? 1e9) - (b.minutes ?? 1e9),
+    title: (a, b) => a.title.localeCompare(b.title, 'fr'),
+    recent: (a, b) => (b.lastmod ?? '').localeCompare(a.lastmod ?? ''),
+  }[$('sort').value];
+  if (by) shown.sort(by);
+  limit = PAGE;
+  render();
+}
+
+function card(e) {
+  const tags = [
+    `<span class="tag${e.course === 'AUTRE' ? ' warn' : ''}">${COURSES[e.course] ?? e.course}</span>`,
+    `<span class="tag">${KINDS[e.kind] ?? e.kind}</span>`,
+    e.balanced ? '<span class="tag">Assiette complète</span>' : '',
+    e.minutes ? `<span class="tag plain">${e.minutes} min</span>` : '<span class="tag warn">sans temps</span>',
+    e.rating != null ? `<span class="tag plain">★ ${String(e.rating).replace('.', ',')}${e.ratingCount ? ' (' + nb(e.ratingCount) + ')' : ''}</span>` : '<span class="tag warn">sans note</span>',
+    `<span class="tag plain">${e.servings ?? 4} pers.</span>`,
+  ].join('');
+  const season = e.months.length === 12 ? 'toute l\'année' : e.months.length ? e.months.map(m => MONTHS[m - 1].slice(0, 4)).join(', ') : 'jamais (un produit est toujours hors saison)';
+  const img = $('images').checked && e.imageUrl
+    ? `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(e.imageUrl)}" alt="">` : '<div class="noimg"></div>';
+  return `<div class="card">${img}<div class="body">
+    <a href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">${esc(e.title)}</a>
+    <div class="muted" style="font-size:12px">${esc(e.siteId)}${e.category ? ' · ' + esc(e.category) : ''}${e.lastmod ? ' · ' + esc(e.lastmod.slice(0, 10)) : ''}</div>
+    <div class="tags">${tags}</div>
+    <details><summary>${e.ingredients.length} ingrédients · saison : ${esc(season)}</summary>
+      <ul>${e.ingredients.map(i => `<li>${esc(i)}</li>`).join('')}</ul>
+      <div>Reconnus pour les courses : ${esc(e.keys.join(', ') || 'aucun')}</div>
+      ${e.produce.length ? `<div>Produits de saison : ${esc(e.produce.join(', '))}</div>` : ''}
+    </details></div></div>`;
+}
+
+function render() {
+  $('count').textContent = nb(shown.length) + ' recette' + (shown.length > 1 ? 's' : '') + ' sur ' + nb(all.length);
+  $('list').innerHTML = shown.slice(0, limit).map(card).join('');
+  $('more').classList.toggle('hidden', shown.length <= limit);
+}
+
+/* ---------- Événements ---------- */
+
+let timer;
+const later = () => { clearTimeout(timer); timer = setTimeout(apply, 200); };
+$('q').addEventListener('input', later);
+['site', 'course', 'kind', 'month', 'rating', 'time', 'check', 'sort', 'meal', 'balanced'].forEach(id => $(id).addEventListener('change', apply));
+$('images').addEventListener('change', render);
+$('more').addEventListener('click', () => { limit += PAGE; render(); });
+$('file').addEventListener('change', e => load([...e.target.files]));
+const drop = $('drop');
+['dragenter', 'dragover'].forEach(n => drop.addEventListener(n, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(n => drop.addEventListener(n, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => load([...e.dataTransfer.files]));
+</script>
+</body>
+</html>

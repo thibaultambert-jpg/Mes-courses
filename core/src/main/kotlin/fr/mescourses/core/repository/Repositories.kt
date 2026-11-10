@@ -1,6 +1,7 @@
 package fr.mescourses.core.repository
 
 import fr.mescourses.core.model.MenuDish
+import fr.mescourses.core.model.MenuHistoryEntry
 import fr.mescourses.core.model.PlannedMeal
 import fr.mescourses.core.model.Recipe
 import fr.mescourses.core.model.ShoppingItem
@@ -40,4 +41,10 @@ interface MenuDraftRepository {
     fun observe(): Flow<List<MenuDish>>
     suspend fun get(): List<MenuDish>
     suspend fun set(dishes: List<MenuDish>)
+}
+
+/** Historique durable des plats validés, pour ne pas reproposer les mêmes d'une semaine à l'autre. */
+interface MenuHistoryRepository {
+    suspend fun all(): List<MenuHistoryEntry>
+    suspend fun add(entries: List<MenuHistoryEntry>)
 }

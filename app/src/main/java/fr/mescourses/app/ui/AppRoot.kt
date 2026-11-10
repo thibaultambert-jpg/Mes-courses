@@ -135,6 +135,7 @@ fun AppRoot(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
                     onOpenSettings = { nav.navigate("settings") },
                     onOpenRecipe = { nav.navigate("recipe/$it") },
                     onOpenShopping = { goTab("shopping") },
+                    onOpenPreview = { nav.navigate("recipes/preview?url=${android.net.Uri.encode(it)}") },
                 )
             }
             composable(

@@ -1,0 +1,130 @@
+name: Catalogue de recettes
+
+# Collecte du catalogue local de recettes : chaque site est lu en plusieurs passages successifs (un job GitHub
+# dure 6 h au plus), à un rythme lent (réglé par site dans CatalogSources). Un passage reprend où le précédent s'est arrêté.
+# Lancement : modifier tools/catalog/pass.conf et pousser, ou « Run workflow ».
+on:
+  workflow_dispatch:
+  push:
+    branches: ["claude/**"]
+    paths:
+      - "tools/catalog/pass.conf"
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  pass1:
+    strategy:
+      fail-fast: false
+      matrix:
+        site: [cuisineaz, ptitchef, marmiton, chefsimon, hellofresh, jow, jdf]
+    uses: ./.github/workflows/catalog-pass.yml
+    with:
+      site: ${{ matrix.site }}
+      pass: "1"
+
+  pass2:
+    needs: pass1
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        site: [cuisineaz, ptitchef, marmiton, chefsimon]
+    uses: ./.github/workflows/catalog-pass.yml
+    with:
+      site: ${{ matrix.site }}
+      pass: "2"
+
+  pass3:
+    needs: pass2
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        site: [cuisineaz, ptitchef, chefsimon]
+    uses: ./.github/workflows/catalog-pass.yml
+    with:
+      site: ${{ matrix.site }}
+      pass: "3"
+
+  pass4:
+    needs: pass3
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        site: [cuisineaz]
+    uses: ./.github/workflows/catalog-pass.yml
+    with:
+      site: ${{ matrix.site }}
+      pass: "4"
+
+  pass5:
+    needs: pass4
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        site: [cuisineaz]
+    uses: ./.github/workflows/catalog-pass.yml
+    with:
+      site: ${{ matrix.site }}
+      pass: "5"
+
+  pass6:
+    needs: pass5
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        site: [cuisineaz]
+    uses: ./.github/workflows/catalog-pass.yml
+    with:
+      site: ${{ matrix.site }}
+      pass: "6"
+
+  pass7:
+    needs: pass6
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        site: [cuisineaz]
+    uses: ./.github/workflows/catalog-pass.yml
+    with:
+      site: ${{ matrix.site }}
+      pass: "7"
+
+  bilan:
+    needs: pass7
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Dernier état de chaque site
+        uses: actions/download-artifact@v4
+        with:
+          path: parts
+      - name: Bilan
+        run: |
+          mkdir -p catalog
+          # Pour chaque site, le fichier du dernier passage (il contient tout ce qui a été lu avant).
+          for site in cuisineaz ptitchef marmiton chefsimon hellofresh jow jdf; do
+            last=$(ls -d parts/catalog-$site-* 2>/dev/null | sort -V | tail -1)
+            if [ -n "$last" ]; then cp "$last/$site.jsonl" catalog/; fi
+          done
+          ./gradlew -q -p tools/catalog run --args="stats --out $PWD/catalog" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo; echo "Exemples :"; for f in catalog/*.jsonl; do head -c 1200 "$f" | head -1; echo; done
+          gzip -k catalog/*.jsonl && ls -la catalog
+      - uses: actions/upload-artifact@v4
+        with:
+          name: catalogue
+          path: catalog/*.jsonl.gz
+          retention-days: 7

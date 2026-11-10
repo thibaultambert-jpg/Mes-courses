@@ -20,6 +20,12 @@ class CookbookIndex(recipes: List<Recipe>) {
         return entries.firstOrNull { same(it.first, key) }?.second
     }
 
+    /** Recette du livre importée depuis cette adresse. */
+    fun byUrl(url: String): Recipe? {
+        val key = fr.mescourses.core.recipes.RecipeSites.normalize(url)
+        return entries.firstOrNull { it.second.sourceUrl?.let(fr.mescourses.core.recipes.RecipeSites::normalize) == key }?.second
+    }
+
     fun isBanned(title: String): Boolean = find(title)?.status == RecipeStatus.BANNI
 
     fun titles(status: RecipeStatus): List<String> = entries.map { it.second }.filter { it.status == status }.map { it.title }

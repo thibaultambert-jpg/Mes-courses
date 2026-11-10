@@ -55,7 +55,38 @@ data class MenuDraftEntity(
     val recipeId: Long?,
     /** List<String> en JSON */
     @androidx.room.ColumnInfo(defaultValue = "[]") val mainIngredients: String,
+    /** Adresse de la recette quand le plat vient d'un site. */
+    val sourceUrl: String? = null,
+    val imageUrl: String? = null,
+    val totalMinutes: Int? = null,
+    /** Recette inventée par le chef à la demande. */
+    @androidx.room.ColumnInfo(defaultValue = "0") val invented: Boolean = false,
 )
+
+/** Plats des menus validés : jamais effacés avec le menu de la semaine, ils servent à varier les suivants. */
+@Entity(tableName = "menu_history")
+data class MenuHistoryEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val date: String,
+    val title: String,
+    val sourceUrl: String?,
+    val kind: String,
+    /** List<String> en JSON */
+    val mainIngredients: String,
+)
+
+@Dao
+interface MenuHistoryDao {
+    @Query("SELECT * FROM menu_history ORDER BY date DESC, id DESC")
+    suspend fun all(): List<MenuHistoryEntity>
+
+    @Insert
+    suspend fun insertAll(items: List<MenuHistoryEntity>)
+
+    /** L'historique ne sert que sur quelques semaines : on ne garde pas tout indéfiniment. */
+    @Query("DELETE FROM menu_history WHERE date < :before")
+    suspend fun deleteBefore(before: String)
+}
 
 @Entity(tableName = "shopping_items")
 data class ShoppingItemEntity(
@@ -174,8 +205,11 @@ interface MenuDraftDao {
 }
 
 @Database(
-    entities = [RecipeEntity::class, PlannedMealEntity::class, ShoppingItemEntity::class, MenuDraftEntity::class, IngredientProductEntity::class],
-    version = 4,
+    entities = [
+        RecipeEntity::class, PlannedMealEntity::class, ShoppingItemEntity::class, MenuDraftEntity::class,
+        IngredientProductEntity::class, MenuHistoryEntity::class,
+    ],
+    version = 5,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -184,6 +218,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun shoppingDao(): ShoppingDao
     abstract fun menuDraftDao(): MenuDraftDao
     abstract fun ingredientProductDao(): IngredientProductDao
+    abstract fun menuHistoryDao(): MenuHistoryDao
 }
 
 /**
@@ -236,6 +271,21 @@ val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
             """CREATE TABLE IF NOT EXISTS ingredient_product (
                 ingredientKey TEXT PRIMARY KEY NOT NULL, ean TEXT NOT NULL, name TEXT NOT NULL,
                 brand TEXT, price REAL, updatedAt INTEGER NOT NULL)""",
+        )
+    }
+}
+
+/** v4 → v5 : plats du brouillon venus des sites de recettes, et historique durable des menus. */
+val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE menu_draft ADD COLUMN sourceUrl TEXT")
+        db.execSQL("ALTER TABLE menu_draft ADD COLUMN imageUrl TEXT")
+        db.execSQL("ALTER TABLE menu_draft ADD COLUMN totalMinutes INTEGER")
+        db.execSQL("ALTER TABLE menu_draft ADD COLUMN invented INTEGER NOT NULL DEFAULT 0")
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS menu_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, date TEXT NOT NULL, title TEXT NOT NULL,
+                sourceUrl TEXT, kind TEXT NOT NULL, mainIngredients TEXT NOT NULL)""",
         )
     }
 }

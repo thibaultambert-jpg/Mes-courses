@@ -56,6 +56,15 @@ object PlateBalance {
         }
     }
 
+    /** Protéine principale d'un plat (premier mot-clé trouvé, titre d'abord), pour varier d'un repas à l'autre. */
+    fun protein(texts: List<String>): String? {
+        for (t in texts) {
+            val key = " " + ShoppingListMerger.key(t) + " "
+            proteins.firstOrNull { k(it) in key }?.let { return it }
+        }
+        return null
+    }
+
     fun missing(texts: List<String>): List<Component> = Component.entries - components(texts)
 
     /** Bilan d'équilibre des plats d'un menu (null si on ne connaît pas leurs ingrédients). */

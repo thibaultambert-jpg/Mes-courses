@@ -1,0 +1,58 @@
+name: Catalogue — un passage sur un site
+
+# Lit les fiches d'un site qui ne l'ont pas encore été, puis range l'état pour le passage suivant.
+on:
+  workflow_call:
+    inputs:
+      site:
+        required: true
+        type: string
+      pass:
+        required: true
+        type: string
+
+jobs:
+  collect:
+    name: ${{ inputs.site }} (passage ${{ inputs.pass }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+
+      # L'état (fiches déjà lues) passe d'un passage à l'autre, et d'une collecte à la suivante.
+      - name: Reprendre l'état précédent
+        uses: actions/cache/restore@v4
+        with:
+          path: catalog
+          key: catalog-${{ inputs.site }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.pass }}
+          restore-keys: |
+            catalog-${{ inputs.site }}-
+
+      - name: Collecte
+        run: |
+          set -a; . tools/catalog/pass.conf; set +a
+          ARGS="build --site ${{ inputs.site }} --out $PWD/catalog --minutes ${MINUTES:-320}"
+          if [ "${LIMIT:-0}" != "0" ]; then ARGS="$ARGS --limit $LIMIT"; fi
+          set -o pipefail
+          ./gradlew -q -p tools/catalog run --args="$ARGS" | tee pass.log
+          tail -3 pass.log >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Ranger l'état
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: catalog
+          key: catalog-${{ inputs.site }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.pass }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: catalog-${{ inputs.site }}-${{ inputs.pass }}
+          path: catalog/${{ inputs.site }}.jsonl
+          if-no-files-found: ignore
+          retention-days: 7

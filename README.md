@@ -7,7 +7,7 @@ et **comparer les prix** de sa liste entre les trois enseignes.
 
 | Onglet | Rôle |
 |---|---|
-| **Menu** | Tu choisis le nombre de repas, les adultes et les enfants, tes envies, puis « Proposer un menu ». Le LLM local propose des plats **sains, bio et de saison**. Tu ajustes en discutant (« ajoute 3 adultes et 2 enfants au plat 2 », « remplace le plat 4 ») ou avec les boutons. « Valider » écrit les recettes, les range dans le livre (Historique) et remplit la liste de courses. |
+| **Menu** | Un formulaire « envies de la semaine » : repas et convives, temps en cuisine (Express ≤ 30 min, Normal, J'ai le temps), composition (végé / poisson / viande), ingrédients à écouler, part de nouveautés, envies libres. L'app cherche de **vraies recettes** sur Marmiton, 750g, Cuisine AZ et Journal des Femmes à partir des légumes de saison, écarte les plats bannis ou mangés ces 4 dernières semaines, puis le LLM local choisit celles qui vont le mieux ensemble (saison, variété, ingrédients partagés pour une liste de courses courte). Sans modèle, un compositeur intégré fait ce choix ; sans réseau, le chef invente les plats comme avant. Tu ajustes en discutant ou avec les boutons : « autre recette des sites », ou une **recette créée par le chef** à la demande. « Valider » range les recettes dans le livre, remplit la liste de courses et alimente l'historique des menus. |
 | **Recettes** | Livre de recettes vide au départ, en 3 listes : **Historique** (plats validés), **Favoris** (que le LLM peut reproposer ; les recettes partagées depuis un site ou écrites à la main y arrivent), **Ne plus proposer** (jamais reproposées). Un bouton déplace un plat d'une liste à l'autre. **Découvrir** : recherche sur Marmiton, 750g, Cuisine AZ et Journal des Femmes, aperçu, étoile pour ajouter aux favoris ; navigateur intégré qui détecte la recette de la page affichée ; ajout par lien. |
 | **Liste** | Liste de courses libre + ingrédients des menus ; vue « fusionnée » (doublons regroupés, unités converties). Les quantités tiennent compte des enfants (demi-portion par défaut). |
 | **Panier** | Chez ton **enseigne préférée** (Réglages) ou une autre choisie pour ce panier : pour chaque article, recherche du produit au drive (bio en priorité), **validation par toi**, puis ajout au panier. **Comparer les prix** : la même liste cherchée chez Carrefour, E.Leclerc et Auchan, total par enseigne, puis « Remplir le panier chez… ». La commande et le paiement se font ensuite chez l'enseigne. |
@@ -64,6 +64,24 @@ la forme d'une recette). Les pages sont d'abord demandées en HTTP, puis, si le 
 invisible. Si un site ne répond pas, l'app propose d'ouvrir sa recherche dans le navigateur intégré, où le bandeau
 « Recette détectée » permet quand même l'ajout. Adresses et formes d'URL : `core/.../recipes/RecipeSites.kt`.
 Recettes non accessibles : Cookidoo (abonnés), Jow (à tester).
+
+### Catalogue local de recettes
+
+Découvrir et la création du menu cherchent d'abord dans un **catalogue enregistré sur le téléphone** (base `catalogue.db`,
+à part de celle de l'appli) : titre, ingrédients, durées, note, type de plat, saison et lien de l'image — ni étapes ni
+images. La fiche complète est lue sur le site quand la recette est ouverte ou validée. Le bouton « Chercher aussi sur
+les sites » de Découvrir garde la recherche en ligne en complément.
+
+- **Construction** : `tools/catalog` lit les sitemaps des sites (`core/.../catalog/SiteCrawler.kt`) puis chaque fiche, en
+  plusieurs passages (workflow « Catalogue de recettes », lancé en poussant `tools/catalog/pass.conf`). Résultat : un
+  fichier `<site>.jsonl.gz` par site.
+- **Publication** : pousser `tools/catalog/publish.conf` rassemble le dernier passage terminé de chaque site dans la
+  release « catalogue » ; la compilation suivante de l'APK embarque ces fichiers.
+- **Contrôle** : ouvrir `tools/catalog/viewer.html` dans un navigateur et y déposer les fichiers (ou l'archive .zip
+  téléchargée depuis GitHub) : recherche, filtres, fiches à contrôler, tableau par site.
+- **Dans l'appli** : les fichiers placés dans `app/src/main/assets/catalog/` (avec un `version.txt`) sont chargés au
+  premier lancement. Ensuite le téléphone cherche les nouveautés seul, une fois par jour à l'ouverture (hors données
+  mobiles), ou à la demande dans Réglages › Catalogue de recettes.
 
 ### Honor / MagicOS
 

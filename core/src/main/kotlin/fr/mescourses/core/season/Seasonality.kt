@@ -1,5 +1,6 @@
 package fr.mescourses.core.season
 
+import fr.mescourses.core.shopping.ShoppingListMerger
 import java.time.Month
 
 /** Fruits et légumes de saison en France métropolitaine, mois par mois (calendrier usuel). */
@@ -78,6 +79,64 @@ object Seasonality {
         return (vegetables + fruits).filter { (_, months) -> m in months && months.size <= 8 }.keys
             .map { it.substringBefore(" (").trim() }
             .distinct()
+    }
+
+    /** Légumes vraiment de saison ce mois-ci (ceux de [highlights], sans les fruits) : la base des recherches du menu. */
+    fun seasonalVegetables(month: Month): List<String> {
+        val m = month.value
+        return vegetables.filter { (_, months) -> m in months && months.size <= 8 }.keys.map { it.substringBefore(" (").trim() }
+    }
+
+    /** Un produit du calendrier, reconnu dans un nom d'ingrédient par l'une de ses clés (mots entiers). */
+    private class Produce(val name: String, val keys: List<String>, val months: Set<Int>)
+
+    /** Stockés ou cultivés toute l'année en pratique : jamais comptés « hors saison ». */
+    private val alwaysFine = setOf("ail", "champignon", "citron")
+
+    private val produce: List<Produce> by lazy {
+        (vegetables + fruits).filterKeys { it !in alwaysFine }.map { (name, months) ->
+            // « courge (butternut, potimarron) » : la courge et ses variétés.
+            val names = listOf(name.substringBefore(" (")) +
+                name.substringAfter("(", "").substringBefore(")").split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            Produce(name.substringBefore(" (").trim(), names.map { ShoppingListMerger.key(it) }, months)
+        }.sortedByDescending { p -> p.keys.maxOf { it.length } }
+    }
+
+    /** Formes transformées ou conservées : la saison ne compte pas (concentré de tomate en hiver). */
+    private val processed = Regex(
+        """\b(concentre|coulis|sauce|pele|pelee|conserve|boite|seche|sechee|surgele|surgelee|confiture|compote|jus|poudre|vinaigre|moutarde|huile|sirop|bouillon|fecule|farine|flocon|chip|confit|zeste)\b""",
+    )
+
+    /**
+     * Saison d'un ingrédient : true = de saison, false = hors saison, null = pas un fruit ou légume du calendrier.
+     * « pommes de terre » n'est pas une pomme : le nom le plus long l'emporte.
+     */
+    fun inSeason(ingredient: String, month: Month): Boolean? = match(ingredient)?.let { month.value in it.months }
+
+    private fun match(ingredient: String): Produce? {
+        val key = " " + ShoppingListMerger.key(ingredient) + " "
+        if (processed.containsMatchIn(key)) return null
+        return produce.firstOrNull { p -> p.keys.any { " $it " in key } }
+    }
+
+    data class Report(
+        /** Produits vraiment de saison (pas ceux qu'on trouve toute l'année). */
+        val seasonal: List<String>,
+        val outOfSeason: List<String>,
+    )
+
+    /** Bilan de saison d'une liste d'ingrédients. */
+    fun report(ingredients: List<String>, month: Month): Report {
+        val seasonal = LinkedHashSet<String>()
+        val out = LinkedHashSet<String>()
+        for (i in ingredients) {
+            val p = match(i) ?: continue
+            when {
+                month.value !in p.months -> out += p.name
+                p.months.size <= 8 -> seasonal += p.name
+            }
+        }
+        return Report(seasonal.toList(), out.toList())
     }
 
     fun forMonth(month: Month): Season {

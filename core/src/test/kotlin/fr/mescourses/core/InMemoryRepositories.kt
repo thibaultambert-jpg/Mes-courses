@@ -1,12 +1,14 @@
 package fr.mescourses.core
 
 import fr.mescourses.core.model.MenuDish
+import fr.mescourses.core.model.MenuHistoryEntry
 import fr.mescourses.core.model.PlannedMeal
 import fr.mescourses.core.model.Recipe
 import fr.mescourses.core.model.ShoppingItem
 import fr.mescourses.core.model.stripAccents
 import fr.mescourses.core.repository.MealPlanRepository
 import fr.mescourses.core.repository.MenuDraftRepository
+import fr.mescourses.core.repository.MenuHistoryRepository
 import fr.mescourses.core.repository.RecipeRepository
 import fr.mescourses.core.repository.ShoppingRepository
 import kotlinx.coroutines.flow.Flow
@@ -56,4 +58,31 @@ class InMemoryDraft : MenuDraftRepository {
     override fun observe(): Flow<List<MenuDish>> = state
     override suspend fun get() = state.value
     override suspend fun set(dishes: List<MenuDish>) { state.value = dishes }
+}
+
+class InMemoryHistory : MenuHistoryRepository {
+    val state = MutableStateFlow<List<MenuHistoryEntry>>(emptyList())
+    override suspend fun all() = state.value
+    override suspend fun add(entries: List<MenuHistoryEntry>) { state.value = state.value + entries }
+}
+
+class InMemoryCatalog(entries: List<fr.mescourses.core.catalog.CatalogEntry> = emptyList()) : fr.mescourses.core.catalog.CatalogStore {
+    val entries = LinkedHashMap<String, fr.mescourses.core.catalog.CatalogEntry>().apply { entries.forEach { put(it.url, it) } }
+    val empty = HashMap<String, String?>()
+    val metas = HashMap<String, String>()
+
+    override suspend fun count() = entries.size
+    override suspend fun countBySite() = entries.values.groupingBy { it.siteId }.eachCount()
+    override suspend fun search(query: fr.mescourses.core.catalog.CatalogQuery) = entries.values.filter(query::matches)
+        .sortedWith(
+            compareByDescending<fr.mescourses.core.catalog.CatalogEntry> { fr.mescourses.core.catalog.CatalogPolicy.wellRated(it) }
+                .thenByDescending { e -> query.seed?.let { (e.url.hashCode() * it) % 1000 } ?: (e.ratingCount ?: 0) },
+        ).take(query.limit)
+    override suspend fun byUrl(url: String) = entries[url]
+    override suspend fun upsert(entries: List<fr.mescourses.core.catalog.CatalogEntry>) { entries.forEach { this.entries[it.url] = it } }
+    override suspend fun known(siteId: String): Map<String, String?> =
+        entries.values.filter { it.siteId == siteId }.associate { it.url to it.lastmod } + empty
+    override suspend fun markEmpty(siteId: String, url: String, lastmod: String?) { empty[url] = lastmod }
+    override suspend fun meta(key: String) = metas[key]
+    override suspend fun setMeta(key: String, value: String) { metas[key] = value }
 }

@@ -61,6 +61,8 @@ data class Settings(
     val facilityServiceId: String = "",
     /** Debug : WebView présentée comme un Chrome normal (sans « ; wv » dans le User-Agent). */
     val uaWithoutWv: Boolean = false,
+    /** Dernier formulaire « envies de la semaine » (MenuWishes en JSON), repris la semaine suivante. */
+    val menuWishes: String = "",
 ) {
     val preferredRetailer: Retailer get() = Retailer.parse(retailer)
 
@@ -132,6 +134,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
         val pantry = stringPreferencesKey("pantry")
         val searchQueries = stringPreferencesKey("search_queries")
         val lcUaMode = stringPreferencesKey("lc_ua_mode")
+        val menuWishes = stringPreferencesKey("menu_wishes")
     }
 
     private fun Preferences.toSettings() = Settings(
@@ -161,6 +164,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
         pantry = this[K.pantry].orEmpty(),
         searchQueries = this[K.searchQueries].orEmpty(),
         leclercUaMode = this[K.lcUaMode] ?: "ordinateur",
+        menuWishes = this[K.menuWishes].orEmpty(),
     )
 
     val state: StateFlow<Settings> = context.dataStore.data
@@ -198,6 +202,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
             prefs[K.pantry] = s.pantry
             prefs[K.searchQueries] = s.searchQueries
             prefs[K.lcUaMode] = s.leclercUaMode
+            prefs[K.menuWishes] = s.menuWishes
         }
     }
 }

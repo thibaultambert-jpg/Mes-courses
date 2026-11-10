@@ -32,6 +32,33 @@ object RecipeJsonLdExtractor {
         return null
     }
 
+    /** Une fiche lue pour le catalogue : la recette et ce que le site en dit (note, catégorie, durée totale). */
+    data class Details(
+        val recipe: Recipe,
+        val rating: Double? = null,
+        val ratingCount: Int? = null,
+        val categories: List<String> = emptyList(),
+        val totalMinutes: Int? = null,
+    )
+
+    fun extractDetails(html: String, sourceUrl: String? = null): Details? {
+        for (block in Jsoup.parse(html).select("script[type=application/ld+json]").map { it.data() }) {
+            val element = runCatching { json.parseToJsonElement(block.trim()) }.getOrNull() ?: continue
+            val node = findRecipe(element) ?: continue
+            val rating = node["aggregateRating"] as? JsonObject
+            val recipe = toRecipe(node, sourceUrl)
+            return Details(
+                recipe = recipe,
+                rating = rating?.string("ratingValue")?.replace(',', '.')?.toDoubleOrNull(),
+                ratingCount = (rating?.string("ratingCount") ?: rating?.string("reviewCount"))?.toDoubleOrNull()?.toInt(),
+                categories = strings(node["recipeCategory"]).map(::clean).filter { it.isNotBlank() },
+                totalMinutes = node.string("totalTime")?.let(::parseIsoDurationMinutes)
+                    ?: listOfNotNull(recipe.prepMinutes, recipe.cookMinutes).takeIf { it.isNotEmpty() }?.sum(),
+            )
+        }
+        return null
+    }
+
     private fun findRecipe(element: JsonElement): JsonObject? = when (element) {
         is JsonArray -> element.firstNotNullOfOrNull { findRecipe(it) }
         is JsonObject -> when {
