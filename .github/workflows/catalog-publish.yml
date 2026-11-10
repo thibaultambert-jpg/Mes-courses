@@ -1,0 +1,58 @@
+name: Publier le catalogue
+
+# Rassemble les fichiers de la dernière collecte (même en cours : on prend le dernier passage terminé de chaque site)
+# et les publie dans la release « catalogue ». La compilation de l'appli les embarque ensuite.
+# Se lance en poussant tools/catalog/publish.conf.
+on:
+  workflow_dispatch:
+  push:
+    branches: ["claude/**"]
+    paths:
+      - tools/catalog/publish.conf
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  publier:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Fichiers de la collecte
+        run: |
+          . tools/catalog/publish.conf
+          run="${RUN:-$(gh run list --workflow catalog.yml --limit 1 --json databaseId -q '.[0].databaseId')}"
+          echo "Collecte : run $run"
+          gh run download "$run" --dir parts
+          mkdir -p catalog
+          # Pour chaque site, le fichier du dernier passage (il contient tout ce qui a été lu avant).
+          for site in cuisineaz ptitchef marmiton chefsimon hellofresh jow jdf; do
+            last=$(ls -d parts/catalog-$site-* 2>/dev/null | sort -V | tail -1)
+            if [ -n "$last" ]; then cp "$last/$site.jsonl" catalog/; fi
+          done
+          ls -la catalog
+      - name: Bilan
+        run: |
+          ./gradlew -q -p tools/catalog run --args="stats --out $PWD/catalog" | tee -a "$GITHUB_STEP_SUMMARY"
+          gzip -9 catalog/*.jsonl
+          date -u +%Y-%m-%dT%H:%M:%SZ > catalog/version.txt
+          ls -la catalog | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Release « catalogue »
+        run: |
+          if ! gh release view catalogue >/dev/null 2>&1; then
+            gh release create catalogue --target "$GITHUB_SHA" --title "Catalogue de recettes" \
+              --notes "Fichiers du catalogue embarqués dans l'appli à la compilation (un par site, sans étapes ni images)."
+          fi
+          gh release upload catalogue catalog/*.jsonl.gz catalog/version.txt --clobber

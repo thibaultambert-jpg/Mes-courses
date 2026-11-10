@@ -47,6 +47,15 @@ jobs:
           } >> "$GITHUB_ENV"
           echo "Clé fixe prête."
 
+      - name: Catalogue de recettes embarqué (s'il est publié)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p app/src/main/assets/catalog
+          gh release download catalogue --repo "$GITHUB_REPOSITORY" --dir app/src/main/assets/catalog \
+            --pattern '*.jsonl.gz' --pattern 'version.txt' --clobber || echo "Pas de catalogue publié : l'appli démarre avec un catalogue vide."
+          ls -la app/src/main/assets/catalog
+
       - name: Compilation de l'APK
         run: ./gradlew :app:assembleRelease --stacktrace
 
