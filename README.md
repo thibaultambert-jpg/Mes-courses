@@ -65,6 +65,22 @@ invisible. Si un site ne répond pas, l'app propose d'ouvrir sa recherche dans l
 « Recette détectée » permet quand même l'ajout. Adresses et formes d'URL : `core/.../recipes/RecipeSites.kt`.
 Recettes non accessibles : Cookidoo (abonnés), Jow (à tester).
 
+### Catalogue local de recettes
+
+Découvrir et la création du menu cherchent d'abord dans un **catalogue enregistré sur le téléphone** (base `catalogue.db`,
+à part de celle de l'appli) : titre, ingrédients, durées, note, type de plat, saison et lien de l'image — ni étapes ni
+images. La fiche complète est lue sur le site quand la recette est ouverte ou validée. Le bouton « Chercher aussi sur
+les sites » de Découvrir garde la recherche en ligne en complément.
+
+- **Construction** : `tools/catalog` lit les sitemaps des sites (`core/.../catalog/SiteCrawler.kt`) puis chaque fiche, en
+  plusieurs passages (workflow « Catalogue de recettes », lancé en poussant `tools/catalog/pass.conf`). Résultat : un
+  fichier `<site>.jsonl.gz` par site.
+- **Contrôle** : ouvrir `tools/catalog/viewer.html` dans un navigateur et y déposer les fichiers (ou l'archive .zip
+  téléchargée depuis GitHub) : recherche, filtres, fiches à contrôler, tableau par site.
+- **Dans l'appli** : les fichiers placés dans `app/src/main/assets/catalog/` (avec un `version.txt`) sont chargés au
+  premier lancement. Ensuite le téléphone cherche les nouveautés seul, une fois par jour à l'ouverture (hors données
+  mobiles), ou à la demande dans Réglages › Catalogue de recettes.
+
 ### Honor / MagicOS
 
 MagicOS ferme les applications en arrière-plan. Pour garder la session et le modèle chargé plus longtemps :

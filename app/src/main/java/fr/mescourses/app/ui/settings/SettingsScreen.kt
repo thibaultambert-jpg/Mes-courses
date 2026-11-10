@@ -300,6 +300,38 @@ fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStor
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            val catalog by vm.c.catalogSync.status.collectAsStateWithLifecycle()
+            SectionCard {
+                SectionHeader("Catalogue de recettes", emoji = "📚")
+                Text(
+                    if (catalog.count == 0) "Vide pour l'instant : Découvrir et le menu cherchent sur les sites."
+                    else "%,d recettes enregistrées sur le téléphone. Découvrir et le menu y cherchent sans réseau.".format(java.util.Locale.FRANCE, catalog.count),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (catalog.bySite.isNotEmpty()) Text(
+                    catalog.bySite.entries.sortedByDescending { it.value }
+                        .joinToString(" · ") { (id, n) -> "${fr.mescourses.core.recipes.RecipeSites.byId(id)?.name ?: id} : %,d".format(java.util.Locale.FRANCE, n) },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    catalog.working
+                        ?: listOfNotNull(
+                            catalog.lastUpdate?.let { "Nouveautés cherchées le " + java.text.SimpleDateFormat("d MMMM à HH:mm", java.util.Locale.FRANCE).format(java.util.Date(it)) }
+                                ?: "Nouveautés jamais cherchées",
+                            catalog.lastResult,
+                        ).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (catalog.working != null) LinearProgressIndicator(Modifier.fillMaxWidth())
+                OutlinedButton(onClick = { vm.c.catalogSync.updateNow() }, enabled = catalog.working == null) { Text("Chercher les nouveautés maintenant") }
+                Text(
+                    "Les nouveautés sont cherchées toutes seules, une fois par jour à l'ouverture de l'appli (hors données mobiles).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             testResult?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
             Text(
                 "Mes courses · version 0.3",

@@ -3,6 +3,8 @@ package fr.mescourses.app.ui.discover
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import fr.mescourses.app.AppContainer
+import fr.mescourses.core.catalog.CatalogQuery
+import fr.mescourses.core.catalog.toHit
 import fr.mescourses.core.model.MenuDish
 import fr.mescourses.core.model.Recipe
 import fr.mescourses.core.model.RecipeStatus
@@ -78,6 +80,10 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
     val messages = MutableStateFlow<String?>(null)
     /** Mode « Populaires du moment » (au lieu d'une recherche). */
     val popularMode = MutableStateFlow(false)
+    /** Les résultats affichés viennent du catalogue local ; les sites n'ont pas (encore) été interrogés. */
+    val localOnly = MutableStateFlow(false)
+    /** Recherche complémentaire sur les sites en cours. */
+    val searchingOnline = MutableStateFlow(false)
     /** Résultats bruts des sites, avant filtres et tri de l'app (pour changer le tri sans rechercher). */
     private var raw: RecipeSearchResult? = null
 
@@ -109,6 +115,8 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
         if (state.value == State.Idle && !popularMode.value) return false
         job?.cancel()
         popularMode.value = false
+        localOnly.value = false
+        searchingOnline.value = false
         state.value = State.Idle
         return true
     }
@@ -116,6 +124,7 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
     /** Recettes populaires du moment sur les sites choisis (filtres et tri appliqués par l'app). */
     fun popular() {
         popularMode.value = true
+        localOnly.value = false
         val chosen = searchableSites.filter { sites.value.isEmpty() || it.id in sites.value }
         job?.cancel()
         job = viewModelScope.launch {
@@ -176,9 +185,35 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
         }
         val chosen = searchableSites.filter { sites.value.isEmpty() || it.id in sites.value }
         job?.cancel()
+        searchingOnline.value = false
         job = viewModelScope.launch {
             state.value = State.Loading
-            show(c.recipeSearch.search(q, chosen))
+            // Le catalogue local d'abord (immédiat, sans réseau) ; les sites seulement s'il est vide.
+            val local = runCatching {
+                if (c.catalog.count() == 0) null
+                else c.catalog.search(CatalogQuery.of(query.value, filters.value, LocalDate.now().monthValue, sites.value)).map { it.toHit() }
+            }.getOrNull()
+            localOnly.value = local != null
+            show(if (local != null) RecipeSearchResult(local, emptyMap(), emptyList()) else c.recipeSearch.search(q, chosen))
+        }
+    }
+
+    /** « Chercher aussi sur les sites » : complète les résultats du catalogue par une recherche en ligne. */
+    fun searchOnline() {
+        val q = RecipeFilters.query(query.value, filters.value)
+        val current = raw ?: return
+        if (q.isBlank() || searchingOnline.value) return
+        val chosen = searchableSites.filter { sites.value.isEmpty() || it.id in sites.value }
+        job?.cancel()
+        job = viewModelScope.launch {
+            searchingOnline.value = true
+            try {
+                val online = c.recipeSearch.search(q, chosen)
+                localOnly.value = false
+                show(online.copy(hits = (current.hits + online.hits).distinctBy { RecipeSites.normalize(it.url) }))
+            } finally {
+                searchingOnline.value = false
+            }
         }
     }
 

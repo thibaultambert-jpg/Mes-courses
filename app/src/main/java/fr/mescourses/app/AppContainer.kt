@@ -8,6 +8,9 @@ import fr.mescourses.app.retail.RetailerSession
 import fr.mescourses.app.retail.RetailerSites
 import fr.mescourses.app.retail.RetailerWebViewBridge
 import fr.mescourses.app.data.AppDatabase
+import fr.mescourses.app.data.CatalogDatabase
+import fr.mescourses.app.data.CatalogSync
+import fr.mescourses.app.data.RoomCatalogStore
 import fr.mescourses.app.data.MIGRATION_1_2
 import fr.mescourses.app.data.MIGRATION_2_3
 import fr.mescourses.app.data.MIGRATION_3_4
@@ -106,6 +109,12 @@ class AppContainer(context: Context) {
     private val fetchers = listOf(HttpPageFetcher(http), webFetcher)
     val importer = RecipeImporter(fetchers)
     val recipeSearch = RecipeSearcher(fetchers)
+
+    /** Catalogue local de recettes : base à part, reconstruite si son format change (elle se recharge toute seule). */
+    val catalog = RoomCatalogStore(
+        Room.databaseBuilder(context, CatalogDatabase::class.java, "catalogue.db").fallbackToDestructiveMigration(true).build().dao(),
+    )
+    val catalogSync = CatalogSync(context.applicationContext, catalog, appScope, http).also { it.start() }
 
     // --- LLM local ---
     private val llm: LlmEngine = LiteRtLmEngine(context)
@@ -251,7 +260,7 @@ class AppContainer(context: Context) {
     /** Envies du menu en cours, pour le bilan que les outils renvoient au modèle. */
     @Volatile var currentWishes: MenuWishes? = null
 
-    val candidateFinder = CandidateFinder(recipeSearch, importer, recipes, menuHistory, pantry = { settings.current.pantryList() })
+    val candidateFinder = CandidateFinder(recipeSearch, importer, recipes, menuHistory, pantry = { settings.current.pantryList() }, catalog = catalog)
 
     /** Prompt du menu : choix parmi les candidates des sites, ou invention des plats s'il n'y en a pas. */
     suspend fun menuSystemPrompt(wishes: MenuWishes): String {
@@ -283,7 +292,13 @@ class AppContainer(context: Context) {
         childFactor = { settings.current.childFactor },
         pantry = { settings.current.pantryList() },
         history = menuHistory,
-        // Recette déjà lue pendant la recherche ; sinon (app relancée entre-temps) on relit la page.
-        webRecipe = { url -> candidates.byUrl(url)?.recipe ?: importer.import(url) },
+        // Recette complète déjà lue pendant la recherche ; sinon on lit la page pour ses étapes. Sans réseau, la
+        // fiche du catalogue suffit pour la liste de courses : les étapes seront écrites à l'ouverture de la recette.
+        webRecipe = { url ->
+            val known = candidates.byUrl(url)?.recipe
+            known?.takeIf { it.steps.isNotEmpty() }
+                ?: runCatching { importer.import(url) }.getOrNull()
+                ?: (known ?: catalog.byUrl(url)?.toRecipe())?.let { it.copy(tags = it.tags + MenuValidator.STEPS_PENDING) }
+        },
     )
 }

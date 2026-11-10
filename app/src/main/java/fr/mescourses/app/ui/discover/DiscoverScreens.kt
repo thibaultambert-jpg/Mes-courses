@@ -140,6 +140,8 @@ fun DiscoverContent(
     val message by vm.messages.collectAsStateWithLifecycle()
     val focus = LocalFocusManager.current
     val sort by vm.sort.collectAsStateWithLifecycle()
+    val localOnly by vm.localOnly.collectAsStateWithLifecycle()
+    val searchingOnline by vm.searchingOnline.collectAsStateWithLifecycle()
     var showFilters by remember { mutableStateOf(false) }
     LaunchedEffect(message) { message?.let { snackbar.showSnackbar(it); vm.messages.value = null } }
 
@@ -237,7 +239,7 @@ fun DiscoverContent(
                         Text(
                             when {
                                 popular -> "Recettes populaires du moment…"
-                                else -> "Recherche sur les sites…"
+                                else -> "Recherche…"
                             },
                             Modifier.padding(start = 12.dp),
                         )
@@ -253,10 +255,22 @@ fun DiscoverContent(
                             if (r.hits.isEmpty()) "Aucune recette trouvée"
                             else (if (popular) "🔥 Populaires en ce moment · " else "") +
                                 "${r.hits.size} recettes · $answered site${if (answered > 1) "s" else ""}" +
+                                (if (localOnly) " · catalogue" else "") +
                                 if (sort != RecipeSort.PERTINENCE) " · ${sort.label.lowercase()}" else "",
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        // Résultats du catalogue local : la recherche en ligne reste possible, en complément.
+                        if (searchingOnline) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Text("Recherche sur les sites…", Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodySmall)
+                            }
+                        } else if (localOnly) {
+                            OutlinedButton(onClick = { vm.searchOnline() }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
+                                Text("Chercher aussi sur les sites")
+                            }
+                        }
                         // Site muet ou illisible : on propose d'ouvrir sa recherche dans le navigateur de l'app.
                         (r.failures.keys + r.empty).forEach { site ->
                             Text(
