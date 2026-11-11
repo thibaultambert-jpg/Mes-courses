@@ -24,6 +24,8 @@ interface ShoppingRepository {
     suspend fun update(item: ShoppingItem)
     suspend fun delete(id: Long)
     suspend fun clearChecked()
+    /** Coche ou décoche d'un coup les articles donnés (par identifiant). */
+    suspend fun setChecked(ids: List<Long>, checked: Boolean)
 }
 
 /** Menu de la semaine validé. */

@@ -87,6 +87,26 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
 
     val dishes: StateFlow<List<MenuDish>> = c.draft.observe().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val week: StateFlow<List<PlannedMeal>> = c.plan.observeAll().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** Recettes du livre qui attendent leurs étapes (le chef ne les écrit que sur demande). */
+    val pendingSteps: StateFlow<Int> = kotlinx.coroutines.flow.combine(c.recipes.observeAll(), c.plan.observeAll()) { list, plan ->
+        // Seulement les recettes de la semaine en cours : une ancienne recette du livre n'y compte pas.
+        val ids = plan.map { it.recipeId }.toSet()
+        val w = c.stepsWriter()
+        list.count { it.id in ids && w.needsSteps(it) }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    fun generateMissingSteps() { c.chef.enqueueSteps(week.value.map { it.recipeId }.toSet()) }
+
+    /** Bloc « Bienvenue » replié (mémorisé). */
+    val welcomeCollapsed: StateFlow<Boolean> = c.settings.state.map { it.welcomeCollapsed }.stateIn(viewModelScope, SharingStarted.Eagerly, c.settings.current.welcomeCollapsed)
+
+    fun setWelcomeCollapsed(v: Boolean) { viewModelScope.launch { c.settings.update { it.copy(welcomeCollapsed = v) } } }
+
+    /** Image de chaque recette du livre (pour l'écran de la semaine). */
+    val recipeImages: StateFlow<Map<Long, String>> = c.recipes.observeAll()
+        .map { list -> list.mapNotNull { r -> r.imageUrl?.let { r.id to it } }.toMap() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
     /** Ingrédients partagés / isolés du brouillon. */
     val overlap: StateFlow<IngredientOverlap.Report> = c.draft.observe()
         .map { IngredientOverlap.compute(it) }
@@ -178,7 +198,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                 res.onSuccess { r ->
                     val msg = buildString {
                         append("${r.newRecipes + r.reused} plat(s) ajouté(s) au livre, ${r.shoppingItems} article(s) dans la liste.")
-                        if (r.newRecipes > 0) append(" Les étapes s'écriront à l'ouverture de chaque recette.")
+                        if (r.newRecipes > 0) append(" Les étapes manquantes se génèrent sur demande (bouton du chef).")
                         if (r.failures.isNotEmpty()) append(" Échec pour : ${r.failures.joinToString()} (reste dans le brouillon).")
                     }
                     _state.update { it.copy(message = msg, chat = emptyList()) }
@@ -718,6 +738,8 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
 
     fun toggleCooked(meal: PlannedMeal) = viewModelScope.launch { c.plan.update(meal.copy(cooked = !meal.cooked)) }
     fun clearWeek() = viewModelScope.launch {
+        // Les recettes qui attendaient leurs étapes ne doivent pas rester en file pour le prochain menu.
+        c.chef.cancelSteps()
         c.plan.clear()
         step.value = MenuStep.REGLAGES
     }

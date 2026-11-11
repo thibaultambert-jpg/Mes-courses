@@ -82,6 +82,9 @@ data class PendingQuote(val label: String, val retailer: Retailer, val lines: Li
 class AppContainer(context: Context) {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    /** Pop-in « Annuler » partagées par tous les écrans. */
+    val undoBar = fr.mescourses.app.ui.common.UndoBar(appScope)
+
     private val db = Room.databaseBuilder(context, AppDatabase::class.java, "mes-courses.db")
         .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
         .build()
@@ -143,7 +146,7 @@ class AppContainer(context: Context) {
         }
     }
     /** Travaux longs du chef (proposition, validation), qui continuent quand on quitte l'app. */
-    val chef = ChefWork(context, appScope, model, recipes) { stepsWriter() }
+    val chef = ChefWork(context, appScope, model, recipes, { stepsWriter() }, { url -> runCatching { importer.import(url) }.getOrNull() })
 
     // --- Drives (natifs, via une WebView connectée par enseigne) ---
     private val sites = RetailerSites.create { settings.current }
@@ -257,6 +260,14 @@ class AppContainer(context: Context) {
 
     /** Recettes trouvées sur les sites pour le menu en cours ; vide = le chef invente les plats (hors ligne). */
     val candidates = CandidatePool()
+
+    /** Ce qu'on sait déjà d'une recette d'un site sans aller sur le site : recherche du menu, sinon fiche du catalogue. */
+    suspend fun knownRecipe(url: String): fr.mescourses.core.model.Recipe? =
+        candidates.byUrl(url)?.recipe ?: catalog.byUrl(url)?.toRecipe()
+
+    private val appContext = context.applicationContext
+
+    fun online() = fr.mescourses.app.data.isOnline(appContext)
     /** Envies du menu en cours, pour le bilan que les outils renvoient au modèle. */
     @Volatile var currentWishes: MenuWishes? = null
 

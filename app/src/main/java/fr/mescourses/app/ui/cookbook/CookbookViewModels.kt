@@ -93,12 +93,14 @@ class RecipeDetailViewModel(private val c: AppContainer, private val id: Long) :
     sealed interface StepsState {
         data object Idle : StepsState
         data object Writing : StepsState
+        data object Fetching : StepsState
         data class Queued(val position: Int) : StepsState
         data class Failed(val message: String) : StepsState
     }
 
-    val steps: StateFlow<StepsState> = combine(c.chef.writing, c.chef.stepsQueue, c.chef.stepsFailures) { writing, queue, failures ->
+    val steps: StateFlow<StepsState> = combine(c.chef.writing, c.chef.stepsQueue, c.chef.stepsFailures, c.chef.fetching) { writing, queue, failures, fetching ->
         when {
+            fetching == id -> StepsState.Fetching
             writing == id -> StepsState.Writing
             id in queue -> StepsState.Queued(queue.filter { it != writing }.indexOf(id) + 1)
             failures[id] != null -> StepsState.Failed(failures.getValue(id))
@@ -110,9 +112,9 @@ class RecipeDetailViewModel(private val c: AppContainer, private val id: Long) :
 
     init {
         viewModelScope.launch {
-            // Recette ouverte sans étapes : elle passe en tête de la file du chef.
+            // Recette ouverte sans étapes : on retente la page du site ; le chef n'écrit rien sans demande explicite.
             val r = recipe.filterNotNull().first()
-            if (writer.needsSteps(r)) c.chef.requestSteps(id, first = true)
+            if (writer.needsSteps(r)) c.chef.checkSite(id)
         }
     }
 

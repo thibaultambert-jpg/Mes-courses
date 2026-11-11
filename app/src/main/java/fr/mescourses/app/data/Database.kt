@@ -161,6 +161,10 @@ interface ShoppingDao {
 
     @Query("DELETE FROM shopping_items WHERE checked = 1")
     suspend fun clearChecked()
+
+    /** Coche ou décoche plusieurs articles en une seule requête. */
+    @Query("UPDATE shopping_items SET checked = :checked WHERE id IN (:ids)")
+    suspend fun setChecked(ids: List<Long>, checked: Boolean)
 }
 
 /** Mémoire des choix : produit Carrefour retenu pour un ingrédient (clé normalisée). */

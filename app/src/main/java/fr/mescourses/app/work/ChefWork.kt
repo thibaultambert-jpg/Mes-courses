@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.update
 import fr.mescourses.core.menu.ValidationResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -29,8 +30,14 @@ class ChefWork(
     private val model: ModelController,
     private val recipes: RecipeRepository,
     private val stepsWriter: () -> RecipeStepsWriter,
+    /** Recette lue sur la page d'origine (null si le site ne répond pas ou n'a pas de fiche lisible). */
+    private val siteRecipe: suspend (url: String) -> fr.mescourses.core.model.Recipe? = { null },
 ) {
     private val running = AtomicInteger(0)
+
+    private companion object {
+        const val NO_MODEL = "L'assistant n'est pas installé : installe-le dans les Réglages."
+    }
 
     private val _validation = MutableStateFlow<Validation?>(null)
     val validation: StateFlow<Validation?> = _validation
@@ -72,8 +79,7 @@ class ChefWork(
             }
             _validation.value = null
             _result.value = result
-            // Les ingrédients sont prêts : le chef écrit maintenant les étapes, une recette après l'autre.
-            if (result.isSuccess) enqueuePendingSteps()
+            // Les étapes ne sont jamais écrites d'office : bouton « Générer » sur la recette ou dans l'écran de la semaine.
         }
     }
 
@@ -87,26 +93,94 @@ class ChefWork(
     private val _writing = MutableStateFlow<Long?>(null)
     val writing: StateFlow<Long?> = _writing
 
+    /** Recette dont les étapes sont recherchées sur le site d'origine. */
+    private val _fetching = MutableStateFlow<Long?>(null)
+    val fetching: StateFlow<Long?> = _fetching
+
     /** Échecs (recette → message), pour proposer « Réessayer ». */
     private val _stepsFailures = MutableStateFlow<Map<Long, String>>(emptyMap())
     val stepsFailures: StateFlow<Map<Long, String>> = _stepsFailures
 
     private val wakeUp = Channel<Unit>(Channel.CONFLATED)
 
+    /** Passage en cours sur la file ; annulé quand on efface la semaine. */
+    @Volatile private var stepsJob: Job? = null
+
     init {
         scope.launch {
             for (signal in wakeUp) {
-                if (_stepsQueue.value.isEmpty()) continue
-                runCatching {
-                    keepAwake("Le chef écrit les recettes…") {
-                        while (true) {
-                            val id = _stepsQueue.value.firstOrNull() ?: break
-                            writeOne(id)
-                            _stepsQueue.update { it - id }
-                        }
+                val job = launch {
+                    while (true) {
+                        val id = _stepsQueue.value.firstOrNull() ?: break
+                        runCatching { process(id) }
+                        ensureActive()
+                        _stepsQueue.update { it - id }
                     }
                 }
+                stepsJob = job
+                job.join()
             }
+        }
+    }
+
+    /** Abandonne la file d'écriture (semaine effacée) : plus rien n'est écrit pour les recettes qui attendaient. */
+    fun cancelSteps() {
+        stepsJob?.cancel()
+        _stepsQueue.value = emptyList()
+        _stepsFailures.value = emptyMap()
+    }
+
+    /**
+     * Étapes d'une recette : d'abord celles du site d'origine (si on a internet), sinon le chef les écrit.
+     * Sans assistant installé, on ne démarre surtout pas le service au premier plan, qu'on arrêterait aussitôt
+     * (Android plante si startForeground() n'est pas appelé à temps).
+     */
+    private suspend fun process(id: Long) {
+        val recipe = recipes.get(id) ?: return
+        if (!stepsWriter().needsSteps(recipe)) return
+        if (fromSite(recipe)) return
+        if (!model.status.value.available) {
+            _stepsFailures.update { it + (id to NO_MODEL) }
+            return
+        }
+        keepAwake("Le chef écrit les recettes…") { writeOne(id) }
+    }
+
+    /** Tente de lire les étapes sur la page d'origine. Renvoie true si la recette est complétée. */
+    private suspend fun fromSite(recipe: fr.mescourses.core.model.Recipe): Boolean {
+        val url = recipe.sourceUrl ?: return false
+        if (!online()) return false
+        _fetching.value = recipe.id
+        try {
+            val web = siteRecipe(url)?.takeIf { it.steps.isNotEmpty() } ?: return false
+            // Relit la recette : elle a pu être modifiée entre-temps.
+            val current = recipes.get(recipe.id) ?: return true
+            recipes.save(
+                current.copy(
+                    steps = web.steps,
+                    prepMinutes = current.prepMinutes ?: web.prepMinutes,
+                    cookMinutes = current.cookMinutes ?: web.cookMinutes,
+                    tags = current.tags - MenuValidator.STEPS_PENDING,
+                ),
+            )
+            _stepsFailures.update { it - recipe.id }
+            return true
+        } finally {
+            _fetching.value = null
+        }
+    }
+
+    private fun online() = fr.mescourses.app.data.isOnline(context)
+
+    /**
+     * À l'ouverture d'une recette : relit seulement la page du site (si on a internet), sans jamais lancer le chef.
+     * Si le site ne donne rien, c'est à l'utilisateur de demander au chef de compléter.
+     */
+    fun checkSite(id: Long) {
+        scope.launch {
+            val recipe = recipes.get(id) ?: return@launch
+            if (!stepsWriter().needsSteps(recipe) || id in _stepsQueue.value || _writing.value == id) return@launch
+            runCatching { fromSite(recipe) }
         }
     }
 
@@ -115,7 +189,7 @@ class ChefWork(
         val writer = stepsWriter()
         if (!writer.needsSteps(recipe)) return
         if (!model.status.value.available) {
-            _stepsFailures.update { it + (id to "L'assistant n'est pas installé : installe-le dans les Réglages.") }
+            _stepsFailures.update { it + (id to NO_MODEL) }
             return
         }
         _writing.value = id
@@ -153,11 +227,11 @@ class ChefWork(
         wakeUp.trySend(Unit)
     }
 
-    /** Met en file toutes les recettes du livre qui attendent leurs étapes. */
-    fun enqueuePendingSteps() {
+    /** Met en file les recettes données (celles de la semaine) qui attendent encore leurs étapes. */
+    fun enqueueSteps(ids: Set<Long>) {
         scope.launch {
             val writer = stepsWriter()
-            recipes.all().filter { writer.needsSteps(it) }.forEach { requestSteps(it.id) }
+            recipes.all().filter { it.id in ids && writer.needsSteps(it) }.forEach { requestSteps(it.id) }
         }
     }
 

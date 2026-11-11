@@ -143,6 +143,8 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit, onOpenS
     val step by vm.step.collectAsStateWithLifecycle()
     val dishes by vm.dishes.collectAsStateWithLifecycle()
     val week by vm.week.collectAsStateWithLifecycle()
+    val pendingSteps by vm.pendingSteps.collectAsStateWithLifecycle()
+    val recipeImages by vm.recipeImages.collectAsStateWithLifecycle()
     val favorites by vm.favoriteIds.collectAsStateWithLifecycle()
     val overlap by vm.overlap.collectAsStateWithLifecycle()
     val insights by vm.insights.collectAsStateWithLifecycle()
@@ -222,6 +224,7 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit, onOpenS
                         onImprove = vm::improveSharing, onClear = vm::clearDraft,
                     )
                     MenuStep.SEMAINE -> WeekStep(
+                        images = recipeImages, pendingSteps = pendingSteps, chefInstalled = state.model != ModelStatus.Absent, onGenerate = vm::generateMissingSteps,
                         week = week, onToggle = vm::toggleCooked, onOpenRecipe = onOpenRecipe,
                         onOpenShopping = onOpenShopping, onNewMenu = vm::newMenu, onClear = vm::clearWeek,
                     )
@@ -289,11 +292,13 @@ private fun <T> ChoiceRow(options: List<T>, selected: T, label: (T) -> String, e
 @Composable
 private fun SettingsStep(vm: MenuViewModel, state: MenuUiState, onOpenSettings: () -> Unit) {
     val enabled = !state.busy
+    val welcomeCollapsed by vm.welcomeCollapsed.collectAsStateWithLifecycle()
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
         modifier = Modifier.fillMaxSize().imePadding(),
     ) {
+        item { ModelStatusCard(state.model, welcomeCollapsed, vm::setWelcomeCollapsed, onOpenSettings) { vm.loadModel() } }
         item {
             Column {
                 Text("Qu'est-ce qu'on mange cette semaine ?", style = MaterialTheme.typography.headlineSmall)
@@ -424,24 +429,36 @@ private fun SettingsStep(vm: MenuViewModel, state: MenuUiState, onOpenSettings: 
                 "De saison : " + (vm.season.vegetables.take(8) + vm.season.fruits.take(4)).joinToString(", ") + "…",
             )
         }
-        item { ModelStatusCard(state.model, onOpenSettings) { vm.loadModel() } }
     }
 }
 
 @Composable
-private fun ModelStatusCard(model: ModelStatus, onOpenSettings: () -> Unit, onRetry: () -> Unit) {
+private fun ModelStatusCard(
+    model: ModelStatus,
+    collapsed: Boolean,
+    onCollapse: (Boolean) -> Unit,
+    onOpenSettings: () -> Unit,
+    onRetry: () -> Unit,
+) {
     when (model) {
         is ModelStatus.Ready -> Row(verticalAlignment = Alignment.CenterVertically) {
             StatChip("🤖 ${model.modelName} · ${model.backend}")
         }
-        is ModelStatus.Sleeping -> Row(verticalAlignment = Alignment.CenterVertically) {
-            StatChip("🤖 ${model.modelName} · en veille")
+        is ModelStatus.Sleeping -> SectionCard {
+            Text("🤖 Assistant installé", style = MaterialTheme.typography.titleMedium)
+            Text("${model.modelName} est prêt à être activé sur ton téléphone (quelques secondes).", style = MaterialTheme.typography.bodySmall)
+            Button(onClick = onRetry) { Text("Activer le chef") }
         }
         ModelStatus.Loading -> ModelLoadingCard()
         ModelStatus.Absent -> SectionCard {
-            Text("👋 Bienvenue !", style = MaterialTheme.typography.titleLarge)
-            Text("Le menu se compose déjà à partir des sites de recettes. Pour l'ajuster en discutant et faire créer des recettes, installe l'assistant qui tourne sur ton téléphone (2 à 4 Go, en Wi-Fi).")
-            Button(onClick = onOpenSettings) { Text("Installer l'assistant") }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("👋 Bienvenue !", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                TextButton(onClick = { onCollapse(!collapsed) }) { Text(if (collapsed) "Déplier" else "Replier") }
+            }
+            if (!collapsed) {
+                Text("Le menu se compose déjà à partir des sites de recettes. Pour l'ajuster en discutant et faire créer des recettes, installe l'assistant qui tourne sur ton téléphone (2 à 4 Go, en Wi-Fi).")
+                Button(onClick = onOpenSettings) { Text("Installer l'assistant") }
+            }
         }
         is ModelStatus.Failed -> SectionCard {
             Text("L'assistant n'a pas pu démarrer", style = MaterialTheme.typography.titleMedium)
@@ -610,7 +627,10 @@ private fun DishCard(
         }
         Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.Top) {
-                Column(Modifier.weight(1f)) {
+                Column(
+                    Modifier.weight(1f).clip(MaterialTheme.shapes.small)
+                        .clickable(enabled = dish.sourceUrl != null) { dish.sourceUrl?.let(onOpen) },
+                ) {
                     Text(dish.title, style = MaterialTheme.typography.titleMedium)
                     if (origin.isNotEmpty()) {
                         Text(origin, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
@@ -790,6 +810,10 @@ private fun InventDialog(replacing: String?, onDismiss: () -> Unit, onCreate: (S
 
 @Composable
 private fun WeekStep(
+    images: Map<Long, String>,
+    pendingSteps: Int,
+    chefInstalled: Boolean,
+    onGenerate: () -> Unit,
     week: List<PlannedMeal>,
     onToggle: (PlannedMeal) -> Unit,
     onOpenRecipe: (Long) -> Unit,
@@ -814,22 +838,41 @@ private fun WeekStep(
                 }
             }
         }
-        weekItems(week, onToggle, onOpenRecipe)
+        if (pendingSteps > 0) item {
+            SectionCard {
+                Text("✍️ $pendingSteps recette(s) sans étapes", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "Le chef les écrit à partir des ingrédients, une par une, uniquement quand tu le demandes.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Button(onClick = onGenerate, enabled = chefInstalled) { Text("Générer les données manquantes avec le chef") }
+                if (!chefInstalled) Text("Installe l'assistant dans les Réglages pour l'utiliser.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+        }
+        weekItems(week, images, onToggle, onOpenRecipe)
         item { TextButton(onClick = onClear, modifier = Modifier.fillMaxWidth()) { Text("Effacer le menu de la semaine") } }
     }
 }
 
-private fun LazyListScope.weekItems(week: List<PlannedMeal>, onToggle: (PlannedMeal) -> Unit, onOpenRecipe: (Long) -> Unit) {
+private fun LazyListScope.weekItems(week: List<PlannedMeal>, images: Map<Long, String>, onToggle: (PlannedMeal) -> Unit, onOpenRecipe: (Long) -> Unit) {
     items(week, key = { it.id }) { meal ->
+        val image = images[meal.recipeId]
         Card(
             onClick = { onOpenRecipe(meal.recipeId) },
             shape = MaterialTheme.shapes.large,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
             modifier = Modifier.fillMaxWidth().animateItem(),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                DishArt(meal.recipeTitle, modifier = Modifier.size(76.dp), emojiSize = 32)
-                Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
+            // Photo de la recette en grand (ou illustration quand le site n'en donne pas).
+            DishArt(
+                meal.recipeTitle, imageUrl = image,
+                modifier = Modifier.fillMaxWidth().height(if (image != null) 150.dp else 96.dp),
+                emojiSize = 48,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp)) {
+                Column(Modifier.weight(1f)) {
                     Text(
                         meal.recipeTitle,
                         style = MaterialTheme.typography.titleSmall,

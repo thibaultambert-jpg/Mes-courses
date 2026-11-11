@@ -70,6 +70,7 @@ import fr.mescourses.app.data.Settings
 import fr.mescourses.app.llm.DownloadState
 import fr.mescourses.app.llm.ModelCatalog
 import fr.mescourses.app.llm.ModelInfo
+import fr.mescourses.app.llm.ModelStatus
 import fr.mescourses.app.ui.common.ScreenScaffold
 import fr.mescourses.app.ui.common.containerViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -80,6 +81,10 @@ class SettingsViewModel(val c: AppContainer) : ViewModel() {
     val settings = c.settings.state
     val download = c.models.state
     val installed = MutableStateFlow(c.models.installed())
+
+    /** Charge le modèle en mémoire (le chef devient actif). */
+    fun activateChef() { viewModelScope.launch { c.model.refreshAvailability(); c.model.ensureLoaded() } }
+
     val testResult = MutableStateFlow<String?>(null)
 
     fun update(transform: (Settings) -> Settings) = viewModelScope.launch { c.settings.update(transform) }
@@ -150,6 +155,16 @@ fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStor
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                val modelStatus by vm.c.model.status.collectAsStateWithLifecycle()
+                if (installed.isNotEmpty()) when (val m = modelStatus) {
+                    is ModelStatus.Ready -> StatChip("🤖 Chef actif · ${m.modelName} · ${m.backend}")
+                    ModelStatus.Loading -> Text("Le chef s'active…", style = MaterialTheme.typography.bodyMedium)
+                    is ModelStatus.Failed -> {
+                        Text(m.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        Button(onClick = { vm.activateChef() }) { Text("Réessayer d'activer le chef") }
+                    }
+                    else -> Button(onClick = { vm.activateChef() }) { Text("Activer le chef") }
+                }
                 installed.forEach { file ->
                     val active = s.modelPath == file.absolutePath
                     Card(
