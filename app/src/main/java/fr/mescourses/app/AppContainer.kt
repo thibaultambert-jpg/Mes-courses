@@ -262,7 +262,9 @@ class AppContainer(context: Context) {
     suspend fun knownRecipe(url: String): fr.mescourses.core.model.Recipe? =
         candidates.byUrl(url)?.recipe ?: catalog.byUrl(url)?.toRecipe()
 
-    fun online() = fr.mescourses.app.data.isOnline(context)
+    private val appContext = context.applicationContext
+
+    fun online() = fr.mescourses.app.data.isOnline(appContext)
     /** Envies du menu en cours, pour le bilan que les outils renvoient au modèle. */
     @Volatile var currentWishes: MenuWishes? = null
 
