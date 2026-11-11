@@ -40,6 +40,7 @@ class InMemoryShopping : ShoppingRepository {
     override suspend fun update(item: ShoppingItem) { state.value = state.value.map { if (it.id == item.id) item else it } }
     override suspend fun delete(id: Long) { state.value = state.value.filterNot { it.id == id } }
     override suspend fun clearChecked() { state.value = state.value.filterNot { it.checked } }
+    override suspend fun setChecked(ids: List<Long>, checked: Boolean) { state.value = state.value.map { if (it.id in ids) it.copy(checked = checked) else it } }
 }
 
 class InMemoryPlan : MealPlanRepository {

@@ -143,6 +143,7 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit, onOpenS
     val step by vm.step.collectAsStateWithLifecycle()
     val dishes by vm.dishes.collectAsStateWithLifecycle()
     val week by vm.week.collectAsStateWithLifecycle()
+    val pendingSteps by vm.pendingSteps.collectAsStateWithLifecycle()
     val favorites by vm.favoriteIds.collectAsStateWithLifecycle()
     val overlap by vm.overlap.collectAsStateWithLifecycle()
     val insights by vm.insights.collectAsStateWithLifecycle()
@@ -222,6 +223,7 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit, onOpenS
                         onImprove = vm::improveSharing, onClear = vm::clearDraft,
                     )
                     MenuStep.SEMAINE -> WeekStep(
+                        pendingSteps = pendingSteps, chefInstalled = state.model != ModelStatus.Absent, onGenerate = vm::generateMissingSteps,
                         week = week, onToggle = vm::toggleCooked, onOpenRecipe = onOpenRecipe,
                         onOpenShopping = onOpenShopping, onNewMenu = vm::newMenu, onClear = vm::clearWeek,
                     )
@@ -792,6 +794,9 @@ private fun InventDialog(replacing: String?, onDismiss: () -> Unit, onCreate: (S
 
 @Composable
 private fun WeekStep(
+    pendingSteps: Int,
+    chefInstalled: Boolean,
+    onGenerate: () -> Unit,
     week: List<PlannedMeal>,
     onToggle: (PlannedMeal) -> Unit,
     onOpenRecipe: (Long) -> Unit,
@@ -814,6 +819,18 @@ private fun WeekStep(
                     Button(onClick = onOpenShopping) { Text("🛒 Liste de courses") }
                     OutlinedButton(onClick = onNewMenu) { Text("Nouveau menu") }
                 }
+            }
+        }
+        if (pendingSteps > 0) item {
+            SectionCard {
+                Text("✍️ $pendingSteps recette(s) sans étapes", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "Le chef les écrit à partir des ingrédients, une par une, uniquement quand tu le demandes.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Button(onClick = onGenerate, enabled = chefInstalled) { Text("Générer les données manquantes avec le chef") }
+                if (!chefInstalled) Text("Installe l'assistant dans les Réglages pour l'utiliser.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
         }
         weekItems(week, onToggle, onOpenRecipe)

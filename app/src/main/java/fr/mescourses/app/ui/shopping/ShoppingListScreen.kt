@@ -127,12 +127,15 @@ class ShoppingViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     fun toggle(line: ShoppingLine) = viewModelScope.launch {
-        line.sources.forEach { c.shopping.update(it.copy(checked = !line.checked)) }
+        c.shopping.setChecked(line.sources.map { it.id }, !line.checked)
     }
 
-    /** Coche (ou décoche) plusieurs lignes d'un coup : toute la liste ou un rayon. */
+    /**
+     * Coche (ou décoche) plusieurs lignes d'un coup : toute la liste ou un rayon, en une seule requête.
+     * Travaille sur les identifiants : l'état « coché » des lignes captées avant le changement n'est plus à jour.
+     */
     fun setChecked(lines: List<ShoppingLine>, checked: Boolean) = viewModelScope.launch {
-        lines.flatMap { it.sources }.filter { it.checked != checked }.forEach { c.shopping.update(it.copy(checked = checked)) }
+        c.shopping.setChecked(lines.flatMap { it.sources }.map { it.id }, checked)
     }
 
     fun delete(line: ShoppingLine) = viewModelScope.launch { line.sources.forEach { c.shopping.delete(it.id) } }

@@ -91,6 +91,7 @@ import fr.mescourses.app.ui.common.containerViewModel
 import fr.mescourses.app.ui.components.BottomActionBar
 import fr.mescourses.app.ui.components.DishArt
 import fr.mescourses.app.ui.components.EmptyState
+import fr.mescourses.app.llm.ModelStatus
 import fr.mescourses.app.ui.components.InfoBanner
 import fr.mescourses.app.ui.components.SectionHeader
 import fr.mescourses.app.ui.components.StatChip
@@ -492,6 +493,7 @@ fun RecipePreviewScreen(url: String, onBack: () -> Unit, onOpenRecipe: (Long) ->
     val inBook by vm.favorites.byUrl.collectAsStateWithLifecycle()
     val message by vm.messages.collectAsStateWithLifecycle()
     val offline by vm.offline.collectAsStateWithLifecycle()
+    val chefStatus by vm.chefStatus.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(message) { message?.let { snackbar.showSnackbar(it); vm.messages.value = null } }
     val book = inBook[RecipeSites.normalize(url)]
@@ -534,13 +536,15 @@ fun RecipePreviewScreen(url: String, onBack: () -> Unit, onOpenRecipe: (Long) ->
                 onMenu = { vm.addToMenu(s.recipe) },
                 onList = { vm.addToList(s.recipe) },
                 onSite = { onBrowse(url) },
+                chefInstalled = chefStatus != ModelStatus.Absent,
+                onGenerate = { vm.generateSteps(s.recipe, onOpenRecipe) },
             )
         }
     }
 }
 
 @Composable
-private fun PreviewBody(r: Recipe, siteName: String, offline: Boolean, modifier: Modifier, onMenu: () -> Unit, onList: () -> Unit, onSite: () -> Unit) {
+private fun PreviewBody(r: Recipe, siteName: String, offline: Boolean, modifier: Modifier, onMenu: () -> Unit, onList: () -> Unit, onSite: () -> Unit, chefInstalled: Boolean, onGenerate: () -> Unit) {
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         DishArt(
             r.title, r.ingredients.map { it.name }, r.imageUrl,
@@ -576,6 +580,17 @@ private fun PreviewBody(r: Recipe, siteName: String, offline: Boolean, modifier:
                         Text(step, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
+            }
+            if (r.steps.isEmpty()) {
+                Button(onClick = onGenerate, enabled = chefInstalled, modifier = Modifier.fillMaxWidth()) {
+                    Text("✍️ Générer les données manquantes avec le chef")
+                }
+                Text(
+                    if (chefInstalled) "Ajoute la recette à tes favoris puis le chef écrit les étapes, seulement sur ton clic."
+                    else "Installe l'assistant dans les Réglages pour l'utiliser.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             TextButton(onClick = onSite) {
                 Icon(Icons.AutoMirrored.Filled.OpenInNew, null)

@@ -87,6 +87,13 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
 
     val dishes: StateFlow<List<MenuDish>> = c.draft.observe().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val week: StateFlow<List<PlannedMeal>> = c.plan.observeAll().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** Recettes du livre qui attendent leurs étapes (le chef ne les écrit que sur demande). */
+    val pendingSteps: StateFlow<Int> = c.recipes.observeAll()
+        .map { list -> val w = c.stepsWriter(); list.count { w.needsSteps(it) } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    fun generateMissingSteps() = c.chef.enqueuePendingSteps()
     /** Ingrédients partagés / isolés du brouillon. */
     val overlap: StateFlow<IngredientOverlap.Report> = c.draft.observe()
         .map { IngredientOverlap.compute(it) }
@@ -178,7 +185,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                 res.onSuccess { r ->
                     val msg = buildString {
                         append("${r.newRecipes + r.reused} plat(s) ajouté(s) au livre, ${r.shoppingItems} article(s) dans la liste.")
-                        if (r.newRecipes > 0) append(" Les étapes s'écriront à l'ouverture de chaque recette.")
+                        if (r.newRecipes > 0) append(" Les étapes manquantes se génèrent sur demande (bouton du chef).")
                         if (r.failures.isNotEmpty()) append(" Échec pour : ${r.failures.joinToString()} (reste dans le brouillon).")
                     }
                     _state.update { it.copy(message = msg, chat = emptyList()) }

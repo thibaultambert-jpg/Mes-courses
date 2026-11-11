@@ -78,8 +78,7 @@ class ChefWork(
             }
             _validation.value = null
             _result.value = result
-            // Les ingrédients sont prêts : le chef écrit maintenant les étapes, une recette après l'autre.
-            if (result.isSuccess) enqueuePendingSteps()
+            // Les étapes ne sont jamais écrites d'office : bouton « Générer » sur la recette ou dans l'écran de la semaine.
         }
     }
 

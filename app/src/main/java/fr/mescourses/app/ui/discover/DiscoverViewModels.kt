@@ -7,6 +7,7 @@ import fr.mescourses.core.catalog.CatalogQuery
 import fr.mescourses.core.catalog.CatalogRanking
 import fr.mescourses.core.catalog.toHit
 import fr.mescourses.core.model.MenuDish
+import fr.mescourses.core.menu.MenuValidator
 import fr.mescourses.core.model.Recipe
 import fr.mescourses.core.model.RecipeStatus
 import fr.mescourses.core.recipes.QuickIdea
@@ -302,6 +303,9 @@ class RecipePreviewViewModel(private val c: AppContainer, val url: String) : Vie
     /** Vrai quand la fiche vient de ce qu'on savait déjà (hors ligne, ou site injoignable). */
     val offline = MutableStateFlow(false)
 
+    /** État de l'assistant (le bouton « générer » n'a de sens que s'il est installé). */
+    val chefStatus = c.model.status
+
     init { load() }
 
     fun load() = viewModelScope.launch {
@@ -338,6 +342,18 @@ class RecipePreviewViewModel(private val c: AppContainer, val url: String) : Vie
         val p = c.defaultPortions()
         c.shopping.add(ShoppingListMerger.fromRecipe(r, p.equivalent(c.settings.current.childFactor), c.settings.current.pantryList()))
         messages.value = "Ingrédients ajoutés à la liste (${p.label()})"
+    }
+
+    /**
+     * Le chef complète une recette sans étapes. Elle doit être dans le livre pour recevoir ses étapes : on l'y range
+     * (favoris), on le lance sur demande seulement, puis [onSaved] ouvre la fiche du livre où l'on suit l'écriture.
+     */
+    fun generateSteps(r: Recipe, onSaved: (Long) -> Unit) = viewModelScope.launch {
+        val id = favorites.add(r.copy(tags = (r.tags + MenuValidator.STEPS_PENDING).distinct()))
+        val saved = c.recipes.get(id)
+        if (saved != null && saved.steps.isEmpty() && MenuValidator.STEPS_PENDING !in saved.tags) c.recipes.save(saved.copy(tags = saved.tags + MenuValidator.STEPS_PENDING))
+        c.chef.requestSteps(id, first = true)
+        onSaved(id)
     }
 }
 
