@@ -88,6 +88,17 @@ object CatalogSources {
                 "https://www.cuisineactuelle.fr/recettes-de-cuisine/dessert",
             ),
         ),
+        // Cuisine Addict : le sitemap ne liste pas les recettes ; quatre rubriques paginées (?page=N) les couvrent.
+        CatalogSource(
+            "cuisineaddict", emptyList(), null, Regex("""cuisineaddict\.com/recette-[^/]+\.htm$"""),
+            requestsPerSecond = 1.0,
+            listings = listOf(
+                "https://www.cuisineaddict.com/recettes-entrees.htm",
+                "https://www.cuisineaddict.com/recettes-plats.htm",
+                "https://www.cuisineaddict.com/recettes-accompagnements.htm",
+                "https://www.cuisineaddict.com/recettes-desserts.htm",
+            ),
+        ),
     )
 
     /** Sites lus par leurs rubriques : collectés à part des sites à sitemap (workflow « Catalogue — sites par rubriques »). */
