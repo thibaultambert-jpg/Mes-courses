@@ -56,3 +56,12 @@ jobs:
           path: catalog/${{ inputs.site }}.jsonl
           if-no-files-found: ignore
           retention-days: 7
+
+      # Les fiches encore en erreur à la fin du passage (toutes, avec leur message) : sert à programmer un rattrapage.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: erreurs-${{ inputs.site }}-${{ inputs.pass }}
+          path: catalog/${{ inputs.site }}.erreurs.tsv
+          if-no-files-found: ignore
+          retention-days: 14

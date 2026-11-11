@@ -36,14 +36,16 @@ jobs:
           main="${RUN:-$(gh run list --workflow catalog.yml --limit 1 --json databaseId -q '.[0].databaseId')}"
           # Sites lus par rubriques (750g, Cuisine Actuelle) : une collecte par site, donc plusieurs runs récents.
           extras="$(gh run list --workflow catalog-extra.yml --limit 6 --json databaseId -q '.[].databaseId' || true)"
+          # Rattrapages (fiches rejouées après coup) : les plus récents d'abord, leur fichier remplace celui de la collecte.
+          retries="$(gh run list --workflow catalog-retry.yml --limit 6 --json databaseId -q '.[].databaseId' || true)"
           mkdir -p catalog
-          for run in $main $extras; do
+          for run in $retries $main $extras; do
             echo "Collecte : run $run"
             gh run download "$run" --dir "parts/$run" || echo "  aucun fichier dans ce run"
           done
-          # Pour chaque site : le run le plus récent qui l'a lu, et son dernier passage (il contient tout ce qui a été lu avant).
+          # Pour chaque site : le run le plus récent (rattrapage compris) qui l'a lu, et son dernier passage (il contient tout ce qui a été lu avant).
           for site in cuisineaz ptitchef marmiton chefsimon hellofresh jow jdf 750g cuisineactuelle; do
-            for run in $main $extras; do
+            for run in $retries $main $extras; do
               last=$(ls -d parts/$run/catalog-$site-* 2>/dev/null | sort -V | tail -1)
               if [ -n "$last" ]; then cp "$last/$site.jsonl" catalog/; break; fi
             done
