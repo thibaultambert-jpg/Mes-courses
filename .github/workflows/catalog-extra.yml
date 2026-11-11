@@ -1,6 +1,6 @@
 name: Catalogue — sites par rubriques
 
-# Sites sans sitemap de recettes (750g, Cuisine Actuelle) : lus par leurs rubriques paginées, à part de la collecte
+# Sites sans sitemap de recettes (750g, Cuisine Actuelle, Cuisine Addict) : lus par leurs rubriques paginées, à part de la collecte
 # principale pour ne pas attendre qu'elle se termine. Se lance en poussant tools/catalog/extra.conf, qui nomme les sites
 # à lire (SITES) : un site déjà en cours de collecte ne doit pas y figurer.
 on:

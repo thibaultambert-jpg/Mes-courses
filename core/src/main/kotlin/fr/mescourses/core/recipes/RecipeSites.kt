@@ -81,6 +81,13 @@ object RecipeSites {
             browseUrl = "https://www.cuisineactuelle.fr/recettes-de-cuisine",
         ),
         RecipeSite(
+            id = "cuisineaddict", name = "Cuisine Addict", domain = "cuisineaddict.com",
+            homeUrl = "https://www.cuisineaddict.com/",
+            // Fiches « recette-xxx.htm » ; les rubriques sont « recettes-plats.htm »… (« recettes » au pluriel).
+            recipeUrl = Regex("""cuisineaddict\.com/recette-[^/]+\.htm$"""),
+            browseUrl = "https://www.cuisineaddict.com/recettes-plats.htm",
+        ),
+        RecipeSite(
             id = "ptitchef", name = "Ptitchef", domain = "ptitchef.com",
             homeUrl = "https://www.ptitchef.com/",
             recipeUrl = Regex("""ptitchef\.com/recettes/.+-fid-\d+"""),
