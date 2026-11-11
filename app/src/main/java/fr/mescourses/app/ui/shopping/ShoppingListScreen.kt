@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Kitchen
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.Button
@@ -44,6 +46,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -127,6 +130,11 @@ class ShoppingViewModel(private val c: AppContainer) : ViewModel() {
         line.sources.forEach { c.shopping.update(it.copy(checked = !line.checked)) }
     }
 
+    /** Coche (ou décoche) plusieurs lignes d'un coup : toute la liste ou un rayon. */
+    fun setChecked(lines: List<ShoppingLine>, checked: Boolean) = viewModelScope.launch {
+        lines.flatMap { it.sources }.filter { it.checked != checked }.forEach { c.shopping.update(it.copy(checked = checked)) }
+    }
+
     fun delete(line: ShoppingLine) = viewModelScope.launch { line.sources.forEach { c.shopping.delete(it.id) } }
 
     /**
@@ -192,6 +200,13 @@ fun ShoppingListScreen(onOpenSettings: () -> Unit, onSendToCart: () -> Unit) {
         if (snackbar.showSnackbar(message, actionLabel = "Annuler") == SnackbarResult.ActionPerformed) vm.restore(removed)
     }
 
+    /** Coche les lignes données ; « Annuler » les décoche. */
+    fun checkAll(target: List<ShoppingLine>, message: String) = scope.launch {
+        if (target.isEmpty()) return@launch
+        vm.setChecked(target, true)
+        if (snackbar.showSnackbar(message, actionLabel = "Annuler") == SnackbarResult.ActionPerformed) vm.setChecked(target, false)
+    }
+
     ScreenScaffold(
         title = "Liste de courses",
         onOpenSettings = onOpenSettings,
@@ -204,6 +219,10 @@ fun ShoppingListScreen(onOpenSettings: () -> Unit, onSendToCart: () -> Unit) {
             val pantryCount = lines.count { !it.checked && vm.isPantry(it.label) }
             if (pantryCount > 0) IconButton(onClick = { scope.launch { undoable("$pantryCount produit(s) du placard retiré(s)", vm.removePantry()) } }) {
                 Icon(Icons.Filled.Kitchen, "Retirer les produits du placard")
+            }
+            val open = lines.filterNot { it.checked }
+            if (open.isNotEmpty()) IconButton(onClick = { checkAll(open, "${open.size} article(s) coché(s)") }) {
+                Icon(Icons.Filled.DoneAll, "Tout cocher")
             }
             if (done > 0) IconButton(onClick = { scope.launch { undoable("$done article(s) retiré(s)", vm.clearChecked()) } }) {
                 Icon(Icons.Filled.DeleteSweep, "Retirer les articles pris")
@@ -252,12 +271,22 @@ fun ShoppingListScreen(onOpenSettings: () -> Unit, onSendToCart: () -> Unit) {
             val todo = lines.filterNot { it.checked }
             todo.groupBy { it.aisle }.toSortedMap(compareBy { it.ordinal }).forEach { (aisle, group) ->
                 item(key = "h-${aisle.name}") {
-                    Text(
-                        "${aisle.emoji}  ${aisle.label}",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(top = 14.dp, bottom = 2.dp).animateItem(),
-                    )
+                    Row(Modifier.padding(top = 6.dp).animateItem(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "${aisle.emoji}  ${aisle.label}",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f),
+                        )
+                        // Coche tout le rayon d'un coup.
+                        TextButton(
+                            onClick = { checkAll(group, "${aisle.label} : ${group.size} article(s) coché(s)") },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                        ) {
+                            Icon(Icons.Filled.DoneAll, null, Modifier.size(18.dp))
+                            Text("Tout cocher", Modifier.padding(start = 4.dp))
+                        }
+                    }
                 }
                 items(group, key = { it.key }) { line ->
                     ShoppingRow(line, onToggle = { vm.toggle(line) }, onEdit = { editing = line }, modifier = Modifier.animateItem())

@@ -121,20 +121,37 @@ object CatalogRanking {
     /** Recettes lues par site au minimum, pour qu'un site ne soit pas coupé trop tôt. */
     private const val MIN_PER_SITE = 40
 
-    suspend fun search(store: CatalogStore, query: CatalogQuery): List<CatalogEntry> {
+    /**
+     * [seed] null : les mieux notées de chaque site, toujours dans le même ordre. Sinon : un tirage parmi les bien
+     * notées de chaque site, qui change avec ce nombre (Découvrir : une nouvelle liste à chaque rechargement).
+     */
+    suspend fun search(store: CatalogStore, query: CatalogQuery, seed: Int? = null): List<CatalogEntry> {
         val siteIds = query.sites.ifEmpty { store.countBySite().keys }
         if (siteIds.isEmpty()) return emptyList()
         val perSite = maxOf(MIN_PER_SITE, query.limit / siteIds.size)
-        val lists = siteIds.sorted().map { id -> store.search(query.copy(sites = setOf(id), limit = perSite, seed = null)) }
-        return rank(lists, query.words).take(query.limit)
+        // Tirage avec des mots cherchés : on lit plus large, pour ne pas manquer les recettes qui les ont dans leur titre.
+        val read = if (seed != null && query.words.isNotEmpty()) perSite * 3 else perSite
+        val lists = siteIds.sorted().map { id -> store.search(query.copy(sites = setOf(id), limit = read, seed = seed)) }
+        return rank(lists, query.words, seed?.let { kotlin.random.Random(it) }, perSite).take(query.limit)
     }
 
-    /** Alterne les listes (une par site) rang par rang ; à rang égal, la mieux notée d'abord. */
-    fun rank(lists: List<List<CatalogEntry>>, words: List<String> = emptyList()): List<CatalogEntry> {
+    /**
+     * Alterne les listes (une par site) rang par rang ; à rang égal, la mieux notée d'abord.
+     * Avec [random], l'ordre reçu de chaque site est gardé (c'est déjà un tirage) et, à rang égal, le hasard décide.
+     */
+    fun rank(
+        lists: List<List<CatalogEntry>>,
+        words: List<String> = emptyList(),
+        random: kotlin.random.Random? = null,
+        perSite: Int = Int.MAX_VALUE,
+    ): List<CatalogEntry> {
         class Ranked(val entry: CatalogEntry, val inTitle: Boolean, val score: Double) { var rank = 0 }
         return lists.flatMap { list ->
-            list.map { Ranked(it, words.isNotEmpty() && inTitle(it.title, words), RecipeRating.score(it.rating, it.ratingCount)) }
-                .sortedWith(compareByDescending<Ranked> { it.inTitle }.thenByDescending { it.score })
+            list.map {
+                val score = random?.nextDouble() ?: RecipeRating.score(it.rating, it.ratingCount)
+                Ranked(it, words.isNotEmpty() && inTitle(it.title, words), score)
+            }.let { if (random == null) it.sortedWith(compareByDescending<Ranked> { r -> r.inTitle }.thenByDescending { r -> r.score }) else it.sortedByDescending { r -> r.inTitle } }
+                .take(perSite)
                 .onEachIndexed { i, r -> r.rank = i }
         }.sortedWith(compareByDescending<Ranked> { it.inTitle }.thenBy { it.rank }.thenByDescending { it.score })
             .map { it.entry }

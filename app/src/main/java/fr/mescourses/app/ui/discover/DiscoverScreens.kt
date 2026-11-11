@@ -103,6 +103,7 @@ import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.ui.unit.sp
 import fr.mescourses.core.recipes.FilterGroup
 import fr.mescourses.core.recipes.QuickIdea
@@ -142,17 +143,24 @@ fun DiscoverContent(
     val sort by vm.sort.collectAsStateWithLifecycle()
     val localOnly by vm.localOnly.collectAsStateWithLifecycle()
     val searchingOnline by vm.searchingOnline.collectAsStateWithLifecycle()
+    val reloading by vm.reloading.collectAsStateWithLifecycle()
     var showFilters by remember { mutableStateOf(false) }
     LaunchedEffect(message) { message?.let { snackbar.showSnackbar(it); vm.messages.value = null } }
 
     fun submit() { focus.clearFocus(); vm.search() }
 
+    // Tirer l'écran vers le bas relance la recherche : une nouvelle liste de recettes.
+    androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+        isRefreshing = reloading,
+        onRefresh = { vm.reload() },
+        modifier = modifier.fillMaxSize(),
+    ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize(),
     ) {
         item(span = { GridItemSpan(2) }) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -233,7 +241,8 @@ fun DiscoverContent(
                 }
             }
             DiscoverViewModel.State.Loading -> {
-                item(span = { GridItemSpan(2) }) {
+                // Pendant un rechargement, l'indicateur du geste suffit.
+                if (!reloading) item(span = { GridItemSpan(2) }) {
                     Row(Modifier.padding(vertical = 24.dp), verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                         Text(
@@ -251,6 +260,7 @@ fun DiscoverContent(
                 item(span = { GridItemSpan(2) }) {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         val answered = r.hits.map { it.siteName }.distinct().size
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             if (r.hits.isEmpty()) "Aucune recette trouvée"
                             else (if (popular) "🔥 Populaires en ce moment · " else "") +
@@ -259,7 +269,13 @@ fun DiscoverContent(
                                 if (sort != RecipeSort.PERTINENCE) " · ${sort.label.lowercase()}" else "",
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
                         )
+                        TextButton(onClick = { vm.reload() }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+                            Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp))
+                            Text("Nouvelle liste", Modifier.padding(start = 4.dp))
+                        }
+                        }
                         // Résultats du catalogue local : la recherche en ligne reste possible, en complément.
                         if (searchingOnline) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -300,6 +316,7 @@ fun DiscoverContent(
                 }
             }
         }
+    }
     }
 
     if (showFilters) FiltersSheet(vm, onDismiss = { showFilters = false })
