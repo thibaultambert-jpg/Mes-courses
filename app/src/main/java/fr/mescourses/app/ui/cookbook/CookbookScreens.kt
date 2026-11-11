@@ -409,6 +409,8 @@ fun RecipeDetailScreen(recipeId: Long, onBack: () -> Unit, onEdit: () -> Unit, o
                 SectionHeader("Préparation", emoji = "👩‍🍳")
                 if (r.steps.isEmpty()) {
                     when (val st = stepsState) {
+                        RecipeDetailViewModel.StepsState.Fetching ->
+                            ChefCard("Recherche des étapes sur le site…", "Récupération de la recette d'origine.", emoji = "🌐")
                         RecipeDetailViewModel.StepsState.Writing ->
                             if (modelStatus == ModelStatus.Loading) ModelLoadingCard()
                             else ChefCard("Le chef écrit la recette…", "Étapes et temps de cuisson, à partir des ingrédients ci-dessus.")

@@ -143,7 +143,7 @@ class AppContainer(context: Context) {
         }
     }
     /** Travaux longs du chef (proposition, validation), qui continuent quand on quitte l'app. */
-    val chef = ChefWork(context, appScope, model, recipes) { stepsWriter() }
+    val chef = ChefWork(context, appScope, model, recipes, { stepsWriter() }, { url -> runCatching { importer.import(url) }.getOrNull() })
 
     // --- Drives (natifs, via une WebView connectée par enseigne) ---
     private val sites = RetailerSites.create { settings.current }

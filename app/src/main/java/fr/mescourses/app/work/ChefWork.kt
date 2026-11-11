@@ -29,6 +29,8 @@ class ChefWork(
     private val model: ModelController,
     private val recipes: RecipeRepository,
     private val stepsWriter: () -> RecipeStepsWriter,
+    /** Recette lue sur la page d'origine (null si le site ne répond pas ou n'a pas de fiche lisible). */
+    private val siteRecipe: suspend (url: String) -> fr.mescourses.core.model.Recipe? = { null },
 ) {
     private val running = AtomicInteger(0)
 
@@ -91,6 +93,10 @@ class ChefWork(
     private val _writing = MutableStateFlow<Long?>(null)
     val writing: StateFlow<Long?> = _writing
 
+    /** Recette dont les étapes sont recherchées sur le site d'origine. */
+    private val _fetching = MutableStateFlow<Long?>(null)
+    val fetching: StateFlow<Long?> = _fetching
+
     /** Échecs (recette → message), pour proposer « Réessayer ». */
     private val _stepsFailures = MutableStateFlow<Map<Long, String>>(emptyMap())
     val stepsFailures: StateFlow<Map<Long, String>> = _stepsFailures
@@ -100,27 +106,60 @@ class ChefWork(
     init {
         scope.launch {
             for (signal in wakeUp) {
-                if (_stepsQueue.value.isEmpty()) continue
-                // Sans assistant installé (premier lancement hors ligne), rien à écrire : on ne démarre surtout pas le
-                // service au premier plan, qu'on arrêterait aussitôt (Android plante si startForeground() n'est pas appelé à temps).
-                if (!model.status.value.available) {
-                    val waiting = _stepsQueue.value
-                    _stepsFailures.update { failures -> failures + waiting.associateWith { NO_MODEL } }
-                    _stepsQueue.update { it - waiting.toSet() }
-                    continue
-                }
-                runCatching {
-                    keepAwake("Le chef écrit les recettes…") {
-                        while (true) {
-                            val id = _stepsQueue.value.firstOrNull() ?: break
-                            writeOne(id)
-                            _stepsQueue.update { it - id }
-                        }
-                    }
+                while (true) {
+                    val id = _stepsQueue.value.firstOrNull() ?: break
+                    runCatching { process(id) }
+                    _stepsQueue.update { it - id }
                 }
             }
         }
     }
+
+    /**
+     * Étapes d'une recette : d'abord celles du site d'origine (si on a internet), sinon le chef les écrit.
+     * Sans assistant installé, on ne démarre surtout pas le service au premier plan, qu'on arrêterait aussitôt
+     * (Android plante si startForeground() n'est pas appelé à temps).
+     */
+    private suspend fun process(id: Long) {
+        val recipe = recipes.get(id) ?: return
+        if (!stepsWriter().needsSteps(recipe)) return
+        if (fromSite(recipe)) return
+        if (!model.status.value.available) {
+            _stepsFailures.update { it + (id to NO_MODEL) }
+            return
+        }
+        keepAwake("Le chef écrit les recettes…") { writeOne(id) }
+    }
+
+    /** Tente de lire les étapes sur la page d'origine. Renvoie true si la recette est complétée. */
+    private suspend fun fromSite(recipe: fr.mescourses.core.model.Recipe): Boolean {
+        val url = recipe.sourceUrl ?: return false
+        if (!online()) return false
+        _fetching.value = recipe.id
+        try {
+            val web = siteRecipe(url)?.takeIf { it.steps.isNotEmpty() } ?: return false
+            // Relit la recette : elle a pu être modifiée entre-temps.
+            val current = recipes.get(recipe.id) ?: return true
+            recipes.save(
+                current.copy(
+                    steps = web.steps,
+                    prepMinutes = current.prepMinutes ?: web.prepMinutes,
+                    cookMinutes = current.cookMinutes ?: web.cookMinutes,
+                    tags = current.tags - MenuValidator.STEPS_PENDING,
+                ),
+            )
+            _stepsFailures.update { it - recipe.id }
+            return true
+        } finally {
+            _fetching.value = null
+        }
+    }
+
+    private fun online(): Boolean = runCatching {
+        val cm = context.getSystemService(android.net.ConnectivityManager::class.java)
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+        caps != null && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }.getOrDefault(true)
 
     private suspend fun writeOne(id: Long) {
         val recipe = recipes.get(id) ?: return
