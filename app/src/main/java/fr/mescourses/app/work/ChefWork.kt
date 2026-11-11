@@ -32,6 +32,10 @@ class ChefWork(
 ) {
     private val running = AtomicInteger(0)
 
+    private companion object {
+        const val NO_MODEL = "L'assistant n'est pas installé : installe-le dans les Réglages."
+    }
+
     private val _validation = MutableStateFlow<Validation?>(null)
     val validation: StateFlow<Validation?> = _validation
 
@@ -97,6 +101,14 @@ class ChefWork(
         scope.launch {
             for (signal in wakeUp) {
                 if (_stepsQueue.value.isEmpty()) continue
+                // Sans assistant installé (premier lancement hors ligne), rien à écrire : on ne démarre surtout pas le
+                // service au premier plan, qu'on arrêterait aussitôt (Android plante si startForeground() n'est pas appelé à temps).
+                if (!model.status.value.available) {
+                    val waiting = _stepsQueue.value
+                    _stepsFailures.update { failures -> failures + waiting.associateWith { NO_MODEL } }
+                    _stepsQueue.update { it - waiting.toSet() }
+                    continue
+                }
                 runCatching {
                     keepAwake("Le chef écrit les recettes…") {
                         while (true) {
@@ -115,7 +127,7 @@ class ChefWork(
         val writer = stepsWriter()
         if (!writer.needsSteps(recipe)) return
         if (!model.status.value.available) {
-            _stepsFailures.update { it + (id to "L'assistant n'est pas installé : installe-le dans les Réglages.") }
+            _stepsFailures.update { it + (id to NO_MODEL) }
             return
         }
         _writing.value = id
