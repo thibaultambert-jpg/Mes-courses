@@ -169,6 +169,17 @@ class ShoppingViewModel(private val c: AppContainer) : ViewModel() {
 
     fun restore(items: List<ShoppingItem>) = viewModelScope.launch { c.shopping.add(items) }
 
+    /** Pop-in « Annuler » après une suppression : remet les articles (elle reste affichée même si on change d'écran). */
+    fun offerRestore(message: String, removed: List<ShoppingItem>) {
+        if (removed.isNotEmpty()) c.undoBar.push(message) { c.shopping.add(removed) }
+    }
+
+    /** Pop-in « Annuler » après un « tout cocher » : décoche les mêmes articles. */
+    fun offerUncheck(message: String, lines: List<ShoppingLine>) {
+        val ids = lines.flatMap { it.sources }.map { it.id }
+        c.undoBar.push(message) { c.shopping.setChecked(ids, false) }
+    }
+
     /** Le libellé est-il un produit du placard (Réglages) ? */
     fun isPantry(name: String): Boolean = fr.mescourses.core.shopping.Pantry.isStaple(name, c.settings.current.pantryList())
 
@@ -198,16 +209,13 @@ fun ShoppingListScreen(onOpenSettings: () -> Unit, onSendToCart: () -> Unit) {
     val done = lines.count { it.checked }
     val progress by animateFloatAsState(if (lines.isEmpty()) 0f else done.toFloat() / lines.size, label = "progress")
 
-    fun undoable(message: String, removed: List<ShoppingItem>) = scope.launch {
-        if (removed.isEmpty()) return@launch
-        if (snackbar.showSnackbar(message, actionLabel = "Annuler") == SnackbarResult.ActionPerformed) vm.restore(removed)
-    }
+    fun undoable(message: String, removed: List<ShoppingItem>) = vm.offerRestore(message, removed)
 
     /** Coche les lignes données ; « Annuler » les décoche. */
     fun checkAll(target: List<ShoppingLine>, message: String) = scope.launch {
         if (target.isEmpty()) return@launch
         vm.setChecked(target, true)
-        if (snackbar.showSnackbar(message, actionLabel = "Annuler") == SnackbarResult.ActionPerformed) vm.setChecked(target, false)
+        vm.offerUncheck(message, target)
     }
 
     ScreenScaffold(

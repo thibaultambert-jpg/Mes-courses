@@ -88,6 +88,14 @@ fun AppRoot(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        // Pop-in d'annulation globales : elles survivent aux changements d'écran. Sur l'onglet Liste, on les remonte
+        // au-dessus de la barre de saisie.
+        snackbarHost = {
+            fr.mescourses.app.ui.common.UndoBarHost(
+                container.undoBar,
+                Modifier.padding(bottom = if (current?.startsWith("shopping") == true) 84.dp else 0.dp),
+            )
+        },
         bottomBar = {
             if (tabs.any { current?.startsWith(it.route) == true }) {
                 NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {

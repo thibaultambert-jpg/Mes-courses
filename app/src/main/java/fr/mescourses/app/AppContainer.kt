@@ -82,6 +82,9 @@ data class PendingQuote(val label: String, val retailer: Retailer, val lines: Li
 class AppContainer(context: Context) {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    /** Pop-in « Annuler » partagées par tous les écrans. */
+    val undoBar = fr.mescourses.app.ui.common.UndoBar(appScope)
+
     private val db = Room.databaseBuilder(context, AppDatabase::class.java, "mes-courses.db")
         .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
         .build()
