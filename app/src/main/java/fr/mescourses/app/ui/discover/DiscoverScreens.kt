@@ -311,6 +311,7 @@ private fun FiltersSheet(vm: DiscoverViewModel, onDismiss: () -> Unit) {
     val filters by vm.filters.collectAsStateWithLifecycle()
     val sites by vm.sites.collectAsStateWithLifecycle()
     val sort by vm.sort.collectAsStateWithLifecycle()
+    val counts by vm.catalogCounts.collectAsStateWithLifecycle()
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
@@ -339,10 +340,20 @@ private fun FiltersSheet(vm: DiscoverViewModel, onDismiss: () -> Unit) {
             Text("Sites", style = MaterialTheme.typography.titleSmall)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 FilterChip(selected = sites.isEmpty(), onClick = { vm.allSites() }, label = { Text("Tous") })
-                vm.searchableSites.forEach { site ->
-                    FilterChip(selected = site.id in sites, onClick = { vm.toggleSite(site.id) }, label = { Text(site.name) })
+                vm.allSitesList.forEach { site ->
+                    val n = counts[site.id]
+                    FilterChip(
+                        selected = site.id in sites,
+                        onClick = { vm.toggleSite(site.id) },
+                        label = { Text(if (n != null && n > 0) "${site.name} · $n" else site.name) },
+                    )
                 }
             }
+            Text(
+                "Le nombre indique les recettes déjà dans le catalogue du téléphone.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Button(onClick = { vm.refresh(); onDismiss() }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Voir les recettes") }
         }
     }

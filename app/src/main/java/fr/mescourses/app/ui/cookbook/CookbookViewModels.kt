@@ -21,10 +21,15 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class CookbookViewModel(private val c: AppContainer) : ViewModel() {
+    companion object {
+        /** Ordre des listes du livre, après « Découvrir » : Favoris, Historique, Exclus. */
+        val TAB_ORDER = listOf(RecipeStatus.FAVORI, RecipeStatus.HISTORIQUE, RecipeStatus.BANNI)
+    }
+
     val query = MutableStateFlow("")
-    val tab = MutableStateFlow(RecipeStatus.HISTORIQUE)
-    /** Onglet « Découvrir » (recherche sur les sites de recettes) affiché à la place d'une liste du livre. */
-    val discover = MutableStateFlow(false)
+    val tab = MutableStateFlow(RecipeStatus.FAVORI)
+    /** Onglet « Découvrir » (recherche sur les sites de recettes), premier onglet et affiché à l'ouverture. */
+    val discover = MutableStateFlow(true)
     private val favorites = fr.mescourses.app.ui.discover.Favorites(c, viewModelScope)
     val importing = MutableStateFlow(false)
     val messages = MutableStateFlow<String?>(null)

@@ -167,7 +167,10 @@ object RecipeFilters {
         }
         return when (sort) {
             RecipeSort.PERTINENCE -> kept
-            RecipeSort.NOTE -> kept.sortedWith(compareByDescending<RecipeHit> { it.rating ?: -1.0 }.thenByDescending { it.ratingCount ?: 0 })
+            // Note pondérée par le nombre d'avis (voir [RecipeRating]), pour comparer les sites entre eux.
+            RecipeSort.NOTE -> kept.sortedWith(
+                compareByDescending<RecipeHit> { RecipeRating.score(it.rating, it.ratingCount) }.thenByDescending { it.ratingCount ?: 0 },
+            )
             RecipeSort.RAPIDE -> kept.sortedBy { it.totalMinutes ?: Int.MAX_VALUE }
         }
     }

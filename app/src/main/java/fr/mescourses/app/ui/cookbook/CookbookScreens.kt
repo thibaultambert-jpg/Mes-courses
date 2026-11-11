@@ -126,9 +126,12 @@ fun CookbookScreen(
     val discover by vm.discover.collectAsStateWithLifecycle()
     // Même instance que celle de l'onglet Découvrir (même écran, même clé).
     val discoverVm = containerViewModel { DiscoverViewModel(it) }
-    // Retour dans Découvrir : résultats → accueil de Découvrir → listes du livre (et seulement ensuite l'onglet Menu).
-    BackHandler(enabled = discover) {
-        if (!discoverVm.back()) vm.discover.value = false
+    val discoverState by discoverVm.state.collectAsStateWithLifecycle()
+    val discoverPopular by discoverVm.popularMode.collectAsStateWithLifecycle()
+    // Retour : résultats de Découvrir → accueil de Découvrir (1er onglet) → onglet Menu. Depuis une liste du livre,
+    // on revient d'abord à Découvrir.
+    BackHandler(enabled = !discover || discoverState != DiscoverViewModel.State.Idle || discoverPopular) {
+        if (!discover) vm.discover.value = true else discoverVm.back()
     }
     val recipes by vm.recipes.collectAsStateWithLifecycle()
     val counts by vm.counts.collectAsStateWithLifecycle()
@@ -187,18 +190,18 @@ fun CookbookScreen(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                RecipeStatus.entries.forEach { s ->
+                FilterChip(
+                    selected = discover,
+                    onClick = { vm.discover.value = true },
+                    label = { Text("🔎 Découvrir", maxLines = 1) },
+                )
+                CookbookViewModel.TAB_ORDER.forEach { s ->
                     FilterChip(
                         selected = !discover && tab == s,
                         onClick = { vm.tab.value = s; vm.discover.value = false },
                         label = { Text("${s.emoji} ${if (s == RecipeStatus.BANNI) "Exclus" else s.label} ${counts[s] ?: 0}", maxLines = 1) },
                     )
                 }
-                FilterChip(
-                    selected = discover,
-                    onClick = { vm.discover.value = true },
-                    label = { Text("🔎 Découvrir", maxLines = 1) },
-                )
             }
             if (discover) {
                 DiscoverContent(snackbar = snackbar, onOpenPreview = onOpenPreview, onBrowse = onBrowse)

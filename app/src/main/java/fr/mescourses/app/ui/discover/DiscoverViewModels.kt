@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import fr.mescourses.app.AppContainer
 import fr.mescourses.core.catalog.CatalogQuery
+import fr.mescourses.core.catalog.CatalogRanking
 import fr.mescourses.core.catalog.toHit
 import fr.mescourses.core.model.MenuDish
 import fr.mescourses.core.model.Recipe
@@ -69,7 +70,7 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
 
     val favorites = Favorites(c, viewModelScope)
     val query = MutableStateFlow("")
-    /** Sites choisis ; vide = tous les sites avec recherche. */
+    /** Sites choisis ; vide = tous les sites. */
     val sites = MutableStateFlow<Set<String>>(emptySet())
     /** Filtres actifs (type de plat, ingrédient principal, régime, temps, envie). */
     val filters = MutableStateFlow<Set<RecipeFilter>>(emptySet())
@@ -90,7 +91,18 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
     val seasonIdeas: List<String> = Seasonality.highlights(LocalDate.now().month).take(10)
     val quickIdeas: List<QuickIdea> = RecipeFilters.quickIdeas
     val searchableSites: List<RecipeSite> = RecipeSites.searchable
-    val otherSites: List<RecipeSite> = RecipeSites.all.filterNot { it.searchable }
+    /** Tous les sites connus, proposés dans les filtres (catalogue local ; recherche en ligne pour ceux qui l'ont). */
+    val allSitesList: List<RecipeSite> = RecipeSites.all
+    /** Nombre de recettes du catalogue local par site, affiché dans les filtres. */
+    val catalogCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
+
+    init {
+        viewModelScope.launch { runCatching { c.catalog.countBySite() }.onSuccess { catalogCounts.value = it } }
+    }
+
+    /** Sites à interroger en ligne : ceux choisis, sinon tous ceux qui ont une recherche. */
+    private fun chosenSites(): List<RecipeSite> =
+        if (sites.value.isEmpty()) searchableSites else allSitesList.filter { it.id in sites.value }
 
     private var job: Job? = null
 
@@ -125,7 +137,7 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
     fun popular() {
         popularMode.value = true
         localOnly.value = false
-        val chosen = searchableSites.filter { sites.value.isEmpty() || it.id in sites.value }
+        val chosen = chosenSites()
         job?.cancel()
         job = viewModelScope.launch {
             state.value = State.Loading
@@ -183,7 +195,7 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
             state.value = State.Idle
             return
         }
-        val chosen = searchableSites.filter { sites.value.isEmpty() || it.id in sites.value }
+        val chosen = chosenSites()
         job?.cancel()
         searchingOnline.value = false
         job = viewModelScope.launch {
@@ -191,7 +203,7 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
             // Le catalogue local d'abord (immédiat, sans réseau) ; les sites seulement s'il est vide.
             val local = runCatching {
                 if (c.catalog.count() == 0) null
-                else c.catalog.search(CatalogQuery.of(query.value, filters.value, LocalDate.now().monthValue, sites.value)).map { it.toHit() }
+                else CatalogRanking.search(c.catalog, CatalogQuery.of(query.value, filters.value, LocalDate.now().monthValue, sites.value)).map { it.toHit() }
             }.getOrNull()
             localOnly.value = local != null
             show(if (local != null) RecipeSearchResult(local, emptyMap(), emptyList()) else c.recipeSearch.search(q, chosen))
@@ -203,7 +215,7 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
         val q = RecipeFilters.query(query.value, filters.value)
         val current = raw ?: return
         if (q.isBlank() || searchingOnline.value) return
-        val chosen = searchableSites.filter { sites.value.isEmpty() || it.id in sites.value }
+        val chosen = chosenSites()
         job?.cancel()
         job = viewModelScope.launch {
             searchingOnline.value = true

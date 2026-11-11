@@ -4,6 +4,7 @@ import fr.mescourses.core.menu.DishKind
 import fr.mescourses.core.recipes.FilterGroup
 import fr.mescourses.core.recipes.RecipeFilter
 import fr.mescourses.core.recipes.RecipeHit
+import fr.mescourses.core.recipes.RecipeRating
 import fr.mescourses.core.recipes.RecipeSites
 import fr.mescourses.core.shopping.ShoppingListMerger
 import kotlinx.coroutines.delay
@@ -23,7 +24,10 @@ data class CatalogQuery(
     /** Sites acceptés ; vide = tous. */
     val sites: Set<String> = emptySet(),
     val limit: Int = 60,
-    /** Les bien notées d'abord ; à l'intérieur, les plus notées (null) ou un mélange qui dépend de ce nombre. */
+    /**
+     * null : par note pondérée ([RecipeRating]) décroissante. Sinon : les bien notées d'abord, puis un mélange qui
+     * dépend de ce nombre (le menu varie d'une semaine à l'autre).
+     */
     val seed: Int? = null,
 ) {
     fun matches(e: CatalogEntry): Boolean {
@@ -103,6 +107,45 @@ fun CatalogEntry.toHit() = RecipeHit(
     title = title, url = url, siteId = siteId, siteName = RecipeSites.byId(siteId)?.name ?: siteId,
     imageUrl = imageUrl, rating = rating, ratingCount = ratingCount, totalMinutes = minutes,
 )
+
+/**
+ * Classement « Pertinence » de Découvrir dans le catalogue local.
+ *
+ * Les sites n'ont ni la même taille ni les mêmes habitudes de notation (HelloFresh cumule des milliers d'avis par
+ * recette, d'autres sites quelques dizaines) : un classement unique par nombre d'avis ne montrerait qu'un seul site.
+ * On classe donc chaque site à part, par note pondérée ([RecipeRating]), puis on alterne les sites rang par rang :
+ * la meilleure de chaque site, puis la 2ᵉ de chaque site, etc. Avec des mots cherchés, les recettes qui les ont dans
+ * leur titre passent avant celles qui ne les ont que dans leurs ingrédients.
+ */
+object CatalogRanking {
+    /** Recettes lues par site au minimum, pour qu'un site ne soit pas coupé trop tôt. */
+    private const val MIN_PER_SITE = 40
+
+    suspend fun search(store: CatalogStore, query: CatalogQuery): List<CatalogEntry> {
+        val siteIds = query.sites.ifEmpty { store.countBySite().keys }
+        if (siteIds.isEmpty()) return emptyList()
+        val perSite = maxOf(MIN_PER_SITE, query.limit / siteIds.size)
+        val lists = siteIds.sorted().map { id -> store.search(query.copy(sites = setOf(id), limit = perSite, seed = null)) }
+        return rank(lists, query.words).take(query.limit)
+    }
+
+    /** Alterne les listes (une par site) rang par rang ; à rang égal, la mieux notée d'abord. */
+    fun rank(lists: List<List<CatalogEntry>>, words: List<String> = emptyList()): List<CatalogEntry> {
+        class Ranked(val entry: CatalogEntry, val inTitle: Boolean, val score: Double) { var rank = 0 }
+        return lists.flatMap { list ->
+            list.map { Ranked(it, words.isNotEmpty() && inTitle(it.title, words), RecipeRating.score(it.rating, it.ratingCount)) }
+                .sortedWith(compareByDescending<Ranked> { it.inTitle }.thenByDescending { it.score })
+                .onEachIndexed { i, r -> r.rank = i }
+        }.sortedWith(compareByDescending<Ranked> { it.inTitle }.thenBy { it.rank }.thenByDescending { it.score })
+            .map { it.entry }
+    }
+
+    /** Chaque mot cherché commence un mot du titre. */
+    private fun inTitle(title: String, words: List<String>): Boolean {
+        val tokens = ShoppingListMerger.key(title).split(' ')
+        return words.all { w -> tokens.any { it.startsWith(w) } }
+    }
+}
 
 /** Le catalogue local de recettes (base sur le téléphone). */
 interface CatalogStore {

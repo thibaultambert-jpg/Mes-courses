@@ -18,6 +18,7 @@ import fr.mescourses.core.catalog.CatalogEntry
 import fr.mescourses.core.catalog.CatalogPolicy
 import fr.mescourses.core.catalog.CatalogQuery
 import fr.mescourses.core.catalog.CatalogStore
+import fr.mescourses.core.recipes.RecipeRating
 import fr.mescourses.core.catalog.Course
 import fr.mescourses.core.catalog.minutes
 import fr.mescourses.core.menu.DishKind
@@ -194,9 +195,13 @@ class RoomCatalogStore(private val dao: CatalogDao) : CatalogStore {
             args.addAll(query.sites)
         }
         if (where.isNotEmpty()) sql.append(" WHERE ").append(where.joinToString(" AND "))
-        sql.append(" ORDER BY r.good DESC, ")
         val seed = query.seed
-        if (seed == null) sql.append("r.ratingCount DESC") else {
+        if (seed == null) {
+            // Note pondérée par le nombre d'avis : même calcul que RecipeRating.score.
+            val n = "(CASE WHEN r.rating IS NULL THEN 0 ELSE COALESCE(r.ratingCount, 1) END)"
+            sql.append(" ORDER BY (COALESCE(r.rating, 0) * $n + ${RecipeRating.PRIOR * RecipeRating.PRIOR_VOTES}) / ($n + ${RecipeRating.PRIOR_VOTES}) DESC, r.ratingCount DESC")
+        } else {
+            sql.append(" ORDER BY r.good DESC, ")
             // Mélange stable pour une semaine donnée : le menu varie d'une semaine à l'autre.
             sql.append("((r.id * ?) % 1009)")
             args += (seed % 997) + 1

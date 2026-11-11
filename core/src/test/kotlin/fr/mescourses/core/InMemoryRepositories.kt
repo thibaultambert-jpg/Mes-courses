@@ -75,8 +75,11 @@ class InMemoryCatalog(entries: List<fr.mescourses.core.catalog.CatalogEntry> = e
     override suspend fun countBySite() = entries.values.groupingBy { it.siteId }.eachCount()
     override suspend fun search(query: fr.mescourses.core.catalog.CatalogQuery) = entries.values.filter(query::matches)
         .sortedWith(
-            compareByDescending<fr.mescourses.core.catalog.CatalogEntry> { fr.mescourses.core.catalog.CatalogPolicy.wellRated(it) }
-                .thenByDescending { e -> query.seed?.let { (e.url.hashCode() * it) % 1000 } ?: (e.ratingCount ?: 0) },
+            if (query.seed == null) compareByDescending<fr.mescourses.core.catalog.CatalogEntry> {
+                fr.mescourses.core.recipes.RecipeRating.score(it.rating, it.ratingCount)
+            }.thenByDescending { it.ratingCount ?: 0 }
+            else compareByDescending<fr.mescourses.core.catalog.CatalogEntry> { fr.mescourses.core.catalog.CatalogPolicy.wellRated(it) }
+                .thenByDescending { e -> (e.url.hashCode() * query.seed) % 1000 },
         ).take(query.limit)
     override suspend fun byUrl(url: String) = entries[url]
     override suspend fun upsert(entries: List<fr.mescourses.core.catalog.CatalogEntry>) { entries.forEach { this.entries[it.url] = it } }
