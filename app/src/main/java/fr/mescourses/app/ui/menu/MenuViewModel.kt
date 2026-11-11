@@ -177,6 +177,17 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                 else -> MenuStep.REGLAGES
             }
         }
+        // Un plat ajouté depuis « Recettes » (ou ailleurs) pendant qu'on est sur « Envies » : on affiche le menu,
+        // où le bloc d'ingrédients partagés se met à jour à chaque ajout.
+        viewModelScope.launch {
+            var previous = -1
+            c.draft.observe().collect { list ->
+                if (previous >= 0 && list.size > previous && step.value == MenuStep.REGLAGES && !_state.value.busy && _state.value.validation == null) {
+                    step.value = MenuStep.PROPOSITION
+                }
+                previous = list.size
+            }
+        }
         viewModelScope.launch {
             c.settings.state.collect { st ->
                 if (!configTouched) {

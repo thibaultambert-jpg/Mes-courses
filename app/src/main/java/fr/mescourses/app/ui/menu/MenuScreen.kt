@@ -221,7 +221,7 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit, onOpenS
                         dishes = dishes, favorites = favorites, overlap = overlap, insights = insights, preview = preview,
                         state = state, ready = ready,
                         onPortions = vm::changePortions, onAnother = vm::anotherRecipe, onInvent = { inventFor = it ?: -1 },
-                        onOpen = onOpenPreview, onRemove = vm::removeDish, onAdd = vm::openPicker,
+                        onOpen = onOpenPreview, onOpenRecipe = onOpenRecipe, onRemove = vm::removeDish, onAdd = vm::openPicker,
                         onImprove = vm::improveSharing, onClear = vm::clearDraft,
                     )
                     MenuStep.SEMAINE -> WeekStep(
@@ -485,6 +485,7 @@ private fun ProposalStep(
     /** Recette inventée par le chef : à la place du plat donné, ou en plus (null). */
     onInvent: (Int?) -> Unit,
     onOpen: (String) -> Unit,
+    onOpenRecipe: (Long) -> Unit,
     onRemove: (Int) -> Unit,
     onAdd: () -> Unit,
     onImprove: () -> Unit,
@@ -530,6 +531,7 @@ private fun ProposalStep(
                 onAnother = { onAnother(i) },
                 onInvent = { onInvent(i) },
                 onOpen = onOpen,
+                onOpenRecipe = onOpenRecipe,
                 onRemove = { onRemove(i) },
                 modifier = Modifier.animateItem(),
             )
@@ -586,9 +588,12 @@ private fun DishCard(
     onAnother: () -> Unit,
     onInvent: () -> Unit,
     onOpen: (String) -> Unit,
+    onOpenRecipe: (Long) -> Unit,
     onRemove: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val openable = dish.sourceUrl != null || dish.recipeId != null
+    val open = { dish.sourceUrl?.let(onOpen) ?: dish.recipeId?.let(onOpenRecipe); Unit }
     val present = PlateBalance.components(dishBalanceTexts(dish))
     val season = remember(dish) { Seasonality.report(listOf(dish.title) + dish.mainIngredients, java.time.LocalDate.now().month) }
     // D'où vient le plat : un site (avec sa durée), le livre, ou le chef.
@@ -609,7 +614,7 @@ private fun DishCard(
             DishArt(
                 dish.title, dish.mainIngredients, imageUrl = dish.imageUrl,
                 modifier = Modifier.fillMaxWidth().height(if (dish.imageUrl != null) 132.dp else 96.dp)
-                    .clickable(enabled = dish.sourceUrl != null) { dish.sourceUrl?.let(onOpen) },
+                    .clickable(enabled = openable) { open() },
                 emojiSize = 48,
             )
             Text(
@@ -630,7 +635,7 @@ private fun DishCard(
             Row(verticalAlignment = Alignment.Top) {
                 Column(
                     Modifier.weight(1f).clip(MaterialTheme.shapes.small)
-                        .clickable(enabled = dish.sourceUrl != null) { dish.sourceUrl?.let(onOpen) },
+                        .clickable(enabled = openable) { open() },
                 ) {
                     Text(dish.title, style = MaterialTheme.typography.titleMedium)
                     if (origin.isNotEmpty()) {
