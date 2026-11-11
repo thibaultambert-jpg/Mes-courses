@@ -73,7 +73,8 @@ images. La fiche complète est lue sur le site quand la recette est ouverte ou v
 les sites » de Découvrir garde la recherche en ligne en complément.
 
 - **Construction** : `tools/catalog` lit les sitemaps des sites (`core/.../catalog/SiteCrawler.kt`) puis chaque fiche, en
-  plusieurs passages (workflow « Catalogue de recettes », lancé en poussant `tools/catalog/pass.conf`). Résultat : un
+  fichier `<site>.jsonl.gz` par site. 750g et Cuisine Actuelle, sans sitemap, sont lus par leurs rubriques paginées
+  (workflow « Catalogue — sites par rubriques », lancé en poussant `tools/catalog/extra.conf`).
   fichier `<site>.jsonl.gz` par site.
 - **Publication** : pousser `tools/catalog/publish.conf` rassemble le dernier passage terminé de chaque site dans la
   release « catalogue » ; la compilation suivante de l'APK embarque ces fichiers.
