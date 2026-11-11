@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -342,9 +344,9 @@ private fun EditItemSheet(line: ShoppingLine, onDismiss: () -> Unit, onSave: (St
     val units = remember(line.key) { (EDIT_UNITS + line.editUnit).distinct() }
     val parsed = quantity.trim().replace(',', '.').toDoubleOrNull()
     val quantityOk = quantity.isBlank() || (parsed != null && parsed > 0)
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(onDismissRequest = onDismiss, contentWindowInsets = { WindowInsets(0) }) {
         Column(
-            Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp).imePadding(),
+            Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("Modifier l'article", style = MaterialTheme.typography.titleLarge)

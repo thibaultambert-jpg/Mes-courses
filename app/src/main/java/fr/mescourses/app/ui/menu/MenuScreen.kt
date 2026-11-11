@@ -38,6 +38,8 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import fr.mescourses.core.menu.Candidate
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -926,8 +928,9 @@ private fun ChatSheet(
     LaunchedEffect(chat.size, chat.lastOrNull()?.text?.length) {
         if (chat.isNotEmpty()) listState.animateScrollToItem(chat.lastIndex)
     }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 16.dp)) {
+    // Le clavier est géré ici seulement (pas aussi par la feuille), et la liste rétrécit pour laisser voir le champ.
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, contentWindowInsets = { WindowInsets(0) }) {
+        Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(horizontal = 16.dp)) {
             Text("Ajuster le menu", style = MaterialTheme.typography.titleLarge)
             Text(
                 "Une demande à la fois : invités sur un plat, ajouter, retirer ou remplacer un plat…",

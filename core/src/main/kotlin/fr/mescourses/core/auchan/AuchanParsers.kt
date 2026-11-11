@@ -16,7 +16,13 @@ import org.jsoup.Jsoup
 /** Ligne brute du panier Auchan (identifiants nécessaires aux écritures). */
 data class AuchanCartLine(val lineId: String, val productId: String, val offerId: String?, val name: String?, val quantity: Int, val unitPrice: Double?)
 
-data class AuchanCart(val id: String?, val store: String?, val lines: List<AuchanCartLine>) {
+data class AuchanCart(
+    val id: String?,
+    val store: String?,
+    val lines: List<AuchanCartLine>,
+    /** Mode de réception lu dans le panier : `SHIPPING` = livraison à domicile ; sinon drive / retrait. */
+    val channel: String? = null,
+) {
     fun toCart(names: Map<String, String>, images: Map<String, String> = emptyMap()): Cart {
         val items = lines.map { l ->
             CartLineItem(
@@ -109,10 +115,12 @@ object AuchanParsers {
         val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return null
         if (root["items"] !is JsonArray && root.str("id") == null) return null
         var store: String? = null
+        var channel: String? = null
         val lines = (root["items"] as? JsonArray).orEmpty().mapNotNull { e ->
             val it = e as? JsonObject ?: return@mapNotNull null
             val offering = it.obj("offering")
             store = store ?: offering?.obj("context")?.obj("seller")?.str("name")
+            channel = channel ?: offering?.obj("context")?.str("deliveryChannel")
             val cents = offering?.obj("prices")?.obj("price")?.num("amount")
             AuchanCartLine(
                 lineId = it.str("id") ?: return@mapNotNull null,
@@ -123,6 +131,23 @@ object AuchanParsers {
                 unitPrice = cents?.let { c -> c / 100.0 },
             )
         }.filter { it.quantity > 0 }
-        return AuchanCart(root.str("id"), store, lines)
+        if (channel == null) channel = (root["sections"] as? JsonArray).orEmpty().asSequence()
+            .mapNotNull { (it as? JsonObject)?.get("consignments") as? JsonArray }.flatten()
+            .mapNotNull { (it as? JsonObject)?.str("deliveryChannel") }.firstOrNull()
+        return AuchanCart(root.str("id"), store, lines, channel)
+    }
+
+    /**
+     * Libellé du mode de réception : « 🚚 Livraison à domicile · Auchan Taverny » (canal SHIPPING, ou magasin « LAD … »),
+     * sinon « Drive Auchan Taverny ». Null si le panier ne le dit pas (panier vide).
+     */
+    fun storeLabel(cart: AuchanCart): String? {
+        val raw = cart.store?.trim()?.takeIf { it.isNotEmpty() }
+        val home = cart.channel.equals("SHIPPING", ignoreCase = true) || raw?.startsWith("LAD ", ignoreCase = true) == true
+        if (raw == null) return if (home) "🚚 Livraison à domicile" else null
+        val words = raw.split(Regex("\\s+")).filterNot { it.equals("LAD", true) || it.equals("DRIVE", true) || it.equals("AUCHAN", true) }
+        val place = words.joinToString(" ") { w -> w.lowercase().split('-').joinToString("-") { it.replaceFirstChar(Char::uppercase) } }
+        val shop = if (place.isBlank()) "Auchan" else "Auchan $place"
+        return if (home) "🚚 Livraison à domicile · $shop" else "Drive $shop"
     }
 }

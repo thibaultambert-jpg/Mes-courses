@@ -2,6 +2,7 @@ package fr.mescourses.core
 
 import fr.mescourses.core.auchan.AuchanAuth
 import fr.mescourses.core.auchan.AuchanClient
+import fr.mescourses.core.auchan.AuchanCart
 import fr.mescourses.core.auchan.AuchanParsers
 import fr.mescourses.core.auchan.AuchanRoutes
 import fr.mescourses.core.cart.CartLine
@@ -231,6 +232,18 @@ class LeclercAuchanTest {
         assertNull(p.first { it.id == "P2" }.imageUrl)
     }
 
+    @Test fun auchan_livraison_a_domicile() {
+        val home = assertNotNull(AuchanParsers.parseCart(res("/auchan/cart_home_delivery.json")))
+        assertEquals("SHIPPING", home.channel)
+        assertEquals("🚚 Livraison à domicile · Auchan Taverny", AuchanParsers.storeLabel(home))
+        assertEquals(1, home.lines.size)
+        // Canal lu dans les sections quand l'article ne le donne pas.
+        val sections = assertNotNull(AuchanParsers.parseCart("""{"id":"C","items":[],"sections":[{"consignments":[{"deliveryChannel":"SHIPPING"}]}]}"""))
+        assertEquals("🚚 Livraison à domicile", AuchanParsers.storeLabel(sections))
+        assertEquals("Drive Auchan Test", AuchanParsers.storeLabel(AuchanCart("C", "Auchan Drive Test", emptyList(), "PICKUP")))
+        assertNull(AuchanParsers.storeLabel(AuchanCart("C", null, emptyList())))
+    }
+
     @Test fun auchan_panier() {
         val raw = assertNotNull(AuchanParsers.parseCart(res("/auchan/cart.json")))
         assertEquals("CART1", raw.id)
@@ -266,7 +279,7 @@ class LeclercAuchanTest {
         assertEquals("S1", item["sellerId"]!!.jsonPrimitive.content)
         assertEquals(2, item["desiredQuantity"]!!.jsonPrimitive.content.toInt())
         assertEquals("CART1", body["cartId"]!!.jsonPrimitive.content)
-        assertEquals("Auchan Drive Test", store)
+        assertEquals("Drive Auchan Test", store)
     }
 
     @Test fun auchan_ligne_existante_quantite_absolue() = runTest {
