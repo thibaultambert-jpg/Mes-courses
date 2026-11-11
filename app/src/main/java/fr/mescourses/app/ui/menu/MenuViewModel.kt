@@ -94,6 +94,16 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
     fun generateMissingSteps() = c.chef.enqueuePendingSteps()
+
+    /** Bloc « Bienvenue » replié (mémorisé). */
+    val welcomeCollapsed: StateFlow<Boolean> = c.settings.state.map { it.welcomeCollapsed }.stateIn(viewModelScope, SharingStarted.Eagerly, c.settings.current.welcomeCollapsed)
+
+    fun setWelcomeCollapsed(v: Boolean) { viewModelScope.launch { c.settings.update { it.copy(welcomeCollapsed = v) } } }
+
+    /** Image de chaque recette du livre (pour l'écran de la semaine). */
+    val recipeImages: StateFlow<Map<Long, String>> = c.recipes.observeAll()
+        .map { list -> list.mapNotNull { r -> r.imageUrl?.let { r.id to it } }.toMap() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
     /** Ingrédients partagés / isolés du brouillon. */
     val overlap: StateFlow<IngredientOverlap.Report> = c.draft.observe()
         .map { IngredientOverlap.compute(it) }
