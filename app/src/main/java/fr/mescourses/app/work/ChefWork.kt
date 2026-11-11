@@ -112,7 +112,7 @@ class ChefWork(
                     while (true) {
                         val id = _stepsQueue.value.firstOrNull() ?: break
                         runCatching { process(id) }
-                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        ensureActive()
                         _stepsQueue.update { it - id }
                     }
                 }
