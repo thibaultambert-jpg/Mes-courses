@@ -102,16 +102,31 @@ class ChefWork(
 
     private val wakeUp = Channel<Unit>(Channel.CONFLATED)
 
+    /** Passage en cours sur la file ; annulé quand on efface la semaine. */
+    @Volatile private var stepsJob: Job? = null
+
     init {
         scope.launch {
             for (signal in wakeUp) {
-                while (true) {
-                    val id = _stepsQueue.value.firstOrNull() ?: break
-                    runCatching { process(id) }
-                    _stepsQueue.update { it - id }
+                val job = launch {
+                    while (true) {
+                        val id = _stepsQueue.value.firstOrNull() ?: break
+                        runCatching { process(id) }
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        _stepsQueue.update { it - id }
+                    }
                 }
+                stepsJob = job
+                job.join()
             }
         }
+    }
+
+    /** Abandonne la file d'écriture (semaine effacée) : plus rien n'est écrit pour les recettes qui attendaient. */
+    fun cancelSteps() {
+        stepsJob?.cancel()
+        _stepsQueue.value = emptyList()
+        _stepsFailures.value = emptyMap()
     }
 
     /**
@@ -211,11 +226,11 @@ class ChefWork(
         wakeUp.trySend(Unit)
     }
 
-    /** Met en file toutes les recettes du livre qui attendent leurs étapes. */
-    fun enqueuePendingSteps() {
+    /** Met en file les recettes données (celles de la semaine) qui attendent encore leurs étapes. */
+    fun enqueueSteps(ids: Set<Long>) {
         scope.launch {
             val writer = stepsWriter()
-            recipes.all().filter { writer.needsSteps(it) }.forEach { requestSteps(it.id) }
+            recipes.all().filter { it.id in ids && writer.needsSteps(it) }.forEach { requestSteps(it.id) }
         }
     }
 

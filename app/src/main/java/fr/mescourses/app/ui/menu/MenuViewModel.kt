@@ -89,11 +89,14 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     val week: StateFlow<List<PlannedMeal>> = c.plan.observeAll().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** Recettes du livre qui attendent leurs étapes (le chef ne les écrit que sur demande). */
-    val pendingSteps: StateFlow<Int> = c.recipes.observeAll()
-        .map { list -> val w = c.stepsWriter(); list.count { w.needsSteps(it) } }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+    val pendingSteps: StateFlow<Int> = kotlinx.coroutines.flow.combine(c.recipes.observeAll(), c.plan.observeAll()) { list, plan ->
+        // Seulement les recettes de la semaine en cours : une ancienne recette du livre n'y compte pas.
+        val ids = plan.map { it.recipeId }.toSet()
+        val w = c.stepsWriter()
+        list.count { it.id in ids && w.needsSteps(it) }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
-    fun generateMissingSteps() = c.chef.enqueuePendingSteps()
+    fun generateMissingSteps() { c.chef.enqueueSteps(week.value.map { it.recipeId }.toSet()) }
 
     /** Bloc « Bienvenue » replié (mémorisé). */
     val welcomeCollapsed: StateFlow<Boolean> = c.settings.state.map { it.welcomeCollapsed }.stateIn(viewModelScope, SharingStarted.Eagerly, c.settings.current.welcomeCollapsed)
@@ -735,6 +738,8 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
 
     fun toggleCooked(meal: PlannedMeal) = viewModelScope.launch { c.plan.update(meal.copy(cooked = !meal.cooked)) }
     fun clearWeek() = viewModelScope.launch {
+        // Les recettes qui attendaient leurs étapes ne doivent pas rester en file pour le prochain menu.
+        c.chef.cancelSteps()
         c.plan.clear()
         step.value = MenuStep.REGLAGES
     }
