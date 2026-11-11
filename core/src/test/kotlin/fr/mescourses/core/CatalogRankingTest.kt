@@ -48,4 +48,21 @@ class CatalogRankingTest {
         val res = CatalogRanking.rank(listOf(listOf(inTitle), listOf(inIngredients)), listOf("courgette"))
         assertEquals(inTitle, res.first())
     }
+
+    @Test fun un_tirage_change_la_liste_et_garde_tous_les_sites() = runBlocking {
+        val store = InMemoryCatalog(
+            (1..200).map { e("marmiton", "Plat marmiton $it", 4.8, 40 + it) } +
+                (1..200).map { e("jow", "Plat jow $it", 4.7, 30 + it) } +
+                (1..3).map { e("jow", "Gratin de courgette $it", 4.7, 30) },
+        )
+        val q = CatalogQuery.of("", setOf(RecipeFilter.PLAT), 11, limit = 20)
+        val a = CatalogRanking.search(store, q, seed = 7).map { it.title }
+        val b = CatalogRanking.search(store, q, seed = 12345).map { it.title }
+        assertEquals(a, CatalogRanking.search(store, q, seed = 7).map { it.title })
+        assertTrue(a != b)
+        assertTrue(a.take(4).any { "marmiton" in it } && a.take(4).any { "jow" in it })
+        // Les recettes qui ont le mot dans leur titre restent en tête.
+        val c = CatalogRanking.search(store, CatalogQuery.of("courgette", emptySet(), 11, limit = 20), seed = 7)
+        assertTrue(c.first().title.startsWith("Gratin de courgette"))
+    }
 }

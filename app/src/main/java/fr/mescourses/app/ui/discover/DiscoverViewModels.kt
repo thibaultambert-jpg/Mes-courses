@@ -87,6 +87,12 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
     val searchingOnline = MutableStateFlow(false)
     /** Résultats bruts des sites, avant filtres et tri de l'app (pour changer le tri sans rechercher). */
     private var raw: RecipeSearchResult? = null
+    /** Tirage du classement « Pertinence » dans le catalogue : change à chaque recherche et à chaque rechargement. */
+    private var seed = newSeed()
+    /** Rechargement demandé par l'utilisateur en cours (geste « tirer vers le bas »). */
+    val reloading = MutableStateFlow(false)
+
+    private fun newSeed() = kotlin.random.Random.nextInt(1, 1_000_000)
 
     val seasonIdeas: List<String> = Seasonality.highlights(LocalDate.now().month).take(10)
     val quickIdeas: List<QuickIdea> = RecipeFilters.quickIdeas
@@ -117,6 +123,18 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
     /** Relance la recherche en cours (après un changement dans la feuille de filtres). */
     fun refresh() {
         if (popularMode.value) popular() else search()
+    }
+
+    /** Bouton « Nouvelle liste » ou geste « tirer vers le bas » : relance pour obtenir d'autres recettes. */
+    fun reload() {
+        if (state.value == State.Idle && !popularMode.value) return
+        reloading.value = true
+        refresh()
+        val running = job
+        viewModelScope.launch {
+            running?.join()
+            reloading.value = false
+        }
     }
 
     /**
@@ -171,7 +189,10 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     fun setSort(s: RecipeSort) {
+        val changed = sort.value != s
         sort.value = s
+        // Dans le catalogue, « Pertinence » est un tirage et les autres tris lisent les mieux notées : on relit.
+        if (changed && localOnly.value && state.value is State.Done) { search(); return }
         raw?.let { r -> if (state.value is State.Done) state.value = State.Done(filtered(r)) }
     }
 
@@ -198,12 +219,14 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
         val chosen = chosenSites()
         job?.cancel()
         searchingOnline.value = false
+        seed = newSeed()
+        val draw = seed.takeIf { sort.value == RecipeSort.PERTINENCE }
         job = viewModelScope.launch {
             state.value = State.Loading
             // Le catalogue local d'abord (immédiat, sans réseau) ; les sites seulement s'il est vide.
             val local = runCatching {
                 if (c.catalog.count() == 0) null
-                else CatalogRanking.search(c.catalog, CatalogQuery.of(query.value, filters.value, LocalDate.now().monthValue, sites.value)).map { it.toHit() }
+                else CatalogRanking.search(c.catalog, CatalogQuery.of(query.value, filters.value, LocalDate.now().monthValue, sites.value), draw).map { it.toHit() }
             }.getOrNull()
             localOnly.value = local != null
             show(if (local != null) RecipeSearchResult(local, emptyMap(), emptyList()) else c.recipeSearch.search(q, chosen))
