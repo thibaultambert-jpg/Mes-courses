@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.update
 import fr.mescourses.core.menu.ValidationResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
