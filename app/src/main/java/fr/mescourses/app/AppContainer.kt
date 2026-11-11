@@ -257,6 +257,12 @@ class AppContainer(context: Context) {
 
     /** Recettes trouvées sur les sites pour le menu en cours ; vide = le chef invente les plats (hors ligne). */
     val candidates = CandidatePool()
+
+    /** Ce qu'on sait déjà d'une recette d'un site sans aller sur le site : recherche du menu, sinon fiche du catalogue. */
+    suspend fun knownRecipe(url: String): fr.mescourses.core.model.Recipe? =
+        candidates.byUrl(url)?.recipe ?: catalog.byUrl(url)?.toRecipe()
+
+    fun online() = fr.mescourses.app.data.isOnline(context)
     /** Envies du menu en cours, pour le bilan que les outils renvoient au modèle. */
     @Volatile var currentWishes: MenuWishes? = null
 

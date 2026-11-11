@@ -112,9 +112,9 @@ class RecipeDetailViewModel(private val c: AppContainer, private val id: Long) :
 
     init {
         viewModelScope.launch {
-            // Recette ouverte sans étapes : elle passe en tête de la file du chef.
+            // Recette ouverte sans étapes : on retente la page du site ; le chef n'écrit rien sans demande explicite.
             val r = recipe.filterNotNull().first()
-            if (writer.needsSteps(r)) c.chef.requestSteps(id, first = true)
+            if (writer.needsSteps(r)) c.chef.checkSite(id)
         }
     }
 

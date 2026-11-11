@@ -424,7 +424,19 @@ fun RecipeDetailScreen(recipeId: Long, onBack: () -> Unit, onEdit: () -> Unit, o
                             TextButton(onClick = vm::writeSteps) { Text("Réessayer") }
                         }
                         RecipeDetailViewModel.StepsState.Idle -> if (MenuValidator.STEPS_PENDING in r.tags) {
-                            TextButton(onClick = vm::writeSteps) { Text("✍️ Demander les étapes au chef") }
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    "Les étapes n'ont pas pu être lues sur le site. Le chef peut compléter les données manquantes à partir des ingrédients.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Button(onClick = vm::writeSteps, enabled = modelStatus != ModelStatus.Absent) {
+                                    Text("✍️ Générer les données manquantes avec le chef")
+                                }
+                                if (modelStatus == ModelStatus.Absent) {
+                                    Text("Installe l'assistant dans les Réglages pour l'utiliser.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                                }
+                            }
                         } else {
                             Text("Pas d'étapes pour cette recette.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }

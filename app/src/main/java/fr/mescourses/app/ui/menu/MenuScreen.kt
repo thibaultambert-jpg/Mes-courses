@@ -294,6 +294,7 @@ private fun SettingsStep(vm: MenuViewModel, state: MenuUiState, onOpenSettings: 
         verticalArrangement = Arrangement.spacedBy(14.dp),
         modifier = Modifier.fillMaxSize().imePadding(),
     ) {
+        item { ModelStatusCard(state.model, onOpenSettings) { vm.loadModel() } }
         item {
             Column {
                 Text("Qu'est-ce qu'on mange cette semaine ?", style = MaterialTheme.typography.headlineSmall)
@@ -424,7 +425,6 @@ private fun SettingsStep(vm: MenuViewModel, state: MenuUiState, onOpenSettings: 
                 "De saison : " + (vm.season.vegetables.take(8) + vm.season.fruits.take(4)).joinToString(", ") + "…",
             )
         }
-        item { ModelStatusCard(state.model, onOpenSettings) { vm.loadModel() } }
     }
 }
 
@@ -434,8 +434,10 @@ private fun ModelStatusCard(model: ModelStatus, onOpenSettings: () -> Unit, onRe
         is ModelStatus.Ready -> Row(verticalAlignment = Alignment.CenterVertically) {
             StatChip("🤖 ${model.modelName} · ${model.backend}")
         }
-        is ModelStatus.Sleeping -> Row(verticalAlignment = Alignment.CenterVertically) {
-            StatChip("🤖 ${model.modelName} · en veille")
+        is ModelStatus.Sleeping -> SectionCard {
+            Text("🤖 Assistant installé", style = MaterialTheme.typography.titleMedium)
+            Text("${model.modelName} est prêt à être activé sur ton téléphone (quelques secondes).", style = MaterialTheme.typography.bodySmall)
+            Button(onClick = onRetry) { Text("Activer le chef") }
         }
         ModelStatus.Loading -> ModelLoadingCard()
         ModelStatus.Absent -> SectionCard {

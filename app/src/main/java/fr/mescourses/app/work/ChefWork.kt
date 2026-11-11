@@ -155,11 +155,19 @@ class ChefWork(
         }
     }
 
-    private fun online(): Boolean = runCatching {
-        val cm = context.getSystemService(android.net.ConnectivityManager::class.java)
-        val caps = cm.getNetworkCapabilities(cm.activeNetwork)
-        caps != null && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
-    }.getOrDefault(true)
+    private fun online() = fr.mescourses.app.data.isOnline(context)
+
+    /**
+     * À l'ouverture d'une recette : relit seulement la page du site (si on a internet), sans jamais lancer le chef.
+     * Si le site ne donne rien, c'est à l'utilisateur de demander au chef de compléter.
+     */
+    fun checkSite(id: Long) {
+        scope.launch {
+            val recipe = recipes.get(id) ?: return@launch
+            if (!stepsWriter().needsSteps(recipe) || id in _stepsQueue.value || _writing.value == id) return@launch
+            runCatching { fromSite(recipe) }
+        }
+    }
 
     private suspend fun writeOne(id: Long) {
         val recipe = recipes.get(id) ?: return

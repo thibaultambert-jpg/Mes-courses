@@ -299,16 +299,25 @@ class RecipePreviewViewModel(private val c: AppContainer, val url: String) : Vie
     val messages = MutableStateFlow<String?>(null)
     val site: RecipeSite? = RecipeSites.forUrl(url)
 
+    /** Vrai quand la fiche vient de ce qu'on savait déjà (hors ligne, ou site injoignable). */
+    val offline = MutableStateFlow(false)
+
     init { load() }
 
     fun load() = viewModelScope.launch {
         state.value = State.Loading
+        offline.value = false
+        favorites.find(url)?.let { state.value = State.Loaded(it); return@launch }
+        // Sans internet, inutile d'attendre le site : on affiche tout de suite ce qui est déjà connu.
+        if (!c.online()) c.knownRecipe(url)?.let { offline.value = true; state.value = State.Loaded(it); return@launch }
         state.value = try {
-            State.Loaded(favorites.find(url) ?: c.importer.import(url))
+            State.Loaded(c.importer.import(url))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            State.Failed(e.message ?: "La page n'a pas pu être lue.")
+            val known = c.knownRecipe(url)
+            if (known != null) { offline.value = true; State.Loaded(known) }
+            else State.Failed(e.message ?: "La page n'a pas pu être lue.")
         }
     }
 

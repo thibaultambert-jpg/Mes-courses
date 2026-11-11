@@ -491,6 +491,7 @@ fun RecipePreviewScreen(url: String, onBack: () -> Unit, onOpenRecipe: (Long) ->
     val state by vm.state.collectAsStateWithLifecycle()
     val inBook by vm.favorites.byUrl.collectAsStateWithLifecycle()
     val message by vm.messages.collectAsStateWithLifecycle()
+    val offline by vm.offline.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(message) { message?.let { snackbar.showSnackbar(it); vm.messages.value = null } }
     val book = inBook[RecipeSites.normalize(url)]
@@ -528,6 +529,7 @@ fun RecipePreviewScreen(url: String, onBack: () -> Unit, onOpenRecipe: (Long) ->
             is RecipePreviewViewModel.State.Loaded -> PreviewBody(
                 r = s.recipe,
                 siteName = siteName,
+                offline = offline,
                 modifier = Modifier.padding(padding),
                 onMenu = { vm.addToMenu(s.recipe) },
                 onList = { vm.addToList(s.recipe) },
@@ -538,7 +540,7 @@ fun RecipePreviewScreen(url: String, onBack: () -> Unit, onOpenRecipe: (Long) ->
 }
 
 @Composable
-private fun PreviewBody(r: Recipe, siteName: String, modifier: Modifier, onMenu: () -> Unit, onList: () -> Unit, onSite: () -> Unit) {
+private fun PreviewBody(r: Recipe, siteName: String, offline: Boolean, modifier: Modifier, onMenu: () -> Unit, onList: () -> Unit, onSite: () -> Unit) {
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         DishArt(
             r.title, r.ingredients.map { it.name }, r.imageUrl,
@@ -546,6 +548,7 @@ private fun PreviewBody(r: Recipe, siteName: String, modifier: Modifier, onMenu:
             emojiSize = 84,
         )
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            if (offline) InfoBanner("📴", "Hors ligne : informations déjà connues (ingrédients, temps). Les étapes seront lues sur le site dès que tu auras internet.")
             Text(r.title, style = MaterialTheme.typography.headlineSmall)
             Text("sur $siteName", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
