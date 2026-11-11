@@ -144,6 +144,7 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit, onOpenS
     val dishes by vm.dishes.collectAsStateWithLifecycle()
     val week by vm.week.collectAsStateWithLifecycle()
     val pendingSteps by vm.pendingSteps.collectAsStateWithLifecycle()
+    val stepsProgress by vm.stepsProgress.collectAsStateWithLifecycle()
     val recipeImages by vm.recipeImages.collectAsStateWithLifecycle()
     val favorites by vm.favoriteIds.collectAsStateWithLifecycle()
     val overlap by vm.overlap.collectAsStateWithLifecycle()
@@ -224,7 +225,7 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit, onOpenS
                         onImprove = vm::improveSharing, onClear = vm::clearDraft,
                     )
                     MenuStep.SEMAINE -> WeekStep(
-                        images = recipeImages, pendingSteps = pendingSteps, chefInstalled = state.model != ModelStatus.Absent, onGenerate = vm::generateMissingSteps,
+                        images = recipeImages, stepsProgress = stepsProgress, onStopGenerating = vm::stopGeneratingSteps, pendingSteps = pendingSteps, chefInstalled = state.model != ModelStatus.Absent, onGenerate = vm::generateMissingSteps,
                         week = week, onToggle = vm::toggleCooked, onOpenRecipe = onOpenRecipe,
                         onOpenShopping = onOpenShopping, onNewMenu = vm::newMenu, onClear = vm::clearWeek,
                     )
@@ -811,6 +812,8 @@ private fun InventDialog(replacing: String?, onDismiss: () -> Unit, onCreate: (S
 @Composable
 private fun WeekStep(
     images: Map<Long, String>,
+    stepsProgress: Pair<Int, Int>?,
+    onStopGenerating: () -> Unit,
     pendingSteps: Int,
     chefInstalled: Boolean,
     onGenerate: () -> Unit,
@@ -838,7 +841,16 @@ private fun WeekStep(
                 }
             }
         }
-        if (pendingSteps > 0) item {
+        if (stepsProgress != null) item {
+            // Une fois lancé, le bouton laisse place à la progression de l'écriture.
+            val (done, total) = stepsProgress
+            val frac by animateFloatAsState(if (total == 0) 0f else done.toFloat() / total, label = "steps")
+            SectionCard {
+                Text("✍️ Le chef écrit les recettes : $done / $total", style = MaterialTheme.typography.titleSmall)
+                LinearProgressIndicator(progress = { frac }, modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(50)))
+                TextButton(onClick = onStopGenerating) { Text("Arrêter") }
+            }
+        } else if (pendingSteps > 0) item {
             SectionCard {
                 Text("✍️ $pendingSteps recette(s) sans étapes", style = MaterialTheme.typography.titleSmall)
                 Text(

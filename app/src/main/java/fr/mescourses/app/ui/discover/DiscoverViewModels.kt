@@ -253,9 +253,14 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
         }
     }
 
-    private fun filtered(r: RecipeSearchResult) = r.copy(hits = RecipeFilters.apply(r.hits, filters.value, sort.value))
+    /** Adresses (normalisées) des recettes en favoris : elles n'apparaissent plus dans les résultats. */
+    private var favoriteUrls: Set<String> = emptySet()
 
-    private fun show(r: RecipeSearchResult) {
+    private fun filtered(r: RecipeSearchResult) =
+        r.copy(hits = RecipeFilters.apply(r.hits.filterNot { RecipeSites.normalize(it.url) in favoriteUrls }, filters.value, sort.value))
+
+    private suspend fun show(r: RecipeSearchResult) {
+        favoriteUrls = c.recipes.all().filter { it.favorite && it.sourceUrl != null }.map { RecipeSites.normalize(it.sourceUrl!!) }.toSet()
         raw = r
         state.value = State.Done(filtered(r))
     }
@@ -303,6 +308,11 @@ class RecipePreviewViewModel(private val c: AppContainer, val url: String) : Vie
     /** Vrai quand la fiche vient de ce qu'on savait déjà (hors ligne, ou site injoignable). */
     val offline = MutableStateFlow(false)
 
+    /** Nombre de personnes pour cette recette : celui des Réglages au départ, modifiable ici. */
+    val portions = MutableStateFlow(c.defaultPortions())
+
+    fun childFactor() = c.settings.current.childFactor
+
     /** État de l'assistant (le bouton « générer » n'a de sens que s'il est installé). */
     val chefStatus = c.model.status
 
@@ -331,15 +341,30 @@ class RecipePreviewViewModel(private val c: AppContainer, val url: String) : Vie
         onSaved(id)
     }
 
-    /** Ajoute au menu en préparation (la recette rejoint aussi les favoris, pour garder ses ingrédients). */
+    /**
+     * Ajoute au menu en préparation, sans la mettre en favoris : le plat garde l'adresse du site, et la recette
+     * n'entre dans le livre (historique) qu'à la validation du menu. Déjà dans le livre : on la réutilise.
+     */
     fun addToMenu(r: Recipe) = viewModelScope.launch {
-        val id = favorites.add(r)
-        c.draft.set(c.draft.get() + MenuDish(r.title, r.description.orEmpty(), c.defaultPortions(), id))
-        messages.value = "« ${r.title} » ajoutée au menu en préparation (et aux favoris)"
+        val inBook = favorites.find(url) ?: r.sourceUrl?.let { favorites.find(it) }
+        val minutes = listOfNotNull(r.prepMinutes, r.cookMinutes).takeIf { it.isNotEmpty() }?.sum()
+        c.draft.set(
+            c.draft.get() + MenuDish(
+                title = r.title,
+                description = r.description.orEmpty(),
+                portions = portions.value,
+                recipeId = inBook?.id,
+                mainIngredients = r.ingredients.map { it.name }.take(8),
+                sourceUrl = r.sourceUrl ?: url,
+                imageUrl = r.imageUrl,
+                totalMinutes = minutes,
+            ),
+        )
+        messages.value = "« ${r.title} » ajoutée au menu en préparation"
     }
 
     fun addToList(r: Recipe) = viewModelScope.launch {
-        val p = c.defaultPortions()
+        val p = portions.value
         c.shopping.add(ShoppingListMerger.fromRecipe(r, p.equivalent(c.settings.current.childFactor), c.settings.current.pantryList()))
         messages.value = "Ingrédients ajoutés à la liste (${p.label()})"
     }

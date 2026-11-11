@@ -93,6 +93,10 @@ class ChefWork(
     private val _writing = MutableStateFlow<Long?>(null)
     val writing: StateFlow<Long?> = _writing
 
+    /** Nombre de recettes entrées dans la file depuis qu'elle était vide (pour la barre de progression). */
+    private val _batchTotal = MutableStateFlow(0)
+    val batchTotal: StateFlow<Int> = _batchTotal
+
     /** Recette dont les étapes sont recherchées sur le site d'origine. */
     private val _fetching = MutableStateFlow<Long?>(null)
     val fetching: StateFlow<Long?> = _fetching
@@ -115,6 +119,7 @@ class ChefWork(
                         runCatching { process(id) }
                         ensureActive()
                         _stepsQueue.update { it - id }
+                        if (_stepsQueue.value.isEmpty()) _batchTotal.value = 0
                     }
                 }
                 stepsJob = job
@@ -127,6 +132,7 @@ class ChefWork(
     fun cancelSteps() {
         stepsJob?.cancel()
         _stepsQueue.value = emptyList()
+        _batchTotal.value = 0
         _stepsFailures.value = emptyMap()
     }
 
@@ -216,6 +222,7 @@ class ChefWork(
     /** Ajoute une recette à la file ; [first] = l'utilisateur l'a ouverte, elle passe devant. */
     fun requestSteps(id: Long, first: Boolean = false) {
         _stepsFailures.update { it - id }
+        if (id !in _stepsQueue.value && _writing.value != id) _batchTotal.update { it + 1 }
         _stepsQueue.update { q ->
             when {
                 _writing.value == id -> q
@@ -231,7 +238,13 @@ class ChefWork(
     fun enqueueSteps(ids: Set<Long>) {
         scope.launch {
             val writer = stepsWriter()
-            recipes.all().filter { it.id in ids && writer.needsSteps(it) }.forEach { requestSteps(it.id) }
+            // Tout d'un coup, pour que la barre de progression connaisse le total dès le départ.
+            val todo = recipes.all().filter { it.id in ids && writer.needsSteps(it) && it.id !in _stepsQueue.value && _writing.value != it.id }.map { it.id }
+            if (todo.isEmpty()) return@launch
+            _stepsFailures.update { it - todo.toSet() }
+            _batchTotal.update { it + todo.size }
+            _stepsQueue.update { it + todo }
+            wakeUp.trySend(Unit)
         }
     }
 

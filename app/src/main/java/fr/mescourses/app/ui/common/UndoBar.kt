@@ -65,10 +65,10 @@ fun UndoBarHost(bar: UndoBar, modifier: Modifier = Modifier) {
                 contentColor = MaterialTheme.colorScheme.inverseOnSurface,
                 shadowElevation = 6.dp,
             ) {
-                Row(Modifier.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.padding(end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { bar.dismiss(e.id) }) { Icon(Icons.Filled.Close, "Fermer") }
                     Text(e.message, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).padding(vertical = 12.dp))
                     TextButton(onClick = { bar.undo(e) }) { Text("Annuler", color = MaterialTheme.colorScheme.inversePrimary) }
-                    IconButton(onClick = { bar.dismiss(e.id) }) { Icon(Icons.Filled.Close, "Fermer") }
                 }
             }
         }

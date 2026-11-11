@@ -96,6 +96,13 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
         list.count { it.id in ids && w.needsSteps(it) }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
+    /** Avancement de l'écriture des étapes (faites, total) ; null = rien en cours. */
+    val stepsProgress: StateFlow<Pair<Int, Int>?> = kotlinx.coroutines.flow.combine(c.chef.stepsQueue, c.chef.batchTotal) { queue, total ->
+        if (queue.isEmpty()) null else (total - queue.size).coerceAtLeast(0) to maxOf(total, queue.size)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    fun stopGeneratingSteps() = c.chef.cancelSteps()
+
     fun generateMissingSteps() { c.chef.enqueueSteps(week.value.map { it.recipeId }.toSet()) }
 
     /** Bloc « Bienvenue » replié (mémorisé). */
