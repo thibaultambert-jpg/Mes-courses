@@ -93,6 +93,10 @@ import fr.mescourses.app.ui.components.DishArt
 import fr.mescourses.app.ui.components.EmptyState
 import fr.mescourses.app.llm.ModelStatus
 import fr.mescourses.app.ui.components.InfoBanner
+import fr.mescourses.core.model.Portions
+import fr.mescourses.core.shopping.ShoppingListMerger
+import fr.mescourses.app.ui.components.SectionCard
+import fr.mescourses.app.ui.components.PillStepper
 import fr.mescourses.app.ui.components.SectionHeader
 import fr.mescourses.app.ui.components.StatChip
 import fr.mescourses.core.model.Recipe
@@ -493,6 +497,7 @@ fun RecipePreviewScreen(url: String, onBack: () -> Unit, onOpenRecipe: (Long) ->
     val inBook by vm.favorites.byUrl.collectAsStateWithLifecycle()
     val message by vm.messages.collectAsStateWithLifecycle()
     val offline by vm.offline.collectAsStateWithLifecycle()
+    val portions by vm.portions.collectAsStateWithLifecycle()
     val chefStatus by vm.chefStatus.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(message) { message?.let { snackbar.showSnackbar(it); vm.messages.value = null } }
@@ -532,6 +537,9 @@ fun RecipePreviewScreen(url: String, onBack: () -> Unit, onOpenRecipe: (Long) ->
                 r = s.recipe,
                 siteName = siteName,
                 offline = offline,
+                portions = portions,
+                childFactor = vm.childFactor(),
+                onPortions = { vm.portions.value = it },
                 modifier = Modifier.padding(padding),
                 onMenu = { vm.addToMenu(s.recipe) },
                 onList = { vm.addToList(s.recipe) },
@@ -544,7 +552,7 @@ fun RecipePreviewScreen(url: String, onBack: () -> Unit, onOpenRecipe: (Long) ->
 }
 
 @Composable
-private fun PreviewBody(r: Recipe, siteName: String, offline: Boolean, modifier: Modifier, onMenu: () -> Unit, onList: () -> Unit, onSite: () -> Unit, chefInstalled: Boolean, onGenerate: () -> Unit) {
+private fun PreviewBody(r: Recipe, siteName: String, offline: Boolean, portions: Portions, childFactor: Double, onPortions: (Portions) -> Unit, modifier: Modifier, onMenu: () -> Unit, onList: () -> Unit, onSite: () -> Unit, chefInstalled: Boolean, onGenerate: () -> Unit) {
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         DishArt(
             r.title, r.ingredients.map { it.name }, r.imageUrl,
@@ -565,11 +573,21 @@ private fun PreviewBody(r: Recipe, siteName: String, offline: Boolean, modifier:
                 OutlinedButton(onClick = onMenu, modifier = Modifier.weight(1f)) { Text("🍽 Au menu") }
                 OutlinedButton(onClick = onList, modifier = Modifier.weight(1f)) { Text("📝 À la liste") }
             }
+            SectionCard {
+                Text("Pour combien ?", style = MaterialTheme.typography.titleSmall)
+                PillStepper("🧑", "Adultes", portions.adults, { onPortions(portions.copy(adults = it.coerceAtLeast(0))) })
+                PillStepper("🧒", "Enfants", portions.children, { onPortions(portions.copy(children = it.coerceAtLeast(0))) })
+            }
             SectionHeader("Ingrédients", emoji = "🧺")
-            r.ingredients.forEach { ing ->
+            // Quantités recalculées pour le nombre de personnes choisi (celui des Réglages au départ).
+            ShoppingListMerger.scale(r, portions.equivalent(childFactor)).forEach { ing ->
                 Row(Modifier.fillMaxWidth()) {
                     Text("•", Modifier.padding(end = 8.dp), color = MaterialTheme.colorScheme.primary)
-                    Text(ing.raw, style = MaterialTheme.typography.bodyLarge)
+                    val q = ing.quantity?.let { ShoppingListMerger.formatNumber(it) }
+                    Text(
+                        if (q == null && ing.unit == null) ing.raw else listOfNotNull(q, ing.unit, ing.name).joinToString(" "),
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
                 }
             }
             if (r.steps.isNotEmpty()) {

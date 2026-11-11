@@ -303,6 +303,11 @@ class RecipePreviewViewModel(private val c: AppContainer, val url: String) : Vie
     /** Vrai quand la fiche vient de ce qu'on savait déjà (hors ligne, ou site injoignable). */
     val offline = MutableStateFlow(false)
 
+    /** Nombre de personnes pour cette recette : celui des Réglages au départ, modifiable ici. */
+    val portions = MutableStateFlow(c.defaultPortions())
+
+    fun childFactor() = c.settings.current.childFactor
+
     /** État de l'assistant (le bouton « générer » n'a de sens que s'il est installé). */
     val chefStatus = c.model.status
 
@@ -334,12 +339,12 @@ class RecipePreviewViewModel(private val c: AppContainer, val url: String) : Vie
     /** Ajoute au menu en préparation (la recette rejoint aussi les favoris, pour garder ses ingrédients). */
     fun addToMenu(r: Recipe) = viewModelScope.launch {
         val id = favorites.add(r)
-        c.draft.set(c.draft.get() + MenuDish(r.title, r.description.orEmpty(), c.defaultPortions(), id))
+        c.draft.set(c.draft.get() + MenuDish(r.title, r.description.orEmpty(), portions.value, id))
         messages.value = "« ${r.title} » ajoutée au menu en préparation (et aux favoris)"
     }
 
     fun addToList(r: Recipe) = viewModelScope.launch {
-        val p = c.defaultPortions()
+        val p = portions.value
         c.shopping.add(ShoppingListMerger.fromRecipe(r, p.equivalent(c.settings.current.childFactor), c.settings.current.pantryList()))
         messages.value = "Ingrédients ajoutés à la liste (${p.label()})"
     }
