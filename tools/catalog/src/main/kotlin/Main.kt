@@ -97,6 +97,19 @@ private class Builder(private val source: CatalogSource, out: File, rate: Double
             val (id, lastmod, status) = line.split('\t').let { Triple(it[0], it.getOrElse(1) { "" }, it.getOrElse(2) { "" }) }
             if (status != "erreur") put(id, lastmod)
         }
+        // Pas d'état (cache d'une autre branche, par exemple) mais le fichier d'une collecte précédente : ses fiches comptent
+        // comme lues. Elles sont inscrites dans l'état, pour que les passages suivants ne les relisent pas.
+        else if (this@Builder.entries.exists()) {
+            val lines = StringBuilder()
+            this@Builder.entries.forEachLine { line ->
+                val entry = runCatching { json.decodeFromString(CatalogEntry.serializer(), line) }.getOrNull() ?: return@forEachLine
+                val id = RecipeSites.normalize(entry.url)
+                put(id, entry.lastmod.orEmpty())
+                lines.append("$id\t${entry.lastmod.orEmpty()}\tok\t\t${entry.url}\n")
+            }
+            seenFile.writeText(lines.toString())
+            println("État repris du fichier ${this@Builder.entries.name} : $size fiches déjà lues")
+        }
     }
 
     /** Fiches dont le dernier résultat est une erreur : adresse normalisée → « adresse d'origine \t message ». */

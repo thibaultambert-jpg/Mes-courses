@@ -2,6 +2,7 @@ name: Catalogue — rattrapage
 
 # Rejoue les fiches restées en erreur sur les sites nommés dans tools/catalog/retry.conf (SITES), et lit au passage
 # les fiches nouvelles ou modifiées depuis. Repart de l'état du dernier passage du site (cache), donc ne relit pas le reste.
+# Les caches ne passent pas d'une branche à l'autre : SEED_RUN donne le run de collecte dont on reprend le fichier du site.
 # Se lance en poussant tools/catalog/retry.conf. À part de la collecte principale : ne pas y nommer un site dont
 # la collecte principale tourne encore (Cuisine AZ : attendre la fin du passage 7).
 on:
@@ -10,6 +11,10 @@ on:
     branches: ["claude/**"]
     paths:
       - "tools/catalog/retry.conf"
+
+permissions:
+  contents: read
+  actions: read
 
 concurrency:
   group: ${{ github.workflow }}
@@ -20,12 +25,14 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       list: ${{ steps.read.outputs.list }}
+      seed: ${{ steps.read.outputs.seed }}
     steps:
       - uses: actions/checkout@v4
       - id: read
         run: |
           . tools/catalog/retry.conf
           echo "list=$(printf '%s\n' $SITES | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+          echo "seed=${SEED_RUN:-}" >> "$GITHUB_OUTPUT"
 
   rattrapage:
     needs: sites
@@ -37,6 +44,7 @@ jobs:
     with:
       site: ${{ matrix.site }}
       pass: "r1"
+      seed_run: ${{ needs.sites.outputs.seed }}
 
   # Un second passage au cas où le premier se serait arrêté (10 erreurs de suite) : il reprend les fiches restantes.
   rattrapage2:
@@ -50,3 +58,4 @@ jobs:
     with:
       site: ${{ matrix.site }}
       pass: "r2"
+      seed_run: ${{ needs.sites.outputs.seed }}

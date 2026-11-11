@@ -10,6 +10,12 @@ on:
       pass:
         required: true
         type: string
+      # Numéro d'un run de collecte dont on reprend le fichier du site quand aucun état n'est disponible dans le cache
+      # (les caches ne passent pas d'une branche à l'autre).
+      seed_run:
+        required: false
+        type: string
+        default: ""
 
 jobs:
   collect:
@@ -30,8 +36,21 @@ jobs:
         with:
           path: catalog
           key: catalog-${{ inputs.site }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.pass }}
+          # Avec seed_run (rattrapage), seul l'état du même run compte : un cache d'un rattrapage précédent peut être partiel.
           restore-keys: |
-            catalog-${{ inputs.site }}-
+            catalog-${{ inputs.site }}-${{ inputs.seed_run != '' && format('{0}-', github.run_id) || '' }}
+
+      - name: Reprendre le fichier d'une collecte précédente
+        if: ${{ inputs.seed_run != '' && hashFiles(format('catalog/{0}.jsonl', inputs.site)) == '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run download "${{ inputs.seed_run }}" --pattern "catalog-${{ inputs.site }}-*" --dir seed
+          last=$(ls -d seed/catalog-${{ inputs.site }}-* | sort -V | tail -1)
+          mkdir -p catalog
+          cp "$last/${{ inputs.site }}.jsonl" catalog/
+          echo "Fichier repris de $last : $(wc -l < catalog/${{ inputs.site }}.jsonl) lignes"
 
       - name: Collecte
         run: |
