@@ -47,6 +47,8 @@ private const val SHORTLIST = 18
 
 data class MenuUiState(
     val meals: Int = 5,
+    val starters: Int = 0,
+    val desserts: Int = 0,
     val adults: Int = 2,
     val children: Int = 0,
     val wishes: String = "",
@@ -121,7 +123,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
 
     /** Saison et composition du brouillon. */
     val insights: StateFlow<MenuInsights> = c.draft.observe()
-        .map { MenuInsights.of(it, java.time.LocalDate.now().month) }
+        .map { MenuInsights.of(it.filter { d -> d.isMain }, java.time.LocalDate.now().month) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, MenuInsights(0, emptyList(), emptyList(), emptyMap()))
 
     /** Aperçu de la liste de courses du brouillon ; null tant qu'une recette n'est pas connue (plat inventé). */
@@ -195,7 +197,8 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                     val last = runCatching { json.decodeFromString(MenuWishes.serializer(), st.menuWishes) }.getOrNull()
                     _state.update {
                         it.copy(
-                            meals = st.meals, adults = st.householdSize, children = st.children,
+                            meals = st.meals, starters = st.starters, desserts = st.desserts,
+                            adults = st.householdSize, children = st.children,
                             time = last?.time ?: it.time, novelty = last?.novelty ?: it.novelty,
                             vegetarian = last?.vegetarian ?: 0, fish = last?.fish ?: 0, meat = last?.meat ?: 0,
                         ).fitted()
@@ -229,7 +232,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     private fun MenuUiState.toWishes() =
-        MenuWishes(meals, Portions(adults, children), time, vegetarian, fish, meat, useUp, novelty, wishes).normalized()
+        MenuWishes(meals, Portions(adults, children), time, vegetarian, fish, meat, useUp, novelty, wishes, starters, desserts).normalized()
 
     /** La composition ne dépasse jamais le nombre de repas. */
     private fun MenuUiState.fitted(): MenuUiState = toWishes().let { copy(vegetarian = it.vegetarian, fish = it.fish, meat = it.meat) }
@@ -242,6 +245,8 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     fun setMeals(n: Int) { configTouched = true; _state.update { it.copy(meals = n.coerceIn(1, 21)).fitted() } }
+    fun setStarters(n: Int) { configTouched = true; _state.update { it.copy(starters = n.coerceIn(0, 21)) } }
+    fun setDesserts(n: Int) { configTouched = true; _state.update { it.copy(desserts = n.coerceIn(0, 21)) } }
     fun setTime(t: CookingTime) { configTouched = true; _state.update { it.copy(time = t) } }
     fun setNovelty(n: Novelty) { configTouched = true; _state.update { it.copy(novelty = n) } }
 
@@ -351,10 +356,11 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                     val bySite = fr.mescourses.core.recipes.RecipeSearcher.interleave(list.groupBy { it.siteName }.values.toList())
                     c.candidates.set((MenuComposer.compose(list, wishes) + bySite).distinct().take(SHORTLIST))
                     when {
-                        list.isNotEmpty() -> chooseFromCandidates(wishes, found?.failedSites.orEmpty())
+                        list.isNotEmpty() -> chooseFromCandidates(wishes, found?.failedSites.orEmpty()).also { addCourseDishes(wishes) }
                         _state.value.model.available -> {
                             _state.update { it.copy(message = "Sites de recettes injoignables : le chef invente le menu.") }
                             inventMenu(wishes)
+                            addCourseDishes(wishes)
                         }
                         else -> {
                             step.value = MenuStep.REGLAGES
@@ -397,6 +403,27 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
         )
         if (notes.isNotEmpty()) _state.update { it.copy(message = notes.joinToString(" ")) }
         proposed += (chosen + extra.map { it.toDish(wishes.portions) }).mapNotNull { it.sourceUrl }
+    }
+
+    /** Entrées et desserts demandés, cherchés à part (catalogue ou sites) et ajoutés après les plats. */
+    private suspend fun addCourseDishes(wishes: MenuWishes) {
+        if (wishes.starters + wishes.desserts == 0 || c.draft.get().isEmpty()) return
+        progress("Recherche des entrées et desserts…")
+        val taken = c.draft.get().mapNotNull { it.sourceUrl }.toSet() + rejected
+        suspend fun find(courses: Set<fr.mescourses.core.catalog.Course>, n: Int, words: String, course: fr.mescourses.core.catalog.Course) =
+            runCatching { c.candidateFinder.forCourse(courses, n, wishes, taken, draw(), words) }.getOrNull().orEmpty()
+                .map { it.toDish(wishes.portions, course) }
+        val starters = find(setOf(fr.mescourses.core.catalog.Course.ENTREE, fr.mescourses.core.catalog.Course.SOUPE, fr.mescourses.core.catalog.Course.SALADE), wishes.starters, "entrée", fr.mescourses.core.catalog.Course.ENTREE)
+        val desserts = find(setOf(fr.mescourses.core.catalog.Course.DESSERT), wishes.desserts, "dessert", fr.mescourses.core.catalog.Course.DESSERT)
+        // Ni deux fois le même titre, ni un plat déjà au menu.
+        val have = c.draft.get().map { it.title.lowercase() }.toSet()
+        val extras = (starters + desserts).filter { it.title.lowercase() !in have }.distinctBy { it.title.lowercase() }
+        if (extras.isNotEmpty()) {
+            c.draft.set(c.draft.get() + extras)
+            proposed += extras.mapNotNull { it.sourceUrl }
+        }
+        val missing = (wishes.starters - starters.size).coerceAtLeast(0) + (wishes.desserts - desserts.size).coerceAtLeast(0)
+        if (missing > 0) _state.update { it.copy(message = (it.message?.plus(" ") ?: "") + "$missing entrée(s) ou dessert(s) introuvable(s) : ajoute-les avec « Ajouter un plat ».") }
     }
 
     /** Hors ligne : le chef invente les plats (les recettes seront écrites à la validation). */
@@ -606,6 +633,19 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                 val dishes = c.draft.get()
                 val current = dishes.getOrNull(index) ?: return
                 reject(current)
+                // Une entrée ou un dessert se remplace par une autre entrée ou un autre dessert.
+                current.course?.let { course ->
+                    progress("Recherche d'une autre recette…")
+                    val courses = if (course == fr.mescourses.core.catalog.Course.DESSERT) setOf(course)
+                    else setOf(course, fr.mescourses.core.catalog.Course.SOUPE, fr.mescourses.core.catalog.Course.SALADE)
+                    val taken = dishes.mapNotNull { it.sourceUrl }.toSet() + rejected
+                    val found = runCatching {
+                        c.candidateFinder.forCourse(courses, 1, wishes, taken, draw(), if (course == fr.mescourses.core.catalog.Course.DESSERT) "dessert" else "entrée")
+                    }.getOrNull().orEmpty().firstOrNull()
+                    if (found == null) _state.update { it.copy(message = "Pas d'autre recette trouvée.") }
+                    else c.draft.set(c.draft.get().toMutableList().also { if (index < it.size) it[index] = found.toDish(current.portions, course) })
+                    return
+                }
                 val others = dishes.filterIndexed { i, _ -> i != index }
 
                 fun pick() = c.candidates.all().let { pool ->
@@ -643,16 +683,19 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
         viewModelScope.launch {
             val dishes = c.draft.get()
             val wishes = c.currentWishes ?: config()
+            // Seuls les plats principaux se mutualisent : les entrées et desserts restent en place.
+            val mainIdx = dishes.indices.filter { dishes[it].isMain }
             val swap = MenuComposer.improveSharing(
-                pool, wishes, dishes.map { d -> Chosen.of(d) to c.candidates.of(d) },
+                pool, wishes, mainIdx.map { i -> dishes[i].let { d -> Chosen.of(d) to c.candidates.of(d) } },
                 exclude = pool.filter { blocked(it, dishes) }.toSet(),
             )
             if (swap == null) {
                 _state.update { it.copy(message = "Le menu partage déjà bien ses ingrédients : aucune recette trouvée ne ferait mieux.") }
             } else {
-                val old = dishes[swap.index]
+                val at = mainIdx[swap.index]
+                val old = dishes[at]
                 reject(old)
-                c.draft.set(dishes.toMutableList().also { it[swap.index] = swap.candidate.toDish(old.portions) })
+                c.draft.set(dishes.toMutableList().also { it[at] = swap.candidate.toDish(old.portions) })
                 _state.update {
                     it.copy(message = "« ${old.title} » remplacé par « ${swap.candidate.recipe.title} » : ${swap.sharedAfter} ingrédients partagés avec les autres plats (au lieu de ${swap.sharedBefore}).")
                 }

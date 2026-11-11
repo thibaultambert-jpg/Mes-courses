@@ -96,12 +96,13 @@ class MenuTools(
     /** Message de l'outil + bilan de mutualisation, pour que le modèle puisse s'améliorer. */
     private suspend fun withOverlap(message: String): JsonElement {
         val dishes = draft.get()
+        val mains = dishes.filter { it.isMain }
         val parts = listOfNotNull(
             message,
             IngredientOverlap.summary(IngredientOverlap.compute(dishes)).ifEmpty { null },
-            PlateBalance.menuSummary(dishes),
+            PlateBalance.menuSummary(mains),
             // Menu bâti sur de vraies recettes : on peut vérifier la saison et la composition demandée.
-            if (pool.size > 0) MenuInsights.of(dishes, today().month).summary(dishes.size, wishes()).ifEmpty { null } else null,
+            if (pool.size > 0) MenuInsights.of(mains, today().month).summary(mains.size, wishes()).ifEmpty { null } else null,
         )
         return toolOk(parts.joinToString(" ") { if (it.endsWith(".")) it else "$it." })
     }
@@ -137,7 +138,8 @@ class MenuTools(
             val sameTitle = picked.any { fr.mescourses.core.shopping.ShoppingListMerger.key(it.recipe.title) == fr.mescourses.core.shopping.ShoppingListMerger.key(c.recipe.title) }
             if (sameForm || sameTitle) refused += c.recipe.title else picked += c
         }
-        draft.set(picked.map { it.toDish(defaultPortions()) })
+        // Les entrées et desserts déjà choisis restent au menu.
+        draft.set(picked.map { it.toDish(defaultPortions()) } + draft.get().filter { !it.isMain })
         val unknown = numbers.distinct().filter { pool.get(it) == null }
         return withOverlap(
             "Menu de ${picked.size} plats enregistré" +

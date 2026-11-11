@@ -193,14 +193,14 @@ fun SectionHeader(title: String, modifier: Modifier = Modifier, emoji: String? =
 }
 
 @Composable
-fun StatChip(text: String, modifier: Modifier = Modifier, emphasized: Boolean = false) {
+fun StatChip(text: String, modifier: Modifier = Modifier, emphasized: Boolean = false, tint: androidx.compose.ui.graphics.Color? = null) {
     Text(
         text,
         style = MaterialTheme.typography.labelMedium,
-        color = if (emphasized) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+        color = tint ?: if (emphasized) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = modifier
             .clip(RoundedCornerShape(50))
-            .background(if (emphasized) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh)
+            .background(tint?.copy(alpha = 0.14f) ?: if (emphasized) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh)
             .padding(horizontal = 10.dp, vertical = 5.dp),
     )
 }
@@ -345,3 +345,10 @@ fun ChefCard(title: String, text: String, modifier: Modifier = Modifier, emoji: 
 @Composable
 fun ModelLoadingCard(modifier: Modifier = Modifier) =
     ChefCard("Le chef enfile son tablier…", "L'assistant se prépare sur ton téléphone, quelques secondes.", modifier)
+
+/** Nombre de personnes de la recette : vert s'il correspond au nombre choisi, rouge sinon. */
+@Composable
+fun ServingsChip(text: String, servings: Int, selected: fr.mescourses.core.model.Portions, modifier: Modifier = Modifier) {
+    val same = servings == selected.adults + selected.children
+    StatChip(text, modifier, tint = if (same) androidx.compose.ui.graphics.Color(0xFF2E7D32) else androidx.compose.ui.graphics.Color(0xFFC62828))
+}

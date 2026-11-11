@@ -84,8 +84,16 @@ class CookbookViewModel(private val c: AppContainer) : ViewModel() {
 
 class RecipeDetailViewModel(private val c: AppContainer, private val id: Long) : ViewModel() {
     val recipe: StateFlow<Recipe?> = c.recipes.observe(id).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
-    val portions = MutableStateFlow(c.defaultPortions())
+    /** Reprend les personnes de la carte (menu, semaine) d'où l'on vient ; sinon celles des Réglages. */
+    private val fromCard: Portions? = c.takePortionHint(id, null)
+    val portions = MutableStateFlow(fromCard ?: c.defaultPortions())
     val messages = MutableStateFlow<String?>(null)
+
+    /** Change les personnes ; si l'on vient d'une carte, elle suit. */
+    fun setPortions(p: Portions) {
+        portions.value = p
+        if (fromCard != null) viewModelScope.launch { c.syncPortions(id, null, p) }
+    }
 
     fun childFactor() = c.settings.current.childFactor
 
