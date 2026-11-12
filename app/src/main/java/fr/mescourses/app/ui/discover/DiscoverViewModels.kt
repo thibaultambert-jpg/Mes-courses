@@ -7,6 +7,7 @@ import fr.mescourses.core.catalog.CatalogQuery
 import fr.mescourses.core.catalog.CatalogRanking
 import fr.mescourses.core.catalog.toHit
 import fr.mescourses.core.model.MenuDish
+import fr.mescourses.core.model.Portions
 import fr.mescourses.core.menu.MenuValidator
 import fr.mescourses.core.model.Recipe
 import fr.mescourses.core.model.RecipeStatus
@@ -309,7 +310,14 @@ class RecipePreviewViewModel(private val c: AppContainer, val url: String) : Vie
     val offline = MutableStateFlow(false)
 
     /** Nombre de personnes pour cette recette : celui des Réglages au départ, modifiable ici. */
-    val portions = MutableStateFlow(c.defaultPortions())
+    private val fromCard: Portions? = c.takePortionHint(null, url)
+    val portions = MutableStateFlow(fromCard ?: c.defaultPortions())
+
+    /** Change les personnes ; si l'on vient d'une carte du menu, elle suit. */
+    fun setPortions(p: Portions) {
+        portions.value = p
+        if (fromCard != null) viewModelScope.launch { c.syncPortions(null, url, p) }
+    }
 
     fun childFactor() = c.settings.current.childFactor
 

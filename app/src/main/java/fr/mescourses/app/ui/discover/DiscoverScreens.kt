@@ -539,7 +539,7 @@ fun RecipePreviewScreen(url: String, onBack: () -> Unit, onOpenRecipe: (Long) ->
                 offline = offline,
                 portions = portions,
                 childFactor = vm.childFactor(),
-                onPortions = { vm.portions.value = it },
+                onPortions = { vm.setPortions(it) },
                 modifier = Modifier.padding(padding),
                 onMenu = { vm.addToMenu(s.recipe) },
                 onList = { vm.addToList(s.recipe) },
@@ -566,7 +566,7 @@ private fun PreviewBody(r: Recipe, siteName: String, offline: Boolean, portions:
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 r.prepMinutes?.let { StatChip("🔪 $it min") }
                 r.cookMinutes?.let { StatChip("🔥 $it min") }
-                StatChip("👥 ${r.servings} pers.")
+                fr.mescourses.app.ui.components.ServingsChip("👥 ${r.servings} pers.", r.servings, portions)
                 StatChip("🧺 ${r.ingredients.size} ingrédients")
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

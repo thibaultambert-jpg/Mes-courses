@@ -24,7 +24,9 @@ import kotlin.system.exitProcess
  * `build --site <id> --out <dossier> [--minutes 330] [--rate N] [--limit N]`
  *   Lit les fiches du site qui ne l'ont pas encore été et s'arrête au bout du temps donné. Dans le dossier :
  *   - `<id>.jsonl`    une recette du catalogue par ligne (JSON) ;
- *   - `<id>.seen.tsv` chaque adresse déjà traitée, sa date de modification et le résultat (ok, vide, erreur).
+ *   - `<id>.seen.tsv` chaque adresse déjà traitée, sa date de modification et le résultat (ok, vide, erreur), puis le
+ *     message d'erreur et l'adresse d'origine ;
+ *   - `<id>.erreurs.tsv` les fiches encore en erreur à la fin du passage (adresse, message), toutes, pas seulement les premières.
  *   Relancer la commande reprend où le passage précédent s'est arrêté ; une fiche modifiée depuis est relue.
  *
  * `stats --out <dossier>` : compte les recettes par site, type de plat et note.
@@ -95,7 +97,30 @@ private class Builder(private val source: CatalogSource, out: File, rate: Double
             val (id, lastmod, status) = line.split('\t').let { Triple(it[0], it.getOrElse(1) { "" }, it.getOrElse(2) { "" }) }
             if (status != "erreur") put(id, lastmod)
         }
+        // Pas d'état (cache d'une autre branche, par exemple) mais le fichier d'une collecte précédente : ses fiches comptent
+        // comme lues. Elles sont inscrites dans l'état, pour que les passages suivants ne les relisent pas.
+        else if (this@Builder.entries.exists()) {
+            val lines = StringBuilder()
+            this@Builder.entries.forEachLine { line ->
+                val entry = runCatching { json.decodeFromString(CatalogEntry.serializer(), line) }.getOrNull() ?: return@forEachLine
+                val id = RecipeSites.normalize(entry.url)
+                put(id, entry.lastmod.orEmpty())
+                lines.append("$id\t${entry.lastmod.orEmpty()}\tok\t\t${entry.url}\n")
+            }
+            seenFile.writeText(lines.toString())
+            println("État repris du fichier ${this@Builder.entries.name} : $size fiches déjà lues")
+        }
     }
+
+    /** Fiches dont le dernier résultat est une erreur : adresse normalisée → « adresse d'origine \t message ». */
+    private val pending: MutableMap<String, String> = LinkedHashMap<String, String>().apply {
+        if (seenFile.exists()) seenFile.forEachLine { line ->
+            val cols = line.split('\t')
+            if (cols.size < 3) return@forEachLine
+            if (cols[2] == "erreur") put(cols[0], "${cols.getOrElse(4) { "https://" + cols[0] }}\t${cols.getOrElse(3) { "" }}") else remove(cols[0])
+        }
+    }
+    private val errorsFile = File(out, "${source.siteId}.erreurs.tsv")
 
     /** true si tout le site a été lu, false s'il reste des fiches pour un prochain passage. */
     suspend fun run(budget: Duration, limit: Int): Boolean {
@@ -111,6 +136,7 @@ private class Builder(private val source: CatalogSource, out: File, rate: Double
         for (page in todo) {
             if (System.currentTimeMillis() > deadline || count >= limit) break
             count++
+            var detail = ""
             val status = try {
                 val entry = crawler.read(source, page)
                 streak = 0
@@ -122,20 +148,26 @@ private class Builder(private val source: CatalogSource, out: File, rate: Double
             } catch (e: Exception) {
                 errors++
                 streak++
+                detail = e.message.orEmpty().replace(Regex("[\\t\\r\\n]+"), " ")
                 // Le site refuse ou ralentit : on attend de plus en plus, puis on abandonne ce passage.
                 val code = (e as? Http.Status)?.code
                 if (code == 403 || code == 429 || code == 503) delay((60_000L * streak).coerceAtMost(600_000L))
-                if (errors <= 5) println("  erreur ${e.message} — ${page.url}")
+                if (errors <= 50) println("  erreur ${e.message} — ${page.url}")
                 // Une page disparue ne reviendra pas : inutile de la redemander à chaque passage.
                 if (code == 404 || code == 410) "vide" else "erreur"
             }
-            seenFile.appendText("${RecipeSites.normalize(page.url)}\t${page.lastmod.orEmpty()}\t$status\n")
+            val id = RecipeSites.normalize(page.url)
+            seenFile.appendText("$id\t${page.lastmod.orEmpty()}\t$status\t$detail\t${page.url}\n")
+            if (status == "erreur") pending[id] = "${page.url}\t$detail" else pending.remove(id)
             if (count % 500 == 0) println("  $count/${todo.size} — $ok recettes, $empty sans recette, $errors erreurs")
             if (streak >= MAX_STREAK) {
                 println("  $MAX_STREAK erreurs de suite : arrêt de ce passage pour ${source.siteId}")
                 break
             }
         }
+        // Toutes les fiches encore en erreur (y compris celles des passages précédents) : de quoi programmer un rattrapage.
+        errorsFile.writeText(pending.values.joinToString("") { it + "\n" })
+        println("${source.siteId} : ${pending.size} fiches encore en erreur (${errorsFile.name})")
         val left = todo.size - count
         println("${source.siteId} : $ok recettes ajoutées, $empty pages sans recette, $errors erreurs, $left fiches restantes")
         return left <= 0 && streak < MAX_STREAK

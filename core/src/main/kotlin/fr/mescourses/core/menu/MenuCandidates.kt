@@ -53,7 +53,7 @@ data class Candidate(
     val minutes: Int? get() = listOfNotNull(recipe.prepMinutes, recipe.cookMinutes).takeIf { it.isNotEmpty() }?.sum()
     val siteName: String? get() = recipe.sourceUrl?.let { RecipeSites.forUrl(it)?.name }
 
-    fun toDish(portions: Portions) = MenuDish(
+    fun toDish(portions: Portions, course: fr.mescourses.core.catalog.Course? = null) = MenuDish(
         title = recipe.title,
         description = recipe.description.orEmpty(),
         portions = portions,
@@ -62,6 +62,7 @@ data class Candidate(
         sourceUrl = recipe.sourceUrl,
         imageUrl = recipe.imageUrl,
         totalMinutes = minutes,
+        course = course,
     )
 
     /** Ligne du prompt : « 3. Gratin de chou-fleur [viande · 35 min · saison : chou-fleur] — chou-fleur, jambon, lait ». */
@@ -315,6 +316,38 @@ class CandidateFinder(
         val fromSites = import(hits, w, past, date, index) { done -> onProgress("Lecture des recettes… ($done/${hits.size})") }
         val fromBook = cookbookCandidates(cookbook, w, past, date)
         return FindResult((fromSites + fromBook).sortedByDescending { it.base }, queries, failed)
+    }
+
+    /**
+     * Entrées ou desserts du menu : [count] recettes du type [courses] (catalogue local d'abord, sinon recherche sur les sites).
+     * [exclude] : adresses déjà au menu ou écartées.
+     */
+    suspend fun forCourse(
+        courses: Set<fr.mescourses.core.catalog.Course>, count: Int, wishes: MenuWishes,
+        exclude: Set<String> = emptySet(), seed: Int? = null, fallbackWords: String = "",
+    ): List<Candidate> {
+        if (count <= 0) return emptyList()
+        val date = today()
+        val cookbook = recipes.all()
+        val past = MenuHistory(history.all(), cookbook, date)
+        val index = CookbookIndex(cookbook)
+        val excluded = exclude.map(RecipeSites::normalize).toSet()
+        local()?.let { store ->
+            val query = CatalogQuery(courses = courses, limit = LOCAL_FETCH, seed = seed, month = date.monthValue)
+            val found = fromCatalog(store, query, wishes, past, date, index, excluded)
+                .ifEmpty { fromCatalog(store, query.copy(month = null), wishes, past, date, index, excluded) }
+            // Un tirage varié : on mélange les mieux notées au lieu de toujours prendre les mêmes.
+            val picked = perSite(found.take(count * 6).shuffled(kotlin.random.Random(seed ?: 0)), 2).take(count)
+            if (picked.size >= count) return picked
+            if (picked.isNotEmpty()) return picked
+        }
+        if (fallbackWords.isBlank()) return emptyList()
+        val (lists, _) = searchAll(listOf(fallbackWords)) {}
+        val hits = lists.flatten()
+            .filter { RecipeSites.normalize(it.url) !in excluded && !index.isBanned(it.title) && !past.eatenRecently(it.title, it.url) }
+            .distinctBy { RecipeSites.normalize(it.url) }
+            .take(count * 3)
+        return import(hits, wishes.copy(time = CookingTime.LONG), past, date, index) {}.take(count)
     }
 
     /** Recherche à la demande (outil du LLM, « autre recette ») : quelques candidates pour des mots donnés. */

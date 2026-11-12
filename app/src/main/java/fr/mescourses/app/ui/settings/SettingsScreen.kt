@@ -223,7 +223,9 @@ fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStor
                 SectionHeader("Mon foyer", emoji = "👨‍👩‍👧")
                 PillStepper("🧑", "Adultes par repas", s.householdSize, { n -> vm.update { it.copy(householdSize = n.coerceIn(0, 20)) } })
                 PillStepper("🧒", "Enfants par repas", s.children, { n -> vm.update { it.copy(children = n.coerceIn(0, 20)) } })
-                PillStepper("🍽", "Repas par menu", s.meals, { n -> vm.update { it.copy(meals = n.coerceIn(1, 21)) } }, min = 1, max = 21)
+                PillStepper("🥗", "Entrées par menu", s.starters, { n -> vm.update { it.copy(starters = n.coerceIn(0, 21)) } }, min = 0, max = 21)
+                PillStepper("🍽", "Plats par menu", s.meals, { n -> vm.update { it.copy(meals = n.coerceIn(1, 21)) } }, min = 1, max = 21)
+                PillStepper("🍰", "Desserts par menu", s.desserts, { n -> vm.update { it.copy(desserts = n.coerceIn(0, 21)) } }, min = 0, max = 21)
                 Text("Portion d'un enfant : ${(s.childFactor * 100).toInt()} % d'une portion adulte", style = MaterialTheme.typography.bodyMedium)
                 Slider(
                     value = s.childFactor.toFloat(),
