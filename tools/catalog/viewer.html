@@ -64,6 +64,11 @@
   a.key { color: var(--accent); cursor: pointer; text-decoration: none; border-bottom: 1px dotted; }
   .line { display: flex; gap: 6px; align-items: baseline; }
   .line .tag { flex: none; }
+  .chip { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; padding: 2px 8px; margin: 2px 2px 2px 0; border-radius: 99px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--text); cursor: pointer; white-space: nowrap; }
+  .mergebar.hidden { display: none; }
+  .chip.weak { border-style: dashed; background: transparent; }
+  .chip.done { cursor: default; border-color: var(--line); }
+  .mergebar { margin-top: 6px; padding: 6px; border-radius: 8px; background: var(--accent-soft); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
   .pager { display: flex; gap: 8px; align-items: center; justify-content: center; }
   .pager button { margin: 8px 0; }
 </style>
@@ -153,12 +158,17 @@
 
     <!-- ====== Vue ingrédients ====== -->
     <div id="view-ingredients" class="hidden">
-      <p class="muted">Rapproche chaque <b>ligne d'ingrédient écrite par le site</b> de l'<b>ingrédient reconnu pour les courses</b> (la « clé »).
-        La correspondance ligne → clé est refaite ici de façon approchée : une clé est attribuée à une ligne quand tous ses mots s'y trouvent.
-        Tes décisions sont gardées dans ce navigateur et s'<b>exportent en JSON</b> pour alimenter la logique.</p>
+      <p class="muted"><b>Principe :</b> chaque ligne d'ingrédient écrite par un site (« 400 g de morceaux de poulet ») reçoit une <b>clé</b> (« poulet »).
+        Une seule clé par produit : la clé sert à l'application à regrouper la liste de courses, à reconnaître ce qui est dans ton placard et à chercher le produit.
+        Le texte d'origine de la recette n'est jamais modifié.</p>
+      <ul class="muted" style="margin:4px 0 10px">
+        <li><b>Ingrédients reconnus</b> : contrôle les clés. Coche les <b>clés proches</b> qui sont le même produit, puis « Regrouper » : elles ne forment plus qu'une clé.</li>
+        <li><b>Lignes sans clé</b> : donne-leur une clé (proposée automatiquement, à corriger si besoin).</li>
+        <li>Le <b>rayon</b> et le <b>terme de recherche drive</b> sont calculés comme dans l'application (« Auto ») ; modifie-les seulement si nécessaire.</li>
+      </ul>
       <div class="bar">
         <button class="small" data-mode="keys" id="mode-keys">Ingrédients reconnus</button>
-        <button class="small ghost" data-mode="lines" id="mode-lines">Lignes non reconnues</button>
+        <button class="small ghost" data-mode="lines" id="mode-lines">Lignes sans clé</button>
         <span class="muted" id="ing-status"></span>
       </div>
       <fieldset><legend>Filtres</legend><div class="filters">
@@ -166,16 +176,16 @@
         <label>Site<select id="isite"></select></label>
         <label>Présent dans au moins N recettes<input id="imin" type="number" min="1" value="1"></label>
         <label>Décision<select id="idec"><option value="">Toutes</option><option value="none">Non traitées</option><option value="any">Traitées</option>
-          <option value="ok">OK</option><option value="alias">Regrouper</option><option value="staple">Placard</option><option value="ignore">Ignorer</option><option value="split">À découper</option></select></label>
-        <label>Rayon<select id="irayon"></select></label>
-        <label id="lbl-near">Particularité<select id="ispecial"><option value="">—</option><option value="near">A des clés proches (à regrouper ?)</option><option value="multi">Plusieurs variantes d'écriture</option><option value="short">Clé d'un seul mot court (≤ 3 lettres)</option></select></label>
-        <label>Tri<select id="isort"><option value="n">Plus fréquents</option><option value="a">Alphabétique</option><option value="v">Plus de variantes</option></select></label>
+          <option value="ok">Validées</option><option value="split">À découper</option><option value="ignore">Ignorées</option></select></label>
+        <label id="lbl-rayon">Rayon<select id="irayon"></select></label>
+        <label id="lbl-near">Particularité<select id="ispecial"><option value="">—</option><option value="near">A des clés proches (à regrouper ?)</option><option value="multi">Plusieurs écritures différentes</option><option value="short">Clé d'un seul mot court (≤ 3 lettres)</option></select></label>
+        <label>Tri<select id="isort"><option value="n">Plus fréquents</option><option value="a">Alphabétique</option><option value="v">Plus d'écritures</option></select></label>
       </div></fieldset>
       <div class="bar">
-        <button class="small" id="exp-json">Exporter les décisions (JSON)</button>
+        <button class="small" id="exp-json">Exporter (JSON)</button>
         <button class="small ghost" id="exp-csv">Exporter (CSV)</button>
         <label class="small ghost" style="display:inline-flex;cursor:pointer;border:1px solid var(--line);border-radius:8px;padding:6px 12px;flex-direction:row">Importer…<input id="imp" type="file" accept=".json" style="display:none"></label>
-        <button class="small ghost" id="clear-dec">Effacer les décisions</button>
+        <button class="small ghost" id="clear-dec">Tout effacer</button>
         <span class="muted" id="dec-count"></span>
       </div>
       <div id="icount"></div>
@@ -194,7 +204,7 @@ const MEALS = new Set(['PLAT', 'SOUPE', 'SALADE']);
 const PAGE = 60;
 
 const $ = id => document.getElementById(id);
-const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/œ/g, 'oe').replace(/æ/g, 'ae');
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const nb = n => n.toLocaleString('fr-FR');
 
@@ -321,7 +331,7 @@ function prepare() {
   options($('isite'), 'Tous', sites.map(s => [s, s]));
   options($('course'), 'Tous', Object.entries(COURSES));
   options($('month'), 'Toute l\'année', MONTHS.map((m, i) => [i + 1, m]));
-  options($('irayon'), 'Tous', RAYONS.map(r => [r, r]));
+  options($('irayon'), 'Tous', AISLES.map(r => [r, r]));
   fill('dl-category', [...new Set(all.map(e => e.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr')));
   fill('dl-produce', [...new Set(all.flatMap(e => e.produce))].sort());
   const allKeys = new Set(); all.forEach(e => e.keys.forEach(k => allKeys.add(k)));
@@ -374,8 +384,8 @@ function apply() {
     tri(meal, MEALS.has(e.course)) && tri(balanced, e.balanced) && tri(image, e.imageUrl) &&
     (!cat || norm(e.category ?? '').includes(cat)) &&
     (!produce || e.produce.some(p => norm(p).includes(produce))) &&
-    (!withKey || e.keys.some(k => k === withKey || k.includes(withKey))) &&
-    (!withoutKey || !e.keys.some(k => k === withoutKey || k.includes(withoutKey))) &&
+    (!withKey || e.keys.some(k => { const r = resolve(k); return r === withKey || r.includes(withKey) || k.includes(withKey); })) &&
+    (!withoutKey || !e.keys.some(k => { const r = resolve(k); return r === withoutKey || r.includes(withoutKey) || k.includes(withoutKey); })) &&
     inRange(e.months.length, ...r.months) && inRange(e.ratingCount ?? 0, ...r.votes) && inRange(e.minutes, ...r.total) &&
     inRange(e.prepMinutes, ...r.prep) && inRange(e.cookMinutes, ...r.cook) && inRange(e.servings, ...r.serv) &&
     inRange(e.ingredients.length, ...r.ing) && inRange(e.keys.length, ...r.keys) &&
@@ -414,7 +424,7 @@ function card(e) {
   const season = e.months.length === 12 ? 'toute l\'année' : e.months.length ? e.months.map(m => MONTHS[m - 1].slice(0, 4)).join(', ') : 'jamais (un produit est toujours hors saison)';
   const img = $('images').checked && e.imageUrl
     ? `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(e.imageUrl)}" alt="">` : '<div class="noimg"></div>';
-  const lines = matchLines(e).map(l => `<li><div class="line">${l.key ? `<span class="tag">${esc(l.key)}</span>` : '<span class="tag warn">non reconnu</span>'}<span>${esc(l.raw)}</span></div></li>`).join('');
+  const lines = matchLines(e).map(l => `<li><div class="line">${lineKey(l) ? `<span class="tag">${esc(lineKey(l))}</span>` : '<span class="tag warn">sans clé</span>'}<span>${esc(l.raw)}</span></div></li>`).join('');
   return `<div class="card">${img}<div class="body">
     <a href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">${esc(e.title)}</a>
     <div class="muted" style="font-size:12px">${esc(e.siteId)}${e.category ? ' · ' + esc(e.category) : ''}${e.lastmod ? ' · ' + esc(e.lastmod.slice(0, 10)) : ''}</div>
@@ -434,64 +444,139 @@ function render() {
 
 /* ---------- Vue ingrédients & mapping ---------- */
 
-const RAYONS = ['Fruits et légumes', 'Boucherie / volaille', 'Poissonnerie', 'Crèmerie / œufs', 'Épicerie salée', 'Épicerie sucrée', 'Boulangerie', 'Surgelés', 'Boissons', 'Placard (déjà chez moi)', 'Autre'];
-const STATUS = [['', '—'], ['ok', 'OK'], ['alias', 'Regrouper vers…'], ['staple', 'Placard'], ['ignore', 'Ignorer'], ['split', 'À découper']];
-const LS = 'mes-courses-mapping-v1';
-let ing = null;            // { keys: Map, lines: Map }
+/* Les trois fonctions suivantes reprennent la logique actuelle de l'application (FoodName.clean, CartPlanner.searchQuery, Aisle.of)
+   pour proposer le rayon et le terme de recherche « Auto ». */
+
+const keyOf = s => wordsOf(s).join(' ');
+const keyS = s => s.toLowerCase().normalize('NFD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+
+const F_LEADING = /^(?:quelques|quelque|un peu de|un peu d['’]|un|une|des|du|de la|de l['’]|de|d['’]|la|le|les|l['’]|morceaux?|brins?|branches?|tiges?|tranches?|gousses?|t[eê]tes?|feuilles?|bottes?|bouquets?|pinc[ée]es?|zestes?|jus|filets?|blancs?|pav[ée]s?|dés|cubes?|lamelles?|rondelles?|bo[iî]tes?|pots?|sachets?|poign[ée]es?|bols?|verres?|noisettes?|noix|cuill[eè]res?|cuiller[ée]es?|c\.? ?[àa] ?(?:soupe|caf[ée]|s|c)\.?|unit[ée]s?|pi[eè]ces?|petits?|petites?|gros|grosses?|beaux?|belles?)\s+/i;
+const F_QUAL = /(?<!\p{L})(?:fra[iî]ch(?:e|es)?|frais|bio|biologiques?|h[aâ]ch[ée]e?s?|[ée]minc[ée]e?s?|cisel[ée]e?s?|pel[ée]e?s?|[ée]pluch[ée]e?s?|[ée]goutt[ée]e?s?|finement|grossi[eè]rement|coup[ée]e?s?|en (?:d[ée]s|morceaux|rondelles|lamelles|cubes|tranches|julienne|quartiers|bâtonnets|batonnets|fines? tranches)|du moulin|de saison|[àa] temp[ée]rature ambiante|au go[uû]t|selon (?:le|votre) go[uû]t|facultatif)(?!\p{L})/giu;
+const F_PREP = /(?<!\p{L})(?:bien\s+)?(?:[ée]miett[ée]e?s?|r[âa]p[ée]e?s?|fondus?|mix[ée]e?s?|[ée]cras[ée]e?s?|concass[ée]e?s?|effil[ée]e?s?|torr[ée]fi[ée]e?s?|grill[ée]e?s?|d[ée]noyaut[ée]e?s?|[ée]p[ée]pin[ée]e?s?|[ée]gren[ée]e?s?|ramollie?s?|battue?s?|tamis[ée]e?s?|ti[èe]des?|froide?s?|chaude?s?|m[ûu]re?s?|moyens?|moyennes?|enti[èe]re?s?|tranch[ée]e?s?|par[ée]e?s?|d[ée]soss[ée]e?s?|d[ée]cortiqu[ée]e?s?|[ée]queut[ée]e?s?|lav[ée]e?s?|d[ée]congel[ée]e?s?|r[ée]hydrat[ée]e?s?|cuite?s? al dente|taill[ée]e?s?|pr[ée]cuite?s?|de taille moyenne|sans (?:peau|ar[êe]tes?|os|noyaux?|p[ée]pins?)|avec (?:la )?peau|non trait[ée]e?s?|[àa] (?:la|le) (?:d[ée]coration|d[ée]co)|environ|bien|tr[èe]s)(?!\p{L})/giu;
+const F_PRODUCTS = ['fromage rape', 'gruyere rape', 'emmental rape', 'comte rape', 'parmesan rape', 'mozzarella rapee', 'chocolat fondu', 'fromage fondu', 'puree',
+  'noix de coco rapee', 'amandes effilees', 'amande effilee', 'jambon cuit', 'pois casses', 'tomates concassees', 'tomate concassee', 'chair a saucisse'];
+
+function cleanFood(name) {
+  let s = name.replace(/\s*\([^)]*\)/g, ' ').split(',')[0].trim();
+  s = s.split(/\s+(?:pour|ou|\+|afin)\s+|\s*\+\s*|\s*\/\s*/i)[0].trim();
+  let prev;
+  do { prev = s; s = s.replace(F_LEADING, '').trim(); } while (s !== prev && s);
+  s = s.replace(F_QUAL, ' ');
+  if (!F_PRODUCTS.some(p => keyS(s).startsWith(p))) s = s.replace(F_PREP, ' ');
+  s = s.replace(/\s+(?:et|ou|de|d['’])\s*$/, '').replace(/\s+/g, ' ').trim().replace(/^[ ,.;-]+|[ ,.;-]+$/g, '');
+  return s || name.trim();
+}
+
+const isEgg = s => keyOf(s).split(' ').includes('oeuf');
+function searchQuery(name) {
+  let q = cleanFood(name).replace(/(?<!\p{L})(?:frais|fraîche|fraiches|fraîches|bio|émincé|émincée|haché|hachée|en dés|râpé|râpée)(?!\p{L})/giu, ' ').replace(/\s+/g, ' ').trim() || name;
+  return isEgg(q) ? 'oeufs x12' : q;
+}
+// Clé d'ingrédient : même règle que IngredientOverlap.key.
+const ingredientKey = name => keyOf(name).replace(/\b(bio|frais|fraiche|fraiches|gros|grosse|petit|petite|epaisse|liquide|entier|entiere)\b/g, ' ').replace(/\s+/g, ' ').trim();
+
+const AISLES = ['Fruits & légumes', 'Boulangerie', 'Boucherie', 'Poissonnerie', 'Crèmerie & œufs', 'Épicerie', 'Boissons', 'Hygiène & maison', 'Autres'];
+const AISLE_WORDS = [
+  ['Hygiène & maison', 'lessive|papier toilette|essuie tout|savon|shampo|dentifrice|eponge|liquide vaisselle|sac poubelle|couche|mouchoir|gel douche|deodorant'],
+  ['Boissons', 'jus|eau gazeuse|eau minerale|biere|vin|sirop|soda|cafe|the'],
+  ['Poissonnerie', 'saumon|cabillaud|colin|merlu|lieu|thon frais|sardine|maquereau|truite|dorade|crevette|moule|poisson|saint jacque'],
+  ['Boucherie', 'poulet|dinde|boeuf|veau|porc|agneau|canard|lapin|jambon|lardon|saucisse|viande|steak|escalope|magret|chorizo|bacon'],
+  ['Crèmerie & œufs', 'lait|creme|beurre|fromage|comte|parmesan|chevre|feta|mozzarella|ricotta|emmental|gruyere|yaourt|skyr|oeuf|mascarpone|reblochon|tofu'],
+  ['Boulangerie', 'pain|baguette|brioche|pate brisee|pate feuilletee|pate a pizza|tortilla|wrap'],
+  ['Fruits & légumes', 'carotte|courgette|poireau|chou|epinard|tomate|brocoli|haricot vert|poivron|aubergine|champignon|salade|laitue|potiron|potimarron|butternut|courge|navet|panais|betterave|fenouil|celeri|endive|blette|radis|concombre|artichaut|asperge|mache|roquette|pomme de terre|patate douce|oignon|echalote|ail|persil|coriandre|basilic|ciboulette|menthe|thym|romarin|gingembre|citron|orange|pomme|poire|banane|kiwi|fraise|framboise|raisin|clementine|avocat|mangue|abricot|peche|prune|cerise|melon|legume|fruit'],
+  ['Épicerie', 'lait de coco|riz|pate|spaghetti|farine|sucre|sel|poivre|huile|vinaigre|lentille|pois chiche|haricot|semoule|couscous|boulgour|quinoa|conserve|bouillon|epice|cumin|curry|paprika|moutarde|miel|chocolat|levure|noix|amande|noisette|olive|sauce|concentre|coulis|flocon|cereale|biscuit|confiture'],
+].map(([label, words]) => [label, words.split('|').map(w => ' ' + keyOf(w) + ' ')]);
+function aisleOf(name) {
+  const k = ' ' + keyOf(name) + ' ';
+  let best = null;
+  for (const [label, kws] of AISLE_WORDS) for (const w of kws) {
+    const pos = k.indexOf(w);
+    if (pos < 0) continue;
+    if (!best || pos < best.pos || (pos === best.pos && w.length > best.len)) best = { pos, len: w.length, label };
+  }
+  return best ? best.label : 'Autres';
+}
+
+const STATUS = [['', '—'], ['ok', 'Validé'], ['split', 'À découper'], ['ignore', 'Ignorer']];
+const LS = 'mes-courses-mapping-v2';
+const STOP = new Set(['de', 'du', 'des', 'la', 'le', 'les', 'au', 'aux', 'et', 'en', 'a', 'd', 'l']);
+let ing = null;            // { keys: Map, lines: Map, counts: Map }
 let mode = 'keys', ipage = 0;
 const IPAGE = 100;
-let decisions = {};
-try { decisions = JSON.parse(localStorage.getItem(LS) || '{}'); } catch { decisions = {}; }
-const saveDec = () => { try { localStorage.setItem(LS, JSON.stringify(decisions)); } catch { /* stockage indisponible */ } $('dec-count').textContent = nb(Object.keys(decisions).length) + ' décision(s) enregistrée(s)'; };
-const decOf = (type, text) => decisions[type + ':' + text] ?? {};
+let dec = { merges: {}, keys: {}, lines: {} };  // regroupements (ancienne clé → clé gardée), réglages par clé, lignes sans clé
+try { const s = JSON.parse(localStorage.getItem(LS) || 'null'); if (s) dec = { merges: s.merges ?? {}, keys: s.keys ?? {}, lines: s.lines ?? {} }; } catch { /* rien d'enregistré */ }
+const nDec = () => Object.keys(dec.merges).length + Object.keys(dec.keys).length + Object.keys(dec.lines).length;
+const saveDec = () => { try { localStorage.setItem(LS, JSON.stringify(dec)); } catch { /* stockage indisponible */ } $('dec-count').textContent = nb(nDec()) + ' décision(s) enregistrée(s)'; };
+function resolve(k) { for (let i = 0; i < 50 && dec.merges[k]; i++) k = dec.merges[k]; return k; }
+const lineKey = l => l.key ? resolve(l.key) : (dec.lines[l.variant]?.key ? resolve(dec.lines[l.variant].key) : null);
 
 function analyse() {
   if (ing) return;
-  const keys = new Map(), lines = new Map();
-  for (const e of all) {
-    for (const l of matchLines(e)) {
-      const bag = l.key ? keys : lines;
-      const id = l.key ?? l.variant;
-      let o = bag.get(id);
-      if (!o) bag.set(id, o = { id, n: 0, sites: new Map(), variants: new Map(), sample: e });
-      o.n++;
-      o.sites.set(e.siteId, (o.sites.get(e.siteId) ?? 0) + 1);
-      o.variants.set(l.variant, (o.variants.get(l.variant) ?? 0) + 1);
-    }
+  const keys = new Map(), lines = new Map(), counts = new Map();
+  const add = (bag, id, l, e) => {
+    let o = bag.get(id);
+    if (!o) bag.set(id, o = { id, n: 0, sites: new Map(), variants: new Map(), sample: e });
+    o.n++;
+    o.sites.set(e.siteId, (o.sites.get(e.siteId) ?? 0) + 1);
+    o.variants.set(l.variant, (o.variants.get(l.variant) ?? 0) + 1);
+  };
+  for (const e of all) for (const l of matchLines(e)) {
+    counts.set(l.variant, (counts.get(l.variant) ?? 0) + 1);
+    const k = lineKey(l);
+    if (k) add(keys, k, l, e); else add(lines, l.variant, l, e);
   }
-  // Clés proches : une clé contenue, mot entier, dans une autre (« crème » / « crème liquide »).
-  const byWord = new Map();
-  keys.forEach(o => wordsOfKey(o.id).forEach(w => { (byWord.get(w) ?? byWord.set(w, []).get(w)).push(o.id); }));
+  // Clés proches : l'une contient l'autre (« poulet » / « poulet rôti »), ou même premier mot (« crème fraîche » / « crème liquide »).
+  const byWord = new Map(), byFirst = new Map();
+  const words = id => wordsOfKey(id).filter(w => !STOP.has(w));
   keys.forEach(o => {
-    const w = wordsOfKey(o.id);
-    const cands = byWord.get(w[0]) ?? [];
-    o.near = cands.filter(c => c !== o.id && (c.startsWith(o.id + ' ') || o.id.startsWith(c + ' ') || (' ' + c + ' ').includes(' ' + o.id + ' ') || (' ' + o.id + ' ').includes(' ' + c + ' '))).slice(0, 8);
+    const w = words(o.id);
+    w.forEach(x => (byWord.get(x) ?? byWord.set(x, []).get(x)).push(o.id));
+    if (w[0]) (byFirst.get(w[0]) ?? byFirst.set(w[0], []).get(w[0])).push(o.id);
   });
-  ing = { keys, lines };
+  keys.forEach(o => {
+    const w = words(o.id), strong = new Set(), weak = new Set();
+    const pad = ' ' + o.id + ' ';
+    w.forEach(x => (byWord.get(x) ?? []).forEach(c => { if (c !== o.id && (' ' + c + ' ').includes(pad) || (c !== o.id && pad.includes(' ' + c + ' '))) strong.add(c); }));
+    (byFirst.get(w[0]) ?? []).forEach(c => { if (c !== o.id && !strong.has(c)) weak.add(c); });
+    const byN = (a, b) => keys.get(b).n - keys.get(a).n;
+    o.near = [...[...strong].sort(byN).map(k => ({ k, strong: true })), ...[...weak].sort(byN).map(k => ({ k, strong: false }))].slice(0, 12);
+  });
+  ing = { keys, lines, counts };
 }
 
 function showIngredients() {
   analyse();
   const total = [...ing.lines.values()].reduce((a, o) => a + o.n, 0), ok = [...ing.keys.values()].reduce((a, o) => a + o.n, 0);
-  $('ing-status').textContent = `${nb(ing.keys.size)} ingrédients reconnus (${nb(ok)} lignes) · ${nb(ing.lines.size)} écritures non reconnues (${nb(total)} lignes, ${Math.round(100 * total / Math.max(1, total + ok))} %)`;
+  $('ing-status').textContent = `${nb(ing.keys.size)} clés (${nb(ok)} lignes) · ${nb(ing.lines.size)} écritures sans clé (${nb(total)} lignes, ${Math.round(100 * total / Math.max(1, total + ok))} %)`;
   $('lbl-near').classList.toggle('hidden', mode !== 'keys');
+  $('lbl-rayon').classList.toggle('hidden', mode !== 'keys');
   renderIng();
+}
+
+/** Valeurs « Auto » reprises de l'application : nom nettoyé de l'écriture la plus fréquente, rayon et recherche drive. */
+function autoOf(o) {
+  if (o._auto) return o._auto;
+  const top = [...o.variants].sort((a, b) => b[1] - a[1])[0]?.[0] ?? o.id;
+  const name = cleanFood(top) || o.id;
+  return o._auto = { rayon: aisleOf(name), search: searchQuery(name) };
 }
 
 function filteredIng() {
   const words = norm($('iq').value).split(/\s+/).filter(Boolean);
-  const site = $('isite').value, min = +$('imin').value || 1, dec = $('idec').value, rayon = $('irayon').value, special = mode === 'keys' ? $('ispecial').value : '';
-  const type = mode === 'keys' ? 'k' : 'l';
-  let list = [...(mode === 'keys' ? ing.keys : ing.lines).values()].filter(o => {
+  const site = $('isite').value, min = +$('imin').value || 1, filter = $('idec').value, rayon = $('irayon').value, special = mode === 'keys' ? $('ispecial').value : '';
+  const store = mode === 'keys' ? dec.keys : dec.lines;
+  const list = [...(mode === 'keys' ? ing.keys : ing.lines).values()].filter(o => {
     const n = site ? (o.sites.get(site) ?? 0) : o.n;
     if (n < min || (site && !n)) return false;
     if (words.length && !words.every(w => norm(o.id + ' ' + [...o.variants.keys()].join(' ')).includes(w))) return false;
-    const d = decOf(type, o.id);
-    if (dec === 'none' ? d.status : dec === 'any' ? !d.status : dec ? d.status !== dec : false) return false;
-    if (rayon && d.rayon !== rayon) return false;
-    if (special === 'near' && !o.near.length) return false;
-    if (special === 'multi' && o.variants.size < 2) return false;
-    if (special === 'short' && !(o.id.length <= 3 && !o.id.includes(' '))) return false;
+    const status = store[o.id]?.status;
+    if (filter === 'none' ? status : filter === 'any' ? !status : filter ? status !== filter : false) return false;
+    if (mode === 'keys') {
+      if (rayon && (dec.keys[o.id]?.rayon || autoOf(o).rayon) !== rayon) return false;
+      if (special === 'near' && !o.near.length) return false;
+      if (special === 'multi' && o.variants.size < 2) return false;
+      if (special === 'short' && !(o.id.length <= 3 && !o.id.includes(' '))) return false;
+    }
     return true;
   });
   const by = { n: (a, b) => b.n - a.n, a: (a, b) => a.id.localeCompare(b.id, 'fr'), v: (a, b) => b.variants.size - a.variants.size || b.n - a.n }[$('isort').value];
@@ -499,44 +584,92 @@ function filteredIng() {
 }
 
 function renderIng() {
-  const type = mode === 'keys' ? 'k' : 'l';
   const list = filteredIng();
   const pages = Math.max(1, Math.ceil(list.length / IPAGE));
   ipage = Math.min(ipage, pages - 1);
-  $('icount').textContent = nb(list.length) + (mode === 'keys' ? ' ingrédients reconnus' : ' écritures non reconnues');
+  $('icount').textContent = nb(list.length) + (mode === 'keys' ? ' clés' : ' écritures sans clé');
   $('ipage').textContent = `Page ${ipage + 1} / ${pages}`;
   $('iprev').disabled = ipage === 0; $('inext').disabled = ipage >= pages - 1;
   const head = mode === 'keys'
-    ? '<tr><th>Ingrédient reconnu (clé)</th><th>Recettes</th><th>Sites</th><th>Écritures vues dans les recettes</th><th>Clés proches</th><th>Décision</th></tr>'
-    : '<tr><th>Écriture non reconnue (sans quantité)</th><th>Lignes</th><th>Sites</th><th>Exemple</th><th>Décision</th></tr>';
-  const rows = list.slice(ipage * IPAGE, (ipage + 1) * IPAGE).map(o => {
-    const d = decOf(type, o.id);
-    const sites = [...o.sites].sort((a, b) => b[1] - a[1]).map(([s, n]) => `${esc(s)} ${nb(n)}`).join('<br>');
-    const decision = `<div style="display:grid;gap:4px;min-width:200px" data-id="${esc(o.id)}" data-type="${type}">
-      <select data-f="status">${STATUS.map(([v, l]) => `<option value="${v}"${d.status === v || (!d.status && !v) ? ' selected' : ''}>${l}</option>`).join('')}</select>
-      <input type="text" data-f="target" placeholder="${mode === 'keys' ? 'Clé cible (si regrouper)' : 'Clé cible ou nouvel ingrédient'}" value="${esc(d.target ?? '')}" list="dl-keys">
-      <select data-f="rayon"><option value="">Rayon…</option>${RAYONS.map(r => `<option${d.rayon === r ? ' selected' : ''}>${esc(r)}</option>`).join('')}</select>
-      <input type="text" data-f="search" placeholder="Terme de recherche drive" value="${esc(d.search ?? '')}">
-      <input type="text" data-f="note" placeholder="Note" value="${esc(d.note ?? '')}"></div>`;
-    if (mode === 'keys') {
-      const variants = [...o.variants].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([v, n]) => `${esc(v)} <span class="muted">×${nb(n)}</span>`).join('<br>') +
-        (o.variants.size > 8 ? `<br><span class="muted">… ${o.variants.size - 8} autres</span>` : '');
-      const near = o.near.map(k => `<a class="key" data-goto-key="${esc(k)}">${esc(k)}</a>`).join(', ');
-      return `<tr class="${d.status ? 'done' : ''}"><td><a class="key" data-goto-key="${esc(o.id)}" title="Voir les recettes">${esc(o.id)}</a></td><td class="n">${nb(o.n)}</td><td>${sites}</td><td>${variants}</td><td>${near || '<span class="muted">—</span>'}</td><td>${decision}</td></tr>`;
-    }
-    return `<tr class="${d.status ? 'done' : ''}"><td>${esc(o.id)}</td><td class="n">${nb(o.n)}</td><td>${sites}</td>` +
-      `<td><a href="${esc(o.sample.url)}" target="_blank" rel="noopener noreferrer">${esc(o.sample.title)}</a></td><td>${decision}</td></tr>`;
-  });
+    ? '<tr><th>Clé</th><th>Recettes</th><th>Comment les sites l\'écrivent</th><th>Clés proches — coche celles à regrouper</th><th>Rayon</th><th>Terme de recherche drive</th><th>Statut</th></tr>'
+    : '<tr><th>Écriture sans clé (quantité retirée)</th><th>Lignes</th><th>Exemple</th><th>Clé à lui donner</th></tr>';
+  const rows = list.slice(ipage * IPAGE, (ipage + 1) * IPAGE).map(o => mode === 'keys' ? keyRow(o) : lineRow(o));
   $('itable').innerHTML = head + rows.join('');
 }
 
-function exportRows() {
+function keyRow(o) {
+  const d = dec.keys[o.id] ?? {}, a = autoOf(o);
+  const sites = [...o.sites].sort((x, y) => y[1] - x[1]).map(([s, n]) => `${esc(s)} ${nb(n)}`).join(' · ');
+  const variants = [...o.variants].sort((x, y) => y[1] - x[1]).slice(0, 8).map(([v, n]) => `${esc(v)} <span class="muted">×${nb(n)}</span>`).join('<br>') +
+    (o.variants.size > 8 ? `<br><span class="muted">… ${o.variants.size - 8} autres</span>` : '');
+  const merged = Object.keys(dec.merges).filter(f => resolve(f) === o.id).map(f => `<span class="chip done">${esc(f)} <a class="key" data-unmerge="${esc(f)}" title="Défaire ce regroupement">✕</a></span>`).join(' ');
+  const chips = o.near.map(({ k, strong }) => `<label class="chip${strong ? '' : ' weak'}" title="${strong ? 'contient ou est contenue' : 'même premier mot'}"><input type="checkbox" data-near="${esc(k)}" data-n="${ing.keys.get(k).n}"> ${esc(k)} <span class="muted">${nb(ing.keys.get(k).n)}</span></label>`).join(' ');
+  const near = (chips || '<span class="muted">aucune</span>') +
+    `<div class="mergebar hidden"><span>Garder la clé</span> <select data-keep></select> <button class="small" data-merge type="button">Regrouper</button></div>` +
+    (merged ? `<div style="margin-top:4px">Déjà regroupées ici : ${merged}</div>` : '');
+  return `<tr class="${d.status ? 'done' : ''}" data-id="${esc(o.id)}" data-n="${o.n}">
+    <td><a class="key" data-goto-key="${esc(o.id)}" title="Voir les recettes">${esc(o.id)}</a></td>
+    <td class="n">${nb(o.n)}<div class="muted" style="font-size:11px;white-space:normal">${sites}</div></td>
+    <td>${variants}</td>
+    <td data-near-cell>${near}</td>
+    <td><select data-f="rayon"><option value="">Auto : ${esc(a.rayon)}</option>${AISLES.map(r => `<option${d.rayon === r ? ' selected' : ''}>${esc(r)}</option>`).join('')}</select></td>
+    <td><input type="text" data-f="search" placeholder="${esc(a.search)}" value="${esc(d.search ?? '')}"></td>
+    <td><select data-f="status">${STATUS.map(([v, l]) => `<option value="${v}"${(d.status ?? '') === v ? ' selected' : ''}>${l}</option>`).join('')}</select></td></tr>`;
+}
+
+function lineRow(o) {
+  const d = dec.lines[o.id] ?? {};
+  const proposal = ingredientKey(cleanFood(o.id));
+  const sites = [...o.sites].sort((x, y) => y[1] - x[1]).map(([s, n]) => `${esc(s)} ${nb(n)}`).join(' · ');
+  const control = d.status === 'ignore'
+    ? `<span class="muted">Ignorée (pas un ingrédient)</span> <button class="small ghost" data-undo-line type="button">Annuler</button>`
+    : `<input type="text" data-line-key list="dl-keys" value="${esc(proposal)}" placeholder="clé">
+       <span class="muted" data-line-hint></span>
+       <div style="margin-top:4px"><button class="small" data-assign type="button">Donner cette clé</button> <button class="small ghost" data-ignore-line type="button">Ce n'est pas un ingrédient</button></div>`;
+  return `<tr class="${d.status ? 'done' : ''}" data-line="${esc(o.id)}"><td>${esc(o.id)}</td><td class="n">${nb(o.n)}<div class="muted" style="font-size:11px;white-space:normal">${sites}</div></td>` +
+    `<td><a href="${esc(o.sample.url)}" target="_blank" rel="noopener noreferrer">${esc(o.sample.title)}</a></td><td>${control}</td></tr>`;
+}
+
+/** Cases cochées parmi les clés proches : affiche la barre « Regrouper » avec la clé la plus fréquente pré-sélectionnée. */
+function refreshMerge(cell) {
+  const tr = cell.closest('tr');
+  const picked = [...cell.querySelectorAll('[data-near]:checked')];
+  const bar = cell.querySelector('.mergebar');
+  bar.classList.toggle('hidden', !picked.length);
+  if (!picked.length) return;
+  const group = [{ k: tr.dataset.id, n: +tr.dataset.n }, ...picked.map(c => ({ k: c.dataset.near, n: +c.dataset.n }))];
+  const sel = bar.querySelector('[data-keep]'), keep = sel.value;
+  sel.innerHTML = group.map(g => `<option value="${esc(g.k)}">${esc(g.k)} (${nb(g.n)})</option>`).join('');
+  sel.value = group.some(g => g.k === keep) ? keep : group.reduce((a, b) => b.n > a.n ? b : a).k;
+  bar.querySelector('[data-merge]').textContent = `Regrouper ces ${group.length} clés`;
+}
+
+function mergeKeys(cell) {
+  const tr = cell.closest('tr');
+  const group = [tr.dataset.id, ...[...cell.querySelectorAll('[data-near]:checked')].map(c => c.dataset.near)];
+  const keep = cell.querySelector('[data-keep]').value;
+  for (const k of group) {
+    if (k === keep) continue;
+    dec.merges[k] = keep;
+    for (const m of Object.keys(dec.merges)) if (dec.merges[m] === k) dec.merges[m] = keep; // aplatit les regroupements déjà faits
+    delete dec.keys[k];                                                                         // la clé gardée garde ses réglages
+  }
+  saveDec(); ing = null; showIngredients();
+}
+
+function exportData() {
   analyse();
-  return Object.entries(decisions).filter(([, d]) => d.status || d.target || d.rayon || d.search || d.note).map(([k, d]) => {
-    const [type, ...rest] = k.split(':'); const text = rest.join(':');
-    const o = (type === 'k' ? ing.keys : ing.lines).get(text);
-    return { type: type === 'k' ? 'key' : 'line', text, status: d.status ?? '', target: d.target ?? '', rayon: d.rayon ?? '', search: d.search ?? '', note: d.note ?? '', recipes: o?.n ?? 0 };
-  }).sort((a, b) => b.recipes - a.recipes);
+  const keyN = k => ing.keys.get(k)?.n ?? 0;
+  return {
+    version: 2, exportedAt: new Date().toISOString(),
+    // Regroupements : toute ligne dont la clé est « from » reçoit la clé « to ».
+    merges: Object.keys(dec.merges).map(from => ({ from, to: resolve(from) })),
+    // Réglages par clé : seulement ce qui diffère du calcul automatique de l'application.
+    keys: Object.entries(dec.keys).filter(([, d]) => d.status || d.rayon || d.search)
+      .map(([key, d]) => ({ key, status: d.status || null, rayon: d.rayon || null, search: d.search || null, recipes: keyN(key) })).sort((a, b) => b.recipes - a.recipes),
+    // Lignes sans clé : clé à leur donner, ou « ignore » (pas un ingrédient).
+    lines: Object.entries(dec.lines).map(([text, d]) => ({ text, key: d.key ? resolve(d.key) : null, status: d.status || null, count: ing.counts.get(text) ?? 0 })).sort((a, b) => b.count - a.count),
+  };
 }
 function download(name, type, content) {
   const a = document.createElement('a');
@@ -581,34 +714,65 @@ $('iprev').addEventListener('click', () => { ipage--; renderIng(); });
 $('inext').addEventListener('click', () => { ipage++; renderIng(); });
 
 $('itable').addEventListener('change', ev => {
-  const box = ev.target.closest('[data-id]'); if (!box) return;
-  const k = box.dataset.type + ':' + box.dataset.id;
-  const d = decisions[k] ?? (decisions[k] = {});
-  d[ev.target.dataset.f] = ev.target.value;
-  if (!Object.values(d).some(Boolean)) delete decisions[k];
+  const t = ev.target;
+  if (t.matches('[data-near]')) return refreshMerge(t.closest('[data-near-cell]'));
+  const tr = t.closest('tr[data-id]');
+  if (!tr || !t.dataset.f) return;
+  const d = dec.keys[tr.dataset.id] ?? (dec.keys[tr.dataset.id] = {});
+  d[t.dataset.f] = t.value.trim();
+  if (!Object.values(d).some(Boolean)) delete dec.keys[tr.dataset.id];
   saveDec();
-  if (ev.target.dataset.f === 'status') ev.target.closest('tr').classList.toggle('done', !!ev.target.value);
+  if (t.dataset.f === 'status') tr.classList.toggle('done', !!t.value);
+});
+$('itable').addEventListener('input', ev => {
+  const t = ev.target, tr = t.closest('tr[data-line]');
+  if (!tr || !t.matches('[data-line-key]')) return;
+  const k = ingredientKey(t.value);
+  tr.querySelector('[data-line-hint]').textContent = !k ? '' : ing.keys.has(resolve(k)) ? 'clé existante' : 'nouvelle clé';
 });
 $('itable').addEventListener('click', ev => {
-  const a = ev.target.closest('[data-goto-key]'); if (!a) return;
-  $('withKey').value = a.dataset.gotoKey; tab('recipes'); apply(); window.scrollTo({ top: 0, behavior: 'smooth' });
+  const t = ev.target;
+  const go = t.closest('[data-goto-key]');
+  if (go) { $('withKey').value = go.dataset.gotoKey; tab('recipes'); apply(); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+  const un = t.closest('[data-unmerge]');
+  if (un) { delete dec.merges[un.dataset.unmerge]; saveDec(); ing = null; showIngredients(); return; }
+  if (t.closest('[data-merge]')) return mergeKeys(t.closest('[data-near-cell]'));
+  const tr = t.closest('tr[data-line]');
+  if (!tr) return;
+  const line = tr.dataset.line;
+  if (t.closest('[data-assign]')) {
+    const k = ingredientKey(tr.querySelector('[data-line-key]').value);
+    if (!k) return;
+    dec.lines[line] = { key: k };
+    saveDec(); ing = null; showIngredients();
+  } else if (t.closest('[data-ignore-line]')) { dec.lines[line] = { status: 'ignore' }; saveDec(); renderIng(); }
+  else if (t.closest('[data-undo-line]')) { delete dec.lines[line]; saveDec(); renderIng(); }
 });
-$('exp-json').addEventListener('click', () => download('mapping-ingredients.json', 'application/json',
-  JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), decisions: exportRows() }, null, 2)));
+// Au clavier : Entrée dans le champ de clé = « Donner cette clé ».
+$('itable').addEventListener('keydown', ev => { if (ev.key === 'Enter' && ev.target.matches('[data-line-key]')) ev.target.closest('tr').querySelector('[data-assign]').click(); });
+
+$('exp-json').addEventListener('click', () => download('mapping-ingredients.json', 'application/json', JSON.stringify(exportData(), null, 2)));
 $('exp-csv').addEventListener('click', () => {
-  const cols = ['type', 'text', 'status', 'target', 'rayon', 'search', 'note', 'recipes'];
-  const q = v => '"' + String(v).replace(/"/g, '""') + '"';
-  download('mapping-ingredients.csv', 'text/csv', '﻿' + cols.join(';') + '\n' + exportRows().map(r => cols.map(c => q(r[c])).join(';')).join('\n'));
+  const x = exportData(), q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  const rows = [
+    ...x.merges.map(m => ['regroupement', m.from, m.to, '', '', '', '']),
+    ...x.keys.map(k => ['clé', k.key, '', k.status, k.rayon, k.search, k.recipes]),
+    ...x.lines.map(l => ['ligne', l.text, l.key, l.status, '', '', l.count]),
+  ];
+  download('mapping-ingredients.csv', 'text/csv', '﻿' + ['type', 'texte', 'clé cible', 'statut', 'rayon', 'recherche drive', 'nombre'].join(';') + '\n' + rows.map(r => r.map(q).join(';')).join('\n'));
 });
 $('imp').addEventListener('change', async ev => {
   try {
     const data = JSON.parse(await ev.target.files[0].text());
-    (data.decisions ?? []).forEach(r => { decisions[(r.type === 'key' ? 'k' : 'l') + ':' + r.text] = { status: r.status, target: r.target, rayon: r.rayon, search: r.search, note: r.note }; });
-    saveDec(); renderIng();
+    if (data.version !== 2) throw new Error('format non reconnu (attendu : export de cette page, version 2)');
+    (data.merges ?? []).forEach(m => { dec.merges[m.from] = m.to; });
+    (data.keys ?? []).forEach(k => { dec.keys[k.key] = { status: k.status ?? '', rayon: k.rayon ?? '', search: k.search ?? '' }; });
+    (data.lines ?? []).forEach(l => { dec.lines[l.text] = { key: l.key ?? undefined, status: l.status ?? undefined }; });
+    saveDec(); ing = null; showIngredients();
   } catch (err) { alert('Fichier illisible : ' + err.message); }
   ev.target.value = '';
 });
-$('clear-dec').addEventListener('click', () => { if (confirm('Effacer toutes les décisions enregistrées dans ce navigateur ?')) { decisions = {}; saveDec(); renderIng(); } });
+$('clear-dec').addEventListener('click', () => { if (confirm('Effacer tous les regroupements et réglages enregistrés dans ce navigateur ?')) { dec = { merges: {}, keys: {}, lines: {} }; saveDec(); ing = null; showIngredients(); } });
 
 $('file').addEventListener('change', e => load([...e.target.files]));
 const drop = $('drop');

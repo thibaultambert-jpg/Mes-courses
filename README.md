@@ -85,8 +85,8 @@ les sites » de Découvrir garde la recherche en ligne en complément.
 - **Contrôle** : ouvrir `tools/catalog/viewer.html` dans un navigateur et y déposer `catalogue-complet.gz` (toutes les bases en un
   seul fichier, ajouté à la release « catalogue » à chaque publication), ou les fichiers par site (ou l'archive .zip
   téléchargée depuis GitHub) : recherche, tous les filtres de la base (durées, notes, saison, ingrédients, dates…), fiches à contrôler, tableau par site ;
-  onglet **Ingrédients & mapping** : ingrédients reconnus pour les courses, lignes non reconnues, décisions (regrouper, placard, rayon,
-  terme de recherche drive) exportables en JSON/CSV.
+  onglet **Ingrédients & mapping** : une clé par produit ; regroupement en un clic des clés proches, clé à donner aux lignes
+  sans clé, rayon et terme de recherche drive calculés comme dans l'appli (modifiables) ; export JSON/CSV.
 - **Mise à jour hebdomadaire** : le workflow « Catalogue — mise à jour hebdomadaire » (`catalog-weekly.yml`, chaque dimanche, ou
   « Run workflow ») repart des bases déjà publiées, ne lit que les fiches nouvelles ou modifiées de chaque site, republie la
   release « catalogue » (bases `<site>.jsonl.gz`, état de lecture `<site>.seen.tsv.gz`, `version.txt`), puis relance « Build APK »
