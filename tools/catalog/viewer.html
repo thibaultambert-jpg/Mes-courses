@@ -510,48 +510,97 @@ const saveDec = () => { try { localStorage.setItem(LS, JSON.stringify(dec)); } c
 function resolve(k) { for (let i = 0; i < 50 && dec.merges[k]; i++) k = dec.merges[k]; return k; }
 const lineKey = l => l.key ? resolve(l.key) : (dec.lines[l.variant]?.key ? resolve(dec.lines[l.variant].key) : null);
 
+let analysing = null;
+const tick = () => new Promise(r => setTimeout(r));
+
+/** Agrège les lignes de toutes les recettes par clé. Fait par morceaux pour que la page reste réactive. */
 function analyse() {
-  if (ing) return;
-  const keys = new Map(), lines = new Map(), counts = new Map();
-  const add = (bag, id, l, e) => {
-    let o = bag.get(id);
-    if (!o) bag.set(id, o = { id, n: 0, sites: new Map(), variants: new Map(), sample: e });
-    o.n++;
-    o.sites.set(e.siteId, (o.sites.get(e.siteId) ?? 0) + 1);
-    o.variants.set(l.variant, (o.variants.get(l.variant) ?? 0) + 1);
-  };
-  for (const e of all) for (const l of matchLines(e)) {
-    counts.set(l.variant, (counts.get(l.variant) ?? 0) + 1);
-    const k = lineKey(l);
-    if (k) add(keys, k, l, e); else add(lines, l.variant, l, e);
-  }
-  // Clés proches : l'une contient l'autre (« poulet » / « poulet rôti »), ou même premier mot (« crème fraîche » / « crème liquide »).
-  const byWord = new Map(), byFirst = new Map();
-  const words = id => wordsOfKey(id).filter(w => !STOP.has(w));
-  keys.forEach(o => {
-    const w = words(o.id);
-    w.forEach(x => (byWord.get(x) ?? byWord.set(x, []).get(x)).push(o.id));
-    if (w[0]) (byFirst.get(w[0]) ?? byFirst.set(w[0], []).get(w[0])).push(o.id);
-  });
-  keys.forEach(o => {
-    const w = words(o.id), strong = new Set(), weak = new Set();
-    const pad = ' ' + o.id + ' ';
-    w.forEach(x => (byWord.get(x) ?? []).forEach(c => { if (c !== o.id && (' ' + c + ' ').includes(pad) || (c !== o.id && pad.includes(' ' + c + ' '))) strong.add(c); }));
-    (byFirst.get(w[0]) ?? []).forEach(c => { if (c !== o.id && !strong.has(c)) weak.add(c); });
-    const byN = (a, b) => keys.get(b).n - keys.get(a).n;
-    o.near = [...[...strong].sort(byN).map(k => ({ k, strong: true })), ...[...weak].sort(byN).map(k => ({ k, strong: false }))].slice(0, 12);
-  });
-  ing = { keys, lines, counts };
+  if (ing) return Promise.resolve();
+  if (analysing) return analysing;
+  analysing = (async () => {
+    const keys = new Map(), lines = new Map(), counts = new Map();
+    const add = (bag, id, l, e) => {
+      let o = bag.get(id);
+      if (!o) bag.set(id, o = { id, n: 0, sites: new Map(), variants: new Map(), sample: e });
+      o.n++;
+      o.sites.set(e.siteId, (o.sites.get(e.siteId) ?? 0) + 1);
+      o.variants.set(l.variant, (o.variants.get(l.variant) ?? 0) + 1);
+    };
+    let t = performance.now();
+    for (let i = 0; i < all.length; i++) {
+      const e = all[i];
+      for (const l of matchLines(e)) {
+        counts.set(l.variant, (counts.get(l.variant) ?? 0) + 1);
+        const k = lineKey(l);
+        if (k) add(keys, k, l, e); else add(lines, l.variant, l, e);
+      }
+      if (performance.now() - t > 40) {
+        $('ing-status').textContent = `Analyse des ingrédients… ${Math.round(100 * i / all.length)} %`;
+        await tick(); t = performance.now();
+      }
+    }
+    ing = { keys, lines, counts, byWord: new Map(), byFirst: new Map() };
+    keys.forEach(indexKey);
+  })();
+  const done = analysing;
+  done.finally(() => { analysing = null; });
+  return done;
 }
 
-function showIngredients() {
-  analyse();
+const nearWords = id => wordsOfKey(id).filter(w => !STOP.has(w));
+/** Index « mot → clés » : sert à trouver les clés proches sans comparer toutes les clés entre elles. */
+function indexKey(o) {
+  const w = nearWords(o.id);
+  w.forEach(x => (ing.byWord.get(x) ?? ing.byWord.set(x, []).get(x)).push(o.id));
+  if (w[0]) (ing.byFirst.get(w[0]) ?? ing.byFirst.set(w[0], []).get(w[0])).push(o.id);
+}
+
+/** Clés proches : l'une contient l'autre (« poulet » / « poulet rôti »), ou même premier mot (« crème fraîche » / « crème liquide »).
+ *  Calculé à la demande (lignes affichées) et gardé ; après un regroupement, les clés disparues sont remplacées par la clé gardée. */
+function nearOf(o) {
+  if (o._near) {
+    const seen = new Set([o.id]), out = [];
+    for (const n of o._near) { const k = resolve(n.k); if (!seen.has(k) && ing.keys.has(k)) { seen.add(k); out.push({ k, strong: n.strong }); } }
+    return o._near = out;
+  }
+  const ws = wordsOfKey(o.id), w = nearWords(o.id), strong = new Set(), weak = new Set(), pad = ' ' + o.id + ' ';
+  // Clés contenues dans celle-ci : on teste chaque groupe de mots consécutifs.
+  for (let i = 0; i < ws.length; i++) for (let j = i + 1; j <= ws.length; j++) {
+    const c = ws.slice(i, j).join(' ');
+    if (c !== o.id && ing.keys.has(c)) strong.add(c);
+  }
+  // Clés qui contiennent celle-ci : on part du mot le plus rare, pour ne comparer qu'une courte liste.
+  const rare = w.map(x => ing.byWord.get(x) ?? []).sort((x, y) => x.length - y.length)[0] ?? [];
+  rare.forEach(c => { if (c !== o.id && ing.keys.has(c) && (' ' + c + ' ').includes(pad)) strong.add(c); });
+  (ing.byFirst.get(w[0]) ?? []).forEach(c => { if (c !== o.id && ing.keys.has(c) && !strong.has(c)) weak.add(c); });
+  const byN = (a, b) => ing.keys.get(b).n - ing.keys.get(a).n;
+  return o._near = [...[...strong].sort(byN).map(k => ({ k, strong: true })), ...[...weak].sort(byN).map(k => ({ k, strong: false }))].slice(0, 12);
+}
+
+/** Ajoute les lignes de `from` à `to` (regroupement de deux clés, ou ligne sans clé qui reçoit une clé). */
+function fold(from, to) {
+  to.n += from.n;
+  from.sites.forEach((v, s) => to.sites.set(s, (to.sites.get(s) ?? 0) + v));
+  from.variants.forEach((v, x) => to.variants.set(x, (to.variants.get(x) ?? 0) + v));
+  to._auto = null; to._near = null;
+}
+
+function updateStatus() {
   const total = [...ing.lines.values()].reduce((a, o) => a + o.n, 0), ok = [...ing.keys.values()].reduce((a, o) => a + o.n, 0);
   $('ing-status').textContent = `${nb(ing.keys.size)} clés (${nb(ok)} lignes) · ${nb(ing.lines.size)} écritures sans clé (${nb(total)} lignes, ${Math.round(100 * total / Math.max(1, total + ok))} %)`;
+}
+
+async function showIngredients() {
+  if (!ing) $('ing-status').textContent = 'Analyse des ingrédients…';
+  await analyse();
+  updateStatus();
   $('lbl-near').classList.toggle('hidden', mode !== 'keys');
   $('lbl-rayon').classList.toggle('hidden', mode !== 'keys');
   renderIng();
 }
+
+/** Après un changement qui défait un regroupement : recalcul complet, mais par morceaux. */
+function reanalyse() { ing = null; return showIngredients(); }
 
 /** Valeurs « Auto » reprises de l'application : nom nettoyé de l'écriture la plus fréquente, rayon et recherche drive. */
 function autoOf(o) {
@@ -573,7 +622,7 @@ function filteredIng() {
     if (filter === 'none' ? status : filter === 'any' ? !status : filter ? status !== filter : false) return false;
     if (mode === 'keys') {
       if (rayon && (dec.keys[o.id]?.rayon || autoOf(o).rayon) !== rayon) return false;
-      if (special === 'near' && !o.near.length) return false;
+      if (special === 'near' && !nearOf(o).length) return false;
       if (special === 'multi' && o.variants.size < 2) return false;
       if (special === 'short' && !(o.id.length <= 3 && !o.id.includes(' '))) return false;
     }
@@ -603,7 +652,7 @@ function keyRow(o) {
   const variants = [...o.variants].sort((x, y) => y[1] - x[1]).slice(0, 8).map(([v, n]) => `${esc(v)} <span class="muted">×${nb(n)}</span>`).join('<br>') +
     (o.variants.size > 8 ? `<br><span class="muted">… ${o.variants.size - 8} autres</span>` : '');
   const merged = Object.keys(dec.merges).filter(f => resolve(f) === o.id).map(f => `<span class="chip done">${esc(f)} <a class="key" data-unmerge="${esc(f)}" title="Défaire ce regroupement">✕</a></span>`).join(' ');
-  const chips = o.near.map(({ k, strong }) => `<label class="chip${strong ? '' : ' weak'}" title="${strong ? 'contient ou est contenue' : 'même premier mot'}"><input type="checkbox" data-near="${esc(k)}" data-n="${ing.keys.get(k).n}"> ${esc(k)} <span class="muted">${nb(ing.keys.get(k).n)}</span></label>`).join(' ');
+  const chips = nearOf(o).map(({ k, strong }) => `<label class="chip${strong ? '' : ' weak'}" title="${strong ? 'contient ou est contenue' : 'même premier mot'}"><input type="checkbox" data-near="${esc(k)}" data-n="${ing.keys.get(k).n}"> ${esc(k)} <span class="muted">${nb(ing.keys.get(k).n)}</span></label>`).join(' ');
   const near = (chips || '<span class="muted">aucune</span>') +
     `<div class="mergebar hidden"><span>Garder la clé</span> <select data-keep></select> <button class="small" data-merge type="button">Regrouper</button></div>` +
     (merged ? `<div style="margin-top:4px">Déjà regroupées ici : ${merged}</div>` : '');
@@ -647,18 +696,20 @@ function refreshMerge(cell) {
 function mergeKeys(cell) {
   const tr = cell.closest('tr');
   const group = [tr.dataset.id, ...[...cell.querySelectorAll('[data-near]:checked')].map(c => c.dataset.near)];
-  const keep = cell.querySelector('[data-keep]').value;
+  const keep = cell.querySelector('[data-keep]').value, target = ing.keys.get(keep);
   for (const k of group) {
     if (k === keep) continue;
     dec.merges[k] = keep;
     for (const m of Object.keys(dec.merges)) if (dec.merges[m] === k) dec.merges[m] = keep; // aplatit les regroupements déjà faits
     delete dec.keys[k];                                                                         // la clé gardée garde ses réglages
+    const from = ing.keys.get(k);
+    if (from) { fold(from, target); ing.keys.delete(k); }
   }
-  saveDec(); ing = null; showIngredients();
+  saveDec(); updateStatus(); renderIng();
 }
 
-function exportData() {
-  analyse();
+async function exportData() {
+  await analyse();
   const keyN = k => ing.keys.get(k)?.n ?? 0;
   return {
     version: 2, exportedAt: new Date().toISOString(),
@@ -735,7 +786,7 @@ $('itable').addEventListener('click', ev => {
   const go = t.closest('[data-goto-key]');
   if (go) { $('withKey').value = go.dataset.gotoKey; tab('recipes'); apply(); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
   const un = t.closest('[data-unmerge]');
-  if (un) { delete dec.merges[un.dataset.unmerge]; saveDec(); ing = null; showIngredients(); return; }
+  if (un) { delete dec.merges[un.dataset.unmerge]; saveDec(); reanalyse(); return; }
   if (t.closest('[data-merge]')) return mergeKeys(t.closest('[data-near-cell]'));
   const tr = t.closest('tr[data-line]');
   if (!tr) return;
@@ -744,16 +795,20 @@ $('itable').addEventListener('click', ev => {
     const k = ingredientKey(tr.querySelector('[data-line-key]').value);
     if (!k) return;
     dec.lines[line] = { key: k };
-    saveDec(); ing = null; showIngredients();
+    const from = ing.lines.get(line), rk = resolve(k);
+    let target = ing.keys.get(rk);
+    if (!target) { target = { id: rk, n: 0, sites: new Map(), variants: new Map(), sample: from.sample }; ing.keys.set(rk, target); indexKey(target); }
+    fold(from, target); ing.lines.delete(line);
+    saveDec(); updateStatus(); renderIng();
   } else if (t.closest('[data-ignore-line]')) { dec.lines[line] = { status: 'ignore' }; saveDec(); renderIng(); }
   else if (t.closest('[data-undo-line]')) { delete dec.lines[line]; saveDec(); renderIng(); }
 });
 // Au clavier : Entrée dans le champ de clé = « Donner cette clé ».
 $('itable').addEventListener('keydown', ev => { if (ev.key === 'Enter' && ev.target.matches('[data-line-key]')) ev.target.closest('tr').querySelector('[data-assign]').click(); });
 
-$('exp-json').addEventListener('click', () => download('mapping-ingredients.json', 'application/json', JSON.stringify(exportData(), null, 2)));
-$('exp-csv').addEventListener('click', () => {
-  const x = exportData(), q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+$('exp-json').addEventListener('click', async () => download('mapping-ingredients.json', 'application/json', JSON.stringify(await exportData(), null, 2)));
+$('exp-csv').addEventListener('click', async () => {
+  const x = await exportData(), q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
   const rows = [
     ...x.merges.map(m => ['regroupement', m.from, m.to, '', '', '', '']),
     ...x.keys.map(k => ['clé', k.key, '', k.status, k.rayon, k.search, k.recipes]),
@@ -768,11 +823,11 @@ $('imp').addEventListener('change', async ev => {
     (data.merges ?? []).forEach(m => { dec.merges[m.from] = m.to; });
     (data.keys ?? []).forEach(k => { dec.keys[k.key] = { status: k.status ?? '', rayon: k.rayon ?? '', search: k.search ?? '' }; });
     (data.lines ?? []).forEach(l => { dec.lines[l.text] = { key: l.key ?? undefined, status: l.status ?? undefined }; });
-    saveDec(); ing = null; showIngredients();
+    saveDec(); reanalyse();
   } catch (err) { alert('Fichier illisible : ' + err.message); }
   ev.target.value = '';
 });
-$('clear-dec').addEventListener('click', () => { if (confirm('Effacer tous les regroupements et réglages enregistrés dans ce navigateur ?')) { dec = { merges: {}, keys: {}, lines: {} }; saveDec(); ing = null; showIngredients(); } });
+$('clear-dec').addEventListener('click', () => { if (confirm('Effacer tous les regroupements et réglages enregistrés dans ce navigateur ?')) { dec = { merges: {}, keys: {}, lines: {} }; saveDec(); reanalyse(); } });
 
 $('file').addEventListener('change', e => load([...e.target.files]));
 const drop = $('drop');
