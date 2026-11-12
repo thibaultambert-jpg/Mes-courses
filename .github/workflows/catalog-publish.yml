@@ -71,3 +71,13 @@ jobs:
               --notes "Fichiers du catalogue embarqués dans l'appli à la compilation (un par site, sans étapes ni images)."
           fi
           gh release upload catalogue catalog/*.jsonl.gz catalog/version.txt --clobber
+
+      # Un seul fichier pour le viewer (tools/catalog/viewer.html). Volontairement pas en « .jsonl.gz » :
+      # l'appli et l'APK prennent chaque *.jsonl.gz de la release pour la base d'un site.
+      - name: Catalogue complet
+        run: |
+          mkdir -p all
+          gh release download catalogue --repo "$GITHUB_REPOSITORY" --dir all --pattern '*.jsonl.gz' --clobber
+          zcat all/*.jsonl.gz | gzip -9 > catalogue-complet.gz
+          ls -la catalogue-complet.gz
+          gh release upload catalogue catalogue-complet.gz --clobber
