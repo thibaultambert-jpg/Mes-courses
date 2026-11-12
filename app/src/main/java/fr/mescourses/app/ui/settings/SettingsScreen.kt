@@ -349,6 +349,28 @@ fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStor
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            val update by vm.c.appUpdater.status.collectAsStateWithLifecycle()
+            SectionCard {
+                SectionHeader("Mise à jour de l'appli", emoji = "⬆️")
+                Text(
+                    if (update.updateAvailable) "Nouvelle version disponible (build ${update.available}, installée : ${update.installed})."
+                    else "Version installée : build ${update.installed}.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                (update.working ?: update.message)?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (update.working != null) LinearProgressIndicator(Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (update.updateAvailable) Button(onClick = { vm.c.appUpdater.install() }, enabled = update.working == null) { Text("Mettre à jour") }
+                    OutlinedButton(onClick = { vm.c.appUpdater.checkNow() }, enabled = update.working == null) { Text("Chercher une mise à jour") }
+                }
+                Text(
+                    "Les données (livre de recettes, réglages, modèle) sont conservées. Android demande une confirmation avant d'installer.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             testResult?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
             Text(
                 "Mes courses · version 0.3",

@@ -119,6 +119,8 @@ class AppContainer(context: Context) {
         Room.databaseBuilder(context, CatalogDatabase::class.java, "catalogue.db").fallbackToDestructiveMigration(true).build().dao(),
     )
     val catalogSync = CatalogSync(context.applicationContext, catalog, appScope, http).also { it.start() }
+    /** Mise à jour de l'appli elle-même (release « appli » du dépôt). */
+    val appUpdater = fr.mescourses.app.data.AppUpdater(context.applicationContext, appScope, http).also { it.start() }
 
     // --- LLM local ---
     private val llm: LlmEngine = LiteRtLmEngine(context)
