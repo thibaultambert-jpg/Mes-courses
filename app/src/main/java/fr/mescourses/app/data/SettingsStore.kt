@@ -27,7 +27,10 @@ data class Settings(
     /** Adultes par défaut pour chaque repas. */
     val householdSize: Int = 2,
     val children: Int = 0,
+    /** Plats par menu ; les entrées et desserts s'ajoutent à côté. */
     val meals: Int = 5,
+    val starters: Int = 0,
+    val desserts: Int = 0,
     /** Part d'un enfant par rapport à un adulte (0,5 = demi-portion). */
     val childFactor: Double = 0.5,
     val preferOrganic: Boolean = true,
@@ -117,6 +120,8 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
         val household = intPreferencesKey("household")
         val children = intPreferencesKey("children")
         val meals = intPreferencesKey("meals")
+        val starters = intPreferencesKey("starters")
+        val desserts = intPreferencesKey("desserts")
         val childFactor = androidx.datastore.preferences.core.doublePreferencesKey("child_factor")
         val organic = booleanPreferencesKey("prefer_organic")
         val preferences = stringPreferencesKey("preferences")
@@ -148,6 +153,8 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
         householdSize = this[K.household] ?: 2,
         children = this[K.children] ?: 0,
         meals = this[K.meals] ?: 5,
+        starters = this[K.starters] ?: 0,
+        desserts = this[K.desserts] ?: 0,
         childFactor = this[K.childFactor] ?: 0.5,
         preferOrganic = this[K.organic] ?: true,
         preferences = this[K.preferences].orEmpty(),
@@ -187,6 +194,8 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
             prefs[K.household] = s.householdSize
             prefs[K.children] = s.children
             prefs[K.meals] = s.meals
+            prefs[K.starters] = s.starters
+            prefs[K.desserts] = s.desserts
             prefs[K.childFactor] = s.childFactor
             prefs[K.organic] = s.preferOrganic
             prefs[K.preferences] = s.preferences

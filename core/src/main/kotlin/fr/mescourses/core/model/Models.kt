@@ -74,7 +74,12 @@ data class MenuDish(
     val totalMinutes: Int? = null,
     /** Recette créée par le chef (LLM) à la demande de l'utilisateur. */
     val invented: Boolean = false,
-)
+    /** Place dans le repas : [fr.mescourses.core.catalog.Course.ENTREE] ou DESSERT ; null = plat principal. */
+    val course: fr.mescourses.core.catalog.Course? = null,
+) {
+    /** Plat principal (ni entrée ni dessert). */
+    val isMain: Boolean get() = course == null
+}
 
 /** Un plat d'un menu validé, gardé pour varier les semaines suivantes (jamais effacé avec le menu). */
 @Serializable
