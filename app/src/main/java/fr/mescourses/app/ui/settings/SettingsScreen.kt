@@ -129,7 +129,7 @@ class SettingsViewModel(val c: AppContainer) : ViewModel() {
 }
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStore: (Retailer) -> Unit, onDebug: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStore: (Retailer) -> Unit, onDebug: () -> Unit, onOpenCatalog: () -> Unit) {
     val vm = containerViewModel { SettingsViewModel(it) }
     // État de connexion juste dès l'ouverture, sans attendre une comparaison des prix.
     DisposableEffect(Unit) {
@@ -319,10 +319,12 @@ fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStor
             }
             val catalog by vm.c.catalogSync.status.collectAsStateWithLifecycle()
             SectionCard {
-                SectionHeader("Catalogue de recettes", emoji = "📚")
+                SectionHeader("Bases de recettes", emoji = "📚")
                 Text(
-                    if (catalog.count == 0) "Vide pour l'instant : Découvrir et le menu cherchent sur les sites."
-                    else "%,d recettes enregistrées sur le téléphone. Découvrir et le menu y cherchent sans réseau.".format(java.util.Locale.FRANCE, catalog.count),
+                    if (catalog.count == 0) "Aucune base téléchargée : Découvrir et le menu cherchent sur les sites."
+                    else "%,d recettes sur le téléphone (%d base%s). Découvrir et le menu y cherchent sans réseau.".format(
+                        java.util.Locale.FRANCE, catalog.count, catalog.installed.size, if (catalog.installed.size > 1) "s" else "",
+                    ),
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 if (catalog.bySite.isNotEmpty()) Text(
@@ -342,9 +344,10 @@ fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStor
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (catalog.working != null) LinearProgressIndicator(Modifier.fillMaxWidth())
-                OutlinedButton(onClick = { vm.c.catalogSync.updateNow() }, enabled = catalog.working == null) { Text("Chercher les nouveautés maintenant") }
+                Button(onClick = onOpenCatalog) { Text("Choisir les bases à télécharger") }
+                OutlinedButton(onClick = { vm.c.catalogSync.updateNow() }, enabled = catalog.working == null && catalog.installed.isNotEmpty()) { Text("Chercher les nouveautés maintenant") }
                 Text(
-                    "Les nouveautés sont cherchées toutes seules, une fois par jour à l'ouverture de l'appli (hors données mobiles).",
+                    "Les nouveautés des bases téléchargées sont cherchées toutes seules, une fois par jour à l'ouverture de l'appli (hors données mobiles).",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

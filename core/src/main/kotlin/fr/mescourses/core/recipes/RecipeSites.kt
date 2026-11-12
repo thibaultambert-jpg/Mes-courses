@@ -100,13 +100,6 @@ object RecipeSites {
             browseUrl = "https://chefsimon.com/recettes/tag/plat%20principal",
         ),
         RecipeSite(
-            id = "elle", name = "Elle à table", domain = "elle.fr",
-            homeUrl = "https://www.elle.fr/Elle-a-Table/Recettes-de-cuisine",
-            // Fiches recettes seulement (« …/Gratin-dauphinois-2971574 »), pas les pages de catégories.
-            recipeUrl = Regex("""elle\.fr/Elle-a-Table/Recettes-de-cuisine/(.+/)?[^/]+-\d+$"""),
-            browseUrl = "https://www.elle.fr/Elle-a-Table/Recettes-de-cuisine",
-        ),
-        RecipeSite(
             id = "hellofresh", name = "HelloFresh", domain = "hellofresh.fr",
             homeUrl = "https://www.hellofresh.fr/recipes",
             recipeUrl = Regex("""hellofresh\.fr/recipes/[^/]+-[0-9a-f]{24}$"""),
@@ -115,8 +108,8 @@ object RecipeSites {
         RecipeSite(
             id = "picnic", name = "Picnic", domain = "picnic.app",
             homeUrl = "https://picnic.app/fr/recettes/",
-            // Forme exacte inconnue : la détection de la recette dans la page (schema.org) prend le relais.
-            recipeUrl = Regex("""picnic\.app/fr/recettes?/[^/]+/[^/]+$"""),
+            // « …/fr/recettes/<identifiant à 24 caractères>/<nom> » (relevé dans le sitemap des recettes).
+            recipeUrl = Regex("""picnic\.app/fr/recettes/[0-9a-f]{24}/[^/]+$"""),
             browseUrl = "https://picnic.app/fr/recettes/",
         ),
         RecipeSite(

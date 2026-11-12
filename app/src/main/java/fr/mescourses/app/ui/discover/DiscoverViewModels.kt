@@ -102,10 +102,21 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
     /** Tous les sites connus, proposés dans les filtres (catalogue local ; recherche en ligne pour ceux qui l'ont). */
     val allSitesList: List<RecipeSite> = RecipeSites.all
     /** Nombre de recettes du catalogue local par site, affiché dans les filtres. */
-    val catalogCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val catalogStatus: StateFlow<fr.mescourses.app.data.CatalogStatus> = c.catalogSync.status
+    val catalogCounts: StateFlow<Map<String, Int>> = c.catalogSync.status
+        .map { it.bySite }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    /** Ce site a une base de recettes téléchargeable (sinon il ne se cherche qu'en ligne). */
+    fun hasCatalog(siteId: String) = fr.mescourses.core.catalog.CatalogSources.byId(siteId) != null
 
     init {
-        viewModelScope.launch { runCatching { c.catalog.countBySite() }.onSuccess { catalogCounts.value = it } }
+        // Une base supprimée ne reste pas cochée dans les filtres.
+        viewModelScope.launch {
+            c.catalogSync.status.collect { st ->
+                if (st.loaded) sites.value = sites.value.filter { !hasCatalog(it) || it in st.installed }.toSet()
+            }
+        }
     }
 
     /** Sites à interroger en ligne : ceux choisis, sinon tous ceux qui ont une recherche. */

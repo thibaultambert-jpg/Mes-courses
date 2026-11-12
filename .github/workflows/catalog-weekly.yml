@@ -1,0 +1,113 @@
+name: Catalogue — mise à jour hebdomadaire
+
+# Chaque semaine : relit les fiches nouvelles ou modifiées de chaque site à partir des bases déjà publiées (release « catalogue »),
+# republie les bases, puis relance la compilation de l'appli pour que l'APK embarque les bases à jour.
+# Les bases publiées sont aussi celles que l'appli télécharge (écran « Bases de recettes »).
+# Les déclencheurs planifiés ne tournent que sur la branche par défaut (main).
+on:
+  schedule:
+    - cron: "17 2 * * 0" # dimanche, 02 h 17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: catalogue-hebdo
+  cancel-in-progress: false
+
+jobs:
+  maj:
+    name: ${{ matrix.site }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        site: [cuisineaz, ptitchef, marmiton, chefsimon, hellofresh, jow, jdf, 750g, cuisineactuelle, cuisineaddict, picnic]
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Point de départ : la base publiée du site, et l'état de lecture (pages déjà vues, dont celles sans recette) s'il existe.
+      # Sans base publiée, rien à mettre à jour : la première collecte se lance à part (workflow « Catalogue de recettes »).
+      - name: Reprendre la base publiée
+        id: base
+        run: |
+          mkdir -p catalog
+          if ! gh release download catalogue --repo "$GITHUB_REPOSITORY" --dir catalog --pattern "${{ matrix.site }}.jsonl.gz" --pattern "${{ matrix.site }}.seen.tsv.gz" --clobber; then
+            echo "Pas de base publiée pour ${{ matrix.site }} : site ignoré."
+            echo "ok=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          gunzip -f catalog/*.gz
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+          wc -l catalog/${{ matrix.site }}.jsonl
+
+      - name: Lecture des nouveautés
+        if: steps.base.outputs.ok == 'true'
+        run: |
+          set -o pipefail
+          ./gradlew -q -p tools/catalog run --args="build --site ${{ matrix.site }} --out $PWD/catalog --minutes 320" | tee pass.log
+          tail -3 pass.log >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.base.outputs.ok == 'true'
+        with:
+          name: hebdo-${{ matrix.site }}
+          path: |
+            catalog/${{ matrix.site }}.jsonl
+            catalog/${{ matrix.site }}.seen.tsv
+          retention-days: 3
+
+  publier:
+    needs: maj
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hebdo-*
+          path: parts
+          merge-multiple: false
+
+      - name: Rassembler
+        run: |
+          mkdir -p catalog
+          for dir in parts/hebdo-*; do
+            site="${dir#parts/hebdo-}"
+            [ -s "$dir/$site.jsonl" ] || continue
+            cp "$dir"/* catalog/
+          done
+          ls catalog/*.jsonl > /dev/null 2>&1 || { echo "Aucune base mise à jour : rien à publier."; exit 1; }
+          ./gradlew -q -p tools/catalog run --args="stats --out $PWD/catalog" | tee -a "$GITHUB_STEP_SUMMARY"
+          gzip -9 -f catalog/*.jsonl catalog/*.seen.tsv
+          date -u +%Y-%m-%dT%H:%M:%SZ > catalog/version.txt
+          ls -la catalog
+
+      # Seuls les sites relus sont remplacés ; les autres bases de la release restent telles quelles.
+      - name: Release « catalogue »
+        run: |
+          if ! gh release view catalogue >/dev/null 2>&1; then
+            gh release create catalogue --target "$GITHUB_SHA" --title "Catalogue de recettes" \
+              --notes "Bases de recettes (une par site, sans étapes ni images) : téléchargées par l'appli et embarquées dans l'APK."
+          fi
+          gh release upload catalogue catalog/*.jsonl.gz catalog/*.seen.tsv.gz catalog/version.txt --clobber
+
+      # L'APK embarque les bases à la compilation : on la relance (sur main, elle publie aussi la mise à jour de l'appli).
+      - name: Recompiler l'appli
+        run: gh workflow run android.yml --ref "${{ github.event.repository.default_branch }}"

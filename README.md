@@ -57,7 +57,7 @@ Toutes passent par l'interface `RetailerBackend` (`core/.../cart/RetailerBackend
 ### Sites de recettes
 
 L'import lit la fiche `schema.org/Recipe` que les sites publient pour Google ; il marche donc sur la plupart des sites
-(Marmiton, 750g, Cuisine AZ, Journal des Femmes, Cuisine Actuelle, Ptitchef, Chef Simon, Elle à table,
+(Marmiton, 750g, Cuisine AZ, Journal des Femmes, Cuisine Actuelle, Ptitchef, Chef Simon,
 HelloFresh, blogs WordPress…). La **recherche intégrée** (onglet Découvrir) couvre Marmiton, 750g, Cuisine AZ et
 Journal des Femmes : elle lit les pages de résultats sans dépendre de leur mise en page exacte (liens dont l'adresse a
 la forme d'une recette). Les pages sont d'abord demandées en HTTP, puis, si le site bloque, chargées dans un navigateur
@@ -74,7 +74,8 @@ les sites » de Découvrir garde la recherche en ligne en complément.
 
 - **Construction** : `tools/catalog` lit les sitemaps des sites (`core/.../catalog/SiteCrawler.kt`) puis chaque fiche, en
   fichier `<site>.jsonl.gz` par site. 750g et Cuisine Actuelle, sans sitemap, sont lus par leurs rubriques paginées
-  (workflow « Catalogue — sites par rubriques », lancé en poussant `tools/catalog/extra.conf`).
+  (workflow « Catalogue — sites par rubriques », lancé en poussant `tools/catalog/extra.conf`, qui sert aussi à collecter à part
+  un nouveau site à sitemap comme Picnic : fiches lues dans le flux Next.js de la page, sans balise JSON-LD).
   fichier `<site>.jsonl.gz` par site.
 - **Rattrapage** : pousser `tools/catalog/retry.conf` (liste `SITES`) rejoue les fiches restées en erreur sur ces sites
   (workflow « Catalogue — rattrapage »). Chaque passage écrit `<site>.erreurs.tsv` (toutes les fiches encore en erreur,
@@ -83,9 +84,18 @@ les sites » de Découvrir garde la recherche en ligne en complément.
   release « catalogue » ; la compilation suivante de l'APK embarque ces fichiers.
 - **Contrôle** : ouvrir `tools/catalog/viewer.html` dans un navigateur et y déposer les fichiers (ou l'archive .zip
   téléchargée depuis GitHub) : recherche, filtres, fiches à contrôler, tableau par site.
-- **Dans l'appli** : les fichiers placés dans `app/src/main/assets/catalog/` (avec un `version.txt`) sont chargés au
-  premier lancement. Ensuite le téléphone cherche les nouveautés seul, une fois par jour à l'ouverture (hors données
-  mobiles), ou à la demande dans Réglages › Catalogue de recettes.
+- **Mise à jour hebdomadaire** : le workflow « Catalogue — mise à jour hebdomadaire » (`catalog-weekly.yml`, chaque dimanche, ou
+  « Run workflow ») repart des bases déjà publiées, ne lit que les fiches nouvelles ou modifiées de chaque site, republie la
+  release « catalogue » (bases `<site>.jsonl.gz`, état de lecture `<site>.seen.tsv.gz`, `version.txt`), puis relance « Build APK »
+  pour que l'APK embarque les bases à jour. Un site sans base publiée est ignoré (la première collecte se fait avec les workflows
+  ci-dessus). Les déclencheurs planifiés ne tournent que sur `main`.
+- **Dans l'appli** : une base par site, **téléchargée à la demande** depuis la release « catalogue ». Au premier lancement,
+  l'écran « Bases de recettes » s'affiche en premier (Tout télécharger, ou site par site, ou Passer) ; il reste accessible dans
+  Réglages › Bases de recettes (télécharger, mettre à jour quand une version plus récente est publiée, supprimer). Sans réseau,
+  la copie embarquée dans l'APK (`assets/catalog/`, avec `version.txt`) sert de secours. Dans les filtres de Découvrir, un site
+  dont la base n'est pas téléchargée est grisé, non sélectionnable ; le toucher ouvre l'écran de choix. Seules les bases
+  téléchargées sont tenues à jour par le téléphone (nouveautés des sites, une fois par jour à l'ouverture, hors données mobiles,
+  ou à la demande dans Réglages).
 
 ### Honor / MagicOS
 

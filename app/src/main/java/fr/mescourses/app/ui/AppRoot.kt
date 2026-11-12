@@ -21,6 +21,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -46,6 +48,7 @@ import fr.mescourses.core.retail.Retailer
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.key
+import fr.mescourses.app.ui.catalog.CatalogScreen
 import fr.mescourses.app.ui.cookbook.CookbookScreen
 import fr.mescourses.app.ui.cookbook.RecipeDetailScreen
 import fr.mescourses.app.ui.cookbook.RecipeEditScreen
@@ -70,8 +73,17 @@ fun AppRoot(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
     val backStack by nav.currentBackStackEntryAsState()
     val current = backStack?.destination?.route
 
-    LaunchedEffect(sharedUrl) {
-        if (sharedUrl != null) nav.navigate("cookbook?import=${android.net.Uri.encode(sharedUrl)}")
+    val container = fr.mescourses.app.ui.common.appContainer()
+    // Premier lancement : l'écran de choix des bases de recettes passe avant tout. La destination de départ est fixée une
+    // fois (dès que la base dit si l'écran a déjà été vu) : la changer ensuite réinitialiserait la navigation.
+    val firstRun by container.catalogSync.firstRun.collectAsStateWithLifecycle()
+    var startRoute by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(firstRun) {
+        if (startRoute == null && firstRun != null) startRoute = if (firstRun == true) "catalog/setup" else "menu"
+    }
+
+    LaunchedEffect(sharedUrl, startRoute) {
+        if (sharedUrl != null && startRoute != null) nav.navigate("cookbook?import=${android.net.Uri.encode(sharedUrl)}")
     }
 
     fun goTab(route: String) = nav.navigate(route) {
@@ -80,7 +92,6 @@ fun AppRoot(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
         restoreState = true
     }
 
-    val container = fr.mescourses.app.ui.common.appContainer()
     val draftCount by remember { container.draft.observe().map { it.size } }.collectAsStateWithLifecycle(0)
     val remaining by remember {
         container.shopping.observeAll().map { l -> l.filterNot { it.checked }.map { ShoppingListMerger.key(it.name) }.distinct().size }
@@ -137,7 +148,18 @@ fun AppRoot(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
             }
         }
         WriteConfirmationDialog(container.confirmations)
-        NavHost(nav, startDestination = "menu", modifier = Modifier.padding(bottom = padding.calculateBottomPadding())) {
+        val start = startRoute ?: return@Scaffold
+        NavHost(nav, startDestination = start, modifier = Modifier.padding(bottom = padding.calculateBottomPadding())) {
+            composable("catalog/setup") {
+                CatalogScreen(
+                    firstRun = true,
+                    onDone = {
+                        container.catalogSync.finishSetup()
+                        nav.navigate("menu") { popUpTo("catalog/setup") { inclusive = true } }
+                    },
+                )
+            }
+            composable("catalog") { CatalogScreen(firstRun = false, onDone = { nav.popBackStack() }) }
             composable("menu") {
                 MenuScreen(
                     onOpenSettings = { nav.navigate("settings") },
@@ -164,6 +186,7 @@ fun AppRoot(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
                     onOpenSettings = { nav.navigate("settings") },
                     onOpenPreview = { nav.navigate("recipes/preview?url=${android.net.Uri.encode(it)}") },
                     onBrowse = { nav.navigate("recipes/browse?url=${android.net.Uri.encode(it)}") },
+                    onOpenCatalog = { nav.navigate("catalog") },
                 )
             }
             composable(
@@ -214,6 +237,7 @@ fun AppRoot(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
                     onLogin = { r -> nav.navigate(webRoute(r, container.bridge(r).site.login(), WebMode.LOGIN)) },
                     onChooseStore = { r -> nav.navigate("retail/store/${r.name}") },
                     onDebug = { nav.navigate("retail/debug") },
+                    onOpenCatalog = { nav.navigate("catalog") },
                 )
             }
             composable(

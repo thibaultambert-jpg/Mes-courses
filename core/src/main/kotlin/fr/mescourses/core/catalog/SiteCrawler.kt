@@ -22,6 +22,11 @@ data class CatalogSource(
      * suivantes s'obtiennent avec « ?page=2 », « ?page=3 »… Une recette rangée dans plusieurs rubriques n'est lue qu'une fois.
      */
     val listings: List<String> = emptyList(),
+    /**
+     * Le sitemap donne la date de génération du fichier, la même pour toutes les adresses (Picnic) : elle ne dit rien d'une
+     * modification. On l'ignore : seules les adresses nouvelles sont lues.
+     */
+    val ignoreLastmod: Boolean = false,
 )
 
 object CatalogSources {
@@ -50,6 +55,13 @@ object CatalogSources {
             null, Regex("""hellofresh\.fr/recipes/[^/]+-[0-9a-f]{24}$"""),
         ),
         CatalogSource("jow", listOf("https://jow.fr/sitemap.xml"), null, Regex("""jow\.fr/recipes/[^/]+$""")),
+        // Sitemap de toutes les langues (nl, de, fr) : seules les fiches françaises (/fr/recettes/<id>/<nom>) sont gardées.
+        // Les fiches n'ont pas de balise JSON-LD : la recette est lue dans le flux Next.js de la page (RecipeJsonLdExtractor).
+        CatalogSource(
+            "picnic", listOf("https://picnic.app/sitemap/recipes.xml"), null,
+            Regex("""picnic\.app/fr/recettes/[0-9a-f]{24}/[^/]+$"""),
+            requestsPerSecond = 1.0, ignoreLastmod = true,
+        ),
         // 750g ne publie pas de sitemap de recettes : on suit ses rubriques de plats, page après page.
         CatalogSource(
             "750g", emptyList(), null, Regex("""750g\.com/[^/]+-r\d+\.htm$"""),
@@ -141,7 +153,7 @@ class SiteCrawler(private val fetch: suspend (url: String) -> String) {
             queue += sitemap.children.filter { source.sitemapFilter?.containsMatchIn(it) ?: true }
             for (page in sitemap.pages) {
                 val clean = page.url.substringBefore('#').substringBefore('?')
-                if (source.recipeUrl.containsMatchIn(clean)) pages.putIfAbsent(clean, page.copy(url = clean))
+                if (source.recipeUrl.containsMatchIn(clean)) pages.putIfAbsent(clean, page.copy(url = clean, lastmod = page.lastmod.takeUnless { source.ignoreLastmod }))
             }
         }
         return pages.values.toList()

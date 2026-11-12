@@ -45,7 +45,7 @@ jobs:
           done
           # Pour chaque site : parmi les runs (collecte, rattrapage, rubriques), le dernier passage de chacun, et on garde le
           # fichier le plus complet (le plus de lignes) : un rattrapage interrompu ne doit pas remplacer une collecte entière.
-          for site in cuisineaz ptitchef marmiton chefsimon hellofresh jow jdf 750g cuisineactuelle cuisineaddict; do
+          for site in cuisineaz ptitchef marmiton chefsimon hellofresh jow jdf 750g cuisineactuelle cuisineaddict picnic; do
             best=""; best_lines=0
             for run in $retries $main $extras; do
               last=$(ls -d parts/$run/catalog-$site-* 2>/dev/null | sort -V | tail -1)
