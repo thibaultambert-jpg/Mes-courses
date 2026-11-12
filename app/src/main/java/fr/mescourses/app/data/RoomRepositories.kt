@@ -88,10 +88,13 @@ class RoomRecipeRepository(private val dao: RecipeDao) : RecipeRepository {
 }
 
 private fun PlannedMealEntity.toModel() =
-    PlannedMeal(id, date, recipeId, recipeTitle, Portions(adults, children), cooked)
+    PlannedMeal(id, date, recipeId, recipeTitle, Portions(adults, children), cooked, course.toCourse())
 
 private fun PlannedMeal.toEntity() =
-    PlannedMealEntity(id, date, recipeId, recipeTitle, portions.adults, portions.children, cooked)
+    PlannedMealEntity(id, date, recipeId, recipeTitle, portions.adults, portions.children, cooked, course?.name)
+
+private fun String?.toCourse(): fr.mescourses.core.catalog.Course? =
+    this?.let { n -> fr.mescourses.core.catalog.Course.entries.firstOrNull { it.name == n } }
 
 class RoomMealPlanRepository(private val dao: MealDao) : MealPlanRepository {
     override fun observeAll(): Flow<List<PlannedMeal>> = dao.observeAll().map { l -> l.map { it.toModel() } }
@@ -106,17 +109,18 @@ class RoomMenuDraftRepository(private val dao: MenuDraftDao) : MenuDraftReposito
     private fun MenuDraftEntity.toModel() = MenuDish(
         title, description, Portions(adults, children), recipeId,
         runCatching { json.decodeFromString(stringsSer, mainIngredients) }.getOrDefault(emptyList()),
-        sourceUrl, imageUrl, totalMinutes, invented,
+        sourceUrl, imageUrl, totalMinutes, invented, course.toCourse(),
     )
 
     override fun observe(): Flow<List<MenuDish>> = dao.observe().map { l -> l.map { it.toModel() } }
     override suspend fun get(): List<MenuDish> = dao.all().map { it.toModel() }
     override suspend fun set(dishes: List<MenuDish>) = dao.replace(
-        dishes.mapIndexed { i, d ->
+        // Entrées, plats puis desserts : l'ordre de la liste est celui de l'écran, et les numéros (« plat 3 ») y correspondent.
+        dishes.sortedBy { it.courseRank }.mapIndexed { i, d ->
             MenuDraftEntity(
                 i, d.title, d.description, d.portions.adults, d.portions.children, d.recipeId,
                 json.encodeToString(stringsSer, d.mainIngredients),
-                d.sourceUrl, d.imageUrl, d.totalMinutes, d.invented,
+                d.sourceUrl, d.imageUrl, d.totalMinutes, d.invented, d.course?.name,
             )
         },
     )

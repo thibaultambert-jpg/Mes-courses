@@ -11,3 +11,4 @@ captures/
 *.aab
 *.litertlm
 app/src/main/assets/catalog/
+**/.kotlin/

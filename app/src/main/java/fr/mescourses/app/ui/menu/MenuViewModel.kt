@@ -493,7 +493,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
         suspend fun pick(): Candidate? {
             val dishes = c.draft.get()
             val pool = c.candidates.all()
-            return MenuComposer.replacement(pool, wishes, dishes.map(Chosen::of), pool.filter { blocked(it, dishes) }.toSet())
+            return MenuComposer.replacement(pool, wishes, dishes.filter { it.isMain }.map(Chosen::of), pool.filter { blocked(it, dishes) }.toSet())
         }
         return pick() ?: run {
             progress("Recherche d'autres recettes…")
@@ -514,7 +514,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
         }.getOrNull().orEmpty().filterNot { blocked(it, dishes) }
         if (found.isEmpty()) return null
         // Parmi les recettes trouvées, celle qui va le mieux avec le reste du menu.
-        val best = MenuComposer.replacement(found, wishes(), dishes.map(Chosen::of), emptySet()) ?: found.first()
+        val best = MenuComposer.replacement(found, wishes(), dishes.filter { it.isMain }.map(Chosen::of), emptySet()) ?: found.first()
         c.candidates.add(listOf(best))
         return best
     }
@@ -559,7 +559,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                     if (next == null) say("Aucune recette trouvée" + (words?.let { " pour « $it »" } ?: "") + (command.site?.let { " sur ce site" } ?: "") + ".", ok = false)
                     else {
                         reject(old)
-                        c.draft.set(list.toMutableList().also { it[command.dish] = next.toDish(old.portions) })
+                        c.draft.set(list.toMutableList().also { it[command.dish] = next.toDish(old.portions, old.course) })
                         say("Plat ${command.dish + 1} remplacé par « ${next.recipe.title} »")
                     }
                 }
@@ -646,10 +646,12 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                     else c.draft.set(c.draft.get().toMutableList().also { if (index < it.size) it[index] = found.toDish(current.portions, course) })
                     return
                 }
-                val others = dishes.filterIndexed { i, _ -> i != index }
+                // Un plat se remplace par un plat : seuls les autres plats comptent pour la composition.
+                val rest = dishes.filterIndexed { i, _ -> i != index }
+                val others = rest.filter { it.isMain }
 
                 fun pick() = c.candidates.all().let { pool ->
-                    MenuComposer.replacement(pool, wishes, others.map(Chosen::of), pool.filter { blocked(it, others) }.toSet())
+                    MenuComposer.replacement(pool, wishes, others.map(Chosen::of), pool.filter { blocked(it, rest) }.toSet())
                 }
 
                 val next = pick() ?: run {

@@ -166,7 +166,7 @@ class MenuTools(
         val (i, dishes) = numbered(args)
         val c = candidate(args) ?: return@tool noCandidate()
         if (alreadyThere(c, dishes, except = i)) return@tool duplicate(c)
-        draft.set(dishes.toMutableList().also { it[i] = c.toDish(dishes[i].portions) })
+        draft.set(dishes.toMutableList().also { it[i] = c.toDish(dishes[i].portions, dishes[i].course) })
         withOverlap("Plat ${i + 1} remplacé par « ${c.recipe.title} »")
     }
 
@@ -211,7 +211,7 @@ class MenuTools(
         val new = dish(index(), title, args.str("description").orEmpty(), at?.let { dishes[it].portions } ?: defaultPortions(), args.strList("ingredients"))
             ?.let { if (it.recipeId == null) it.copy(invented = true) else it }
             ?: return@tool bannedError(title)
-        draft.set(if (at != null) dishes.toMutableList().also { it[at] = new } else dishes + new)
+        draft.set(if (at != null) dishes.toMutableList().also { it[at] = new.copy(course = dishes[at].course) } else dishes + new)
         withOverlap(if (at != null) "Plat ${at + 1} remplacé par la recette inventée « ${new.title} »" else "Recette inventée « ${new.title} » ajoutée (plat ${dishes.size + 1})")
     }
 
@@ -260,7 +260,7 @@ class MenuTools(
         val title = args.str("titre") ?: return@tool toolError("titre manquant")
         val new = dish(index(), title, args.str("description").orEmpty(), dishes[i].portions, args.strList("ingredients"))
             ?: return@tool bannedError(title)
-        draft.set(dishes.toMutableList().also { it[i] = new })
+        draft.set(dishes.toMutableList().also { it[i] = new.copy(course = dishes[i].course) })
         withOverlap("Plat ${i + 1} remplacé par « ${new.title} »")
     }
 

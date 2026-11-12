@@ -79,6 +79,9 @@ data class MenuDish(
 ) {
     /** Plat principal (ni entrée ni dessert). */
     val isMain: Boolean get() = course == null
+
+    /** Ordre dans le menu : entrées, puis plats, puis desserts. */
+    val courseRank: Int get() = when (course) { null -> 1; fr.mescourses.core.catalog.Course.DESSERT -> 2; else -> 0 }
 }
 
 /** Un plat d'un menu validé, gardé pour varier les semaines suivantes (jamais effacé avec le menu). */
@@ -105,6 +108,8 @@ data class PlannedMeal(
     val recipeTitle: String = "",
     val portions: Portions,
     val cooked: Boolean = false,
+    /** ENTREE ou DESSERT ; null = plat principal. */
+    val course: fr.mescourses.core.catalog.Course? = null,
 )
 
 enum class ItemSource { MANUEL, RECETTE }
