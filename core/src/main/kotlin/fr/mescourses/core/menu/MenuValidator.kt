@@ -78,7 +78,7 @@ class MenuValidator(
             val list = ShoppingListMerger.fromRecipe(saved, dish.portions.equivalent(childFactor()), pantry())
             shopping.add(list)
             items += list.size
-            plan.add(PlannedMeal(date = date, recipeId = id, recipeTitle = saved.title, portions = dish.portions))
+            plan.add(PlannedMeal(date = date, recipeId = id, recipeTitle = saved.title, portions = dish.portions, course = dish.course))
             val names = saved.ingredients.map { it.name }
             past += MenuHistoryEntry(
                 date = date,

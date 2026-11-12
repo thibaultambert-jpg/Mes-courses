@@ -15,6 +15,7 @@ import fr.mescourses.app.data.MIGRATION_1_2
 import fr.mescourses.app.data.MIGRATION_2_3
 import fr.mescourses.app.data.MIGRATION_3_4
 import fr.mescourses.app.data.MIGRATION_4_5
+import fr.mescourses.app.data.MIGRATION_5_6
 import fr.mescourses.app.data.RoomMealPlanRepository
 import fr.mescourses.app.data.RoomMenuDraftRepository
 import fr.mescourses.app.data.RoomMenuHistoryRepository
@@ -87,7 +88,7 @@ class AppContainer(context: Context) {
     val undoBar = fr.mescourses.app.ui.common.UndoBar(appScope)
 
     private val db = Room.databaseBuilder(context, AppDatabase::class.java, "mes-courses.db")
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
         .build()
     val recipes = RoomRecipeRepository(db.recipeDao())
     val plan = RoomMealPlanRepository(db.mealDao())

@@ -21,4 +21,14 @@ class MenuCoursesTest {
         assertTrue(MenuDish("Gratin", portions = Portions(2)).isMain)
         assertFalse(MenuDish("Tarte", portions = Portions(2), course = Course.DESSERT).isMain)
     }
+
+    @Test fun `le menu se range par partie du repas`() {
+        val dishes = listOf(
+            MenuDish("Tarte", portions = Portions(2), course = Course.DESSERT),
+            MenuDish("Gratin", portions = Portions(2)),
+            MenuDish("Velouté", portions = Portions(2), course = Course.ENTREE),
+            MenuDish("Curry", portions = Portions(2)),
+        )
+        assertEquals(listOf("Velouté", "Gratin", "Curry", "Tarte"), dishes.sortedBy { it.courseRank }.map { it.title })
+    }
 }
