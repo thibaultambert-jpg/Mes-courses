@@ -46,6 +46,26 @@
   details ul { margin: 4px 0 0; padding-left: 18px; }
   button { font: inherit; padding: 9px 16px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: var(--bg); cursor: pointer; margin: 14px auto; display: block; }
   .hidden { display: none; }
+  .tabs { display: flex; gap: 6px; margin: 16px 0 0; border-bottom: 1px solid var(--line); }
+  .tabs button { margin: 0; border-radius: 8px 8px 0 0; background: transparent; color: var(--text); border-color: var(--line); border-bottom: none; }
+  .tabs button.on { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  fieldset { border: 1px solid var(--line); border-radius: 10px; margin: 12px 0; padding: 4px 12px 10px; background: var(--card); }
+  fieldset > legend { font-size: 12px; color: var(--muted); padding: 0 6px; }
+  fieldset .filters { margin: 6px 0 0; }
+  .range { display: flex; gap: 6px; }
+  input[type=number], input[type=date], input[type=text] { font: inherit; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--text); width: 100%; min-width: 0; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+  .bar button, button.small { margin: 0; padding: 6px 12px; display: inline-block; font-size: 13px; }
+  button.ghost { background: transparent; color: var(--text); border-color: var(--line); }
+  .ing td, .ing th { white-space: normal; text-align: left; vertical-align: top; }
+  .ing td.n { text-align: right; white-space: nowrap; }
+  .ing select, .ing input[type=text] { padding: 4px 6px; font-size: 12px; }
+  .ing tr.done { opacity: .55; }
+  a.key { color: var(--accent); cursor: pointer; text-decoration: none; border-bottom: 1px dotted; }
+  .line { display: flex; gap: 6px; align-items: baseline; }
+  .line .tag { flex: none; }
+  .pager { display: flex; gap: 8px; align-items: center; justify-content: center; }
+  .pager button { margin: 8px 0; }
 </style>
 </head>
 <body>
@@ -62,37 +82,109 @@
   </label>
 
   <div id="app" class="hidden">
-    <div class="filters">
-      <label class="wide">Recherche (titre et ingrédients, tous les mots)
-        <input id="q" type="search" placeholder="poireau lardons, curry de légumes…"></label>
-      <label>Site<select id="site"></select></label>
-      <label>Type de plat<select id="course"></select></label>
-      <label>Composition<select id="kind">
-        <option value="">Toutes</option><option value="VEGE">Végétarien</option><option value="POISSON">Poisson</option><option value="VIANDE">Viande</option></select></label>
-      <label>De saison en<select id="month"></select></label>
-      <label>Note<select id="rating">
-        <option value="">Toutes</option><option value="good">Bien notées (≥ 4, 3 avis et plus)</option>
-        <option value="3">≥ 3</option><option value="4">≥ 4</option><option value="4.5">≥ 4,5</option><option value="none">Sans note</option></select></label>
-      <label>Temps total<select id="time">
-        <option value="">Tous</option><option value="30">≤ 30 min</option><option value="60">≤ 1 h</option><option value="none">Sans temps</option></select></label>
-      <label>À contrôler<select id="check">
-        <option value="">—</option><option value="noimg">Sans image</option><option value="autre">Type « Autre »</option>
-        <option value="nomonth">Jamais de saison</option><option value="few">Moins de 4 ingrédients</option>
-        <option value="nokeys">Aucun ingrédient reconnu</option><option value="dup">Titre en double sur le même site</option></select></label>
-      <label>Tri<select id="sort">
-        <option value="">Ordre du fichier</option><option value="rating">Meilleures notes</option><option value="votes">Plus d'avis</option>
-        <option value="time">Plus rapides</option><option value="title">Titre</option><option value="recent">Modifiées récemment</option></select></label>
-      <label class="check"><input id="meal" type="checkbox"> Repas du menu seulement</label>
-      <label class="check"><input id="balanced" type="checkbox"> Assiette complète</label>
-      <label class="check"><input id="images" type="checkbox" checked> Afficher les images</label>
+    <div class="tabs">
+      <button id="tab-recipes" class="on">Recettes</button>
+      <button id="tab-ingredients">Ingrédients &amp; mapping</button>
     </div>
 
-    <div class="scroll"><table id="stats"></table></div>
-    <div id="count"></div>
-    <div id="list" class="list"></div>
-    <button id="more" class="hidden">Afficher plus</button>
+    <!-- ====== Vue recettes ====== -->
+    <div id="view-recipes">
+      <fieldset><legend>Recherche et origine</legend><div class="filters">
+        <label class="wide">Recherche (titre et ingrédients, tous les mots)
+          <input id="q" type="search" placeholder="poireau lardons, curry de légumes…"></label>
+        <label>Site<select id="site"></select></label>
+        <label>Catégorie du site (texte brut)<input id="category" type="search" list="dl-category" placeholder="Plat principal…"></label>
+        <label>Type de plat<select id="course"></select></label>
+        <label>Composition<select id="kind">
+          <option value="">Toutes</option><option value="VEGE">Végétarien</option><option value="POISSON">Poisson</option><option value="VIANDE">Viande</option></select></label>
+        <label>Repas du menu (plat, soupe, salade)<select id="meal"><option value="">Indifférent</option><option value="1">Oui</option><option value="0">Non</option></select></label>
+        <label>Assiette complète<select id="balanced"><option value="">Indifférent</option><option value="1">Oui</option><option value="0">Non</option></select></label>
+      </div></fieldset>
+
+      <fieldset><legend>Saison</legend><div class="filters">
+        <label>De saison en<select id="month"></select></label>
+        <label>Nombre de mois de saison<div class="range"><input id="monthsMin" type="number" min="0" max="12" placeholder="min"><input id="monthsMax" type="number" min="0" max="12" placeholder="max"></div></label>
+        <label>Contient le produit de saison<input id="produce" type="search" list="dl-produce" placeholder="poireau, courge…"></label>
+      </div></fieldset>
+
+      <fieldset><legend>Notes, durées, portions</legend><div class="filters">
+        <label>Note<select id="rating">
+          <option value="">Toutes</option><option value="good">Bien notées (≥ 4, 3 avis et plus)</option>
+          <option value="3">≥ 3</option><option value="4">≥ 4</option><option value="4.5">≥ 4,5</option><option value="none">Sans note</option></select></label>
+        <label>Nombre d'avis (min / max)<div class="range"><input id="votesMin" type="number" min="0" placeholder="min"><input id="votesMax" type="number" min="0" placeholder="max"></div></label>
+        <label>Temps total (min / max, minutes)<div class="range"><input id="timeMin" type="number" min="0" placeholder="min"><input id="timeMax" type="number" min="0" placeholder="max"></div></label>
+        <label>Préparation (min / max)<div class="range"><input id="prepMin" type="number" min="0" placeholder="min"><input id="prepMax" type="number" min="0" placeholder="max"></div></label>
+        <label>Cuisson (min / max)<div class="range"><input id="cookMin" type="number" min="0" placeholder="min"><input id="cookMax" type="number" min="0" placeholder="max"></div></label>
+        <label>Temps connu<select id="time">
+          <option value="">Indifférent</option><option value="30">≤ 30 min</option><option value="60">≤ 1 h</option><option value="none">Sans temps</option></select></label>
+        <label>Portions (min / max)<div class="range"><input id="servMin" type="number" min="0" placeholder="min"><input id="servMax" type="number" min="0" placeholder="max"></div></label>
+      </div></fieldset>
+
+      <fieldset><legend>Ingrédients</legend><div class="filters">
+        <label>Nombre de lignes d'ingrédients (min / max)<div class="range"><input id="ingMin" type="number" min="0" placeholder="min"><input id="ingMax" type="number" min="0" placeholder="max"></div></label>
+        <label>Nombre d'ingrédients reconnus (min / max)<div class="range"><input id="keysMin" type="number" min="0" placeholder="min"><input id="keysMax" type="number" min="0" placeholder="max"></div></label>
+        <label>Lignes non reconnues (min / max)<div class="range"><input id="unmMin" type="number" min="0" placeholder="min"><input id="unmMax" type="number" min="0" placeholder="max"></div></label>
+        <label>Contient l'ingrédient reconnu<input id="withKey" type="search" list="dl-keys" placeholder="poulet, courgette…"></label>
+        <label>Ne contient pas l'ingrédient reconnu<input id="withoutKey" type="search" list="dl-keys" placeholder="lait de coco…"></label>
+      </div></fieldset>
+
+      <fieldset><legend>Données et contrôle</legend><div class="filters">
+        <label>Modifiée entre (lastmod)<div class="range"><input id="lastFrom" type="date"><input id="lastTo" type="date"></div></label>
+        <label>Image<select id="image"><option value="">Indifférent</option><option value="1">Avec image</option><option value="0">Sans image</option></select></label>
+        <label>À contrôler<select id="check">
+          <option value="">—</option><option value="noimg">Sans image</option><option value="autre">Type « Autre »</option>
+          <option value="nocat">Sans catégorie du site</option>
+          <option value="nomonth">Jamais de saison</option><option value="few">Moins de 4 ingrédients</option>
+          <option value="nokeys">Aucun ingrédient reconnu</option><option value="unm">Au moins une ligne non reconnue</option>
+          <option value="dup">Titre en double sur le même site</option></select></label>
+        <label>Tri<select id="sort">
+          <option value="">Ordre du fichier</option><option value="rating">Meilleures notes</option><option value="votes">Plus d'avis</option>
+          <option value="time">Plus rapides</option><option value="title">Titre</option><option value="recent">Modifiées récemment</option>
+          <option value="ing">Plus d'ingrédients</option><option value="unm">Plus de lignes non reconnues</option></select></label>
+        <label class="check"><input id="images" type="checkbox" checked> Afficher les images</label>
+      </div>
+      <div class="bar"><button id="reset" class="ghost small" type="button">Réinitialiser les filtres</button></div></fieldset>
+
+      <div class="scroll"><table id="stats"></table></div>
+      <div id="count"></div>
+      <div id="list" class="list"></div>
+      <button id="more" class="hidden">Afficher plus</button>
+    </div>
+
+    <!-- ====== Vue ingrédients ====== -->
+    <div id="view-ingredients" class="hidden">
+      <p class="muted">Rapproche chaque <b>ligne d'ingrédient écrite par le site</b> de l'<b>ingrédient reconnu pour les courses</b> (la « clé »).
+        La correspondance ligne → clé est refaite ici de façon approchée : une clé est attribuée à une ligne quand tous ses mots s'y trouvent.
+        Tes décisions sont gardées dans ce navigateur et s'<b>exportent en JSON</b> pour alimenter la logique.</p>
+      <div class="bar">
+        <button class="small" data-mode="keys" id="mode-keys">Ingrédients reconnus</button>
+        <button class="small ghost" data-mode="lines" id="mode-lines">Lignes non reconnues</button>
+        <span class="muted" id="ing-status"></span>
+      </div>
+      <fieldset><legend>Filtres</legend><div class="filters">
+        <label class="wide">Recherche<input id="iq" type="search" placeholder="crème, poulet…"></label>
+        <label>Site<select id="isite"></select></label>
+        <label>Présent dans au moins N recettes<input id="imin" type="number" min="1" value="1"></label>
+        <label>Décision<select id="idec"><option value="">Toutes</option><option value="none">Non traitées</option><option value="any">Traitées</option>
+          <option value="ok">OK</option><option value="alias">Regrouper</option><option value="staple">Placard</option><option value="ignore">Ignorer</option><option value="split">À découper</option></select></label>
+        <label>Rayon<select id="irayon"></select></label>
+        <label id="lbl-near">Particularité<select id="ispecial"><option value="">—</option><option value="near">A des clés proches (à regrouper ?)</option><option value="multi">Plusieurs variantes d'écriture</option><option value="short">Clé d'un seul mot court (≤ 3 lettres)</option></select></label>
+        <label>Tri<select id="isort"><option value="n">Plus fréquents</option><option value="a">Alphabétique</option><option value="v">Plus de variantes</option></select></label>
+      </div></fieldset>
+      <div class="bar">
+        <button class="small" id="exp-json">Exporter les décisions (JSON)</button>
+        <button class="small ghost" id="exp-csv">Exporter (CSV)</button>
+        <label class="small ghost" style="display:inline-flex;cursor:pointer;border:1px solid var(--line);border-radius:8px;padding:6px 12px;flex-direction:row">Importer…<input id="imp" type="file" accept=".json" style="display:none"></label>
+        <button class="small ghost" id="clear-dec">Effacer les décisions</button>
+        <span class="muted" id="dec-count"></span>
+      </div>
+      <div id="icount"></div>
+      <div class="scroll"><table id="itable" class="ing"></table></div>
+      <div class="pager"><button class="small ghost" id="iprev">Précédent</button><span id="ipage"></span><button class="small ghost" id="inext">Suivant</button></div>
+    </div>
   </div>
 </main>
+<datalist id="dl-category"></datalist><datalist id="dl-produce"></datalist><datalist id="dl-keys"></datalist>
 
 <script>
 const COURSES = { PLAT: 'Plat', SOUPE: 'Soupe', SALADE: 'Salade', ENTREE: 'Entrée', ACCOMPAGNEMENT: 'Accompagnement', DESSERT: 'Dessert', APERITIF: 'Apéritif', BOISSON: 'Boisson', AUTRE: 'Autre' };
@@ -181,6 +273,39 @@ async function load(files) {
   if (all.length) { $('app').classList.remove('hidden'); prepare(); apply(); }
 }
 
+/* ---------- Rapprochement ligne → ingrédient reconnu (approché) ---------- */
+
+// Même règle que ShoppingListMerger.key côté Kotlin : minuscules, sans accents, mots au singulier.
+function singular(w) {
+  if (w.length <= 3) return w;
+  if (w.endsWith('eaux')) return w.slice(0, -1);
+  if (w.endsWith('aux') && w.length > 4) return w.slice(0, -3) + 'al';
+  if (w.endsWith('s') && !w.endsWith('ss')) return w.slice(0, -1);
+  if (w.endsWith('x') && !w.endsWith('ix')) return w.slice(0, -1);
+  return w;
+}
+const wordsOf = s => norm(s).replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean).map(singular);
+// Retire la quantité et l'unité en tête (« 200 g de farine » → « farine ») pour regrouper les variantes d'écriture.
+const QTY = /^[\s\d.,\/½¼¾⅓⅔⅛\-–à]+(?:(?:kg|g|gr|mg|l|dl|cl|ml|c\.?\s?à\s?(?:soupe|café|s|c)\.?|cuill?[eè]res?(?:\s+à\s+(?:soupe|café))?|pinc[ée]es?|gousses?|tranches?|bo[iî]tes?|sachets?|brins?|feuilles?|pots?|bottes?|verres?|filets?|poign[ée]es?|paquets?|barquettes?|bouteilles?|unit[ée]s?|pi[eè]ces?)\b\.?)?\s*(?:de |d['’]|du |des )?/i;
+const variantOf = raw => { const v = raw.replace(QTY, '').trim().toLowerCase(); return v || raw.trim().toLowerCase(); };
+
+const keyWords = new Map(); // clé -> mots (cache)
+const wordsOfKey = k => { let w = keyWords.get(k); if (!w) keyWords.set(k, w = k.split(' ')); return w; };
+
+/** Pour chaque ligne de la recette : la clé reconnue (la plus longue dont tous les mots sont dans la ligne) ou null. */
+function matchLines(e) {
+  if (e._lines) return e._lines;
+  const keys = e.keys.slice().sort((a, b) => b.length - a.length);
+  e._lines = e.ingredients.map(raw => {
+    const w = new Set(wordsOf(raw));
+    const key = keys.find(k => wordsOfKey(k).every(x => w.has(x))) ?? null;
+    return { raw, variant: variantOf(raw), key };
+  });
+  e._unm = e._lines.filter(l => !l.key).length;
+  return e._lines;
+}
+const unmapped = e => { matchLines(e); return e._unm; };
+
 /* ---------- Filtres ---------- */
 
 function options(select, first, entries) {
@@ -188,16 +313,24 @@ function options(select, first, entries) {
   select.innerHTML = `<option value="">${first}</option>` + entries.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join('');
   select.value = keep;
 }
+const fill = (id, values) => { $(id).innerHTML = values.map(v => `<option value="${esc(v)}">`).join(''); };
 
 function prepare() {
   const sites = [...new Set(all.map(e => e.siteId))].sort();
   options($('site'), 'Tous', sites.map(s => [s, s]));
+  options($('isite'), 'Tous', sites.map(s => [s, s]));
   options($('course'), 'Tous', Object.entries(COURSES));
   options($('month'), 'Toute l\'année', MONTHS.map((m, i) => [i + 1, m]));
+  options($('irayon'), 'Tous', RAYONS.map(r => [r, r]));
+  fill('dl-category', [...new Set(all.map(e => e.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr')));
+  fill('dl-produce', [...new Set(all.flatMap(e => e.produce))].sort());
+  const allKeys = new Set(); all.forEach(e => e.keys.forEach(k => allKeys.add(k)));
+  fill('dl-keys', [...allKeys].sort());
   // Titres en double sur un même site.
   const titles = new Map();
   all.forEach(e => { const k = e.siteId + '|' + norm(e.title); titles.set(k, (titles.get(k) ?? 0) + 1); });
-  all.forEach(e => { e.dup = titles.get(e.siteId + '|' + norm(e.title)) > 1; });
+  all.forEach(e => { e.dup = titles.get(e.siteId + '|' + norm(e.title)) > 1; e._lines = null; });
+  ing = null; // l'analyse des ingrédients sera refaite à l'ouverture de l'onglet
   stats(sites);
 }
 
@@ -209,26 +342,50 @@ function stats(sites) {
     const t = list.length, c = f => list.filter(f).length;
     return `<tr><td>${esc(name)}</td><td>${nb(t)}</td><td>${nb(c(e => MEALS.has(e.course)))}</td><td>${nb(c(e => e.course === 'DESSERT'))}</td>` +
       `<td>${pct(c(e => e.course === 'AUTRE'), t)}</td><td>${pct(c(e => e.rating != null), t)}</td><td>${nb(c(good))}</td>` +
-      `<td>${pct(c(e => e.imageUrl), t)}</td><td>${pct(c(e => e.minutes), t)}</td><td>${pct(c(e => e.months.length), t)}</td></tr>`;
+      `<td>${pct(c(e => e.imageUrl), t)}</td><td>${pct(c(e => e.minutes), t)}</td><td>${pct(c(e => e.months.length), t)}</td>` +
+      `<td>${pct(c(e => e.category), t)}</td><td>${pct(c(e => e.keys.length), t)}</td></tr>`;
   };
-  $('stats').innerHTML = '<tr><th>Site</th><th>Recettes</th><th>Repas</th><th>Desserts</th><th>Type « Autre »</th><th>Notées</th><th>Bien notées</th><th>Avec image</th><th>Avec temps</th><th>Avec saison</th></tr>' +
+  $('stats').innerHTML = '<tr><th>Site</th><th>Recettes</th><th>Repas</th><th>Desserts</th><th>Type « Autre »</th><th>Notées</th><th>Bien notées</th><th>Avec image</th><th>Avec temps</th><th>Avec saison</th><th>Avec catégorie</th><th>Avec ingrédient reconnu</th></tr>' +
     sites.map(s => row(s, all.filter(e => e.siteId === s))).join('') + (sites.length > 1 ? row('Total', all) : '');
 }
+
+const num = id => { const v = $(id).value; return v === '' ? null : +v; };
+const inRange = (v, min, max) => (min == null || (v != null && v >= min)) && (max == null || (v != null && v <= max));
+const tri = (v, flag) => v === '' || (v === '1') === !!flag;
 
 function apply() {
   const words = norm($('q').value).split(/\s+/).filter(Boolean);
   const site = $('site').value, course = $('course').value, kind = $('kind').value;
   const month = +$('month').value, rating = $('rating').value, time = $('time').value, check = $('check').value;
-  const meal = $('meal').checked, balanced = $('balanced').checked;
+  const meal = $('meal').value, balanced = $('balanced').value, image = $('image').value;
+  const cat = norm($('category').value.trim()), produce = norm($('produce').value.trim());
+  const withKey = norm($('withKey').value.trim()), withoutKey = norm($('withoutKey').value.trim());
+  const lastFrom = $('lastFrom').value, lastTo = $('lastTo').value;
+  const r = {
+    months: [num('monthsMin'), num('monthsMax')], votes: [num('votesMin'), num('votesMax')], total: [num('timeMin'), num('timeMax')],
+    prep: [num('prepMin'), num('prepMax')], cook: [num('cookMin'), num('cookMax')], serv: [num('servMin'), num('servMax')],
+    ing: [num('ingMin'), num('ingMax')], keys: [num('keysMin'), num('keysMax')], unm: [num('unmMin'), num('unmMax')],
+  };
+  const needUnm = r.unm[0] != null || r.unm[1] != null || check === 'unm' || $('sort').value === 'unm';
 
   shown = all.filter(e =>
     (!site || e.siteId === site) && (!course || e.course === course) && (!kind || e.kind === kind) &&
     (!month || e.months.includes(month)) &&
-    (!meal || MEALS.has(e.course)) && (!balanced || e.balanced) &&
+    tri(meal, MEALS.has(e.course)) && tri(balanced, e.balanced) && tri(image, e.imageUrl) &&
+    (!cat || norm(e.category ?? '').includes(cat)) &&
+    (!produce || e.produce.some(p => norm(p).includes(produce))) &&
+    (!withKey || e.keys.some(k => k === withKey || k.includes(withKey))) &&
+    (!withoutKey || !e.keys.some(k => k === withoutKey || k.includes(withoutKey))) &&
+    inRange(e.months.length, ...r.months) && inRange(e.ratingCount ?? 0, ...r.votes) && inRange(e.minutes, ...r.total) &&
+    inRange(e.prepMinutes, ...r.prep) && inRange(e.cookMinutes, ...r.cook) && inRange(e.servings, ...r.serv) &&
+    inRange(e.ingredients.length, ...r.ing) && inRange(e.keys.length, ...r.keys) &&
+    (!needUnm || inRange(unmapped(e), ...r.unm)) &&
+    (!lastFrom || (e.lastmod ?? '') >= lastFrom) && (!lastTo || (e.lastmod ?? '').slice(0, 10) <= lastTo) &&
     (!rating || (rating === 'good' ? good(e) : rating === 'none' ? e.rating == null : (e.rating ?? 0) >= +rating)) &&
     (!time || (time === 'none' ? !e.minutes : e.minutes && e.minutes <= +time)) &&
     (!check || (check === 'noimg' ? !e.imageUrl : check === 'autre' ? e.course === 'AUTRE' : check === 'nomonth' ? !e.months.length :
-      check === 'few' ? e.ingredients.length < 4 : check === 'nokeys' ? !e.keys.length : e.dup)) &&
+      check === 'nocat' ? !e.category : check === 'few' ? e.ingredients.length < 4 : check === 'nokeys' ? !e.keys.length :
+      check === 'unm' ? unmapped(e) > 0 : e.dup)) &&
     words.every(w => e.text.includes(w)));
 
   const by = {
@@ -237,6 +394,8 @@ function apply() {
     time: (a, b) => (a.minutes ?? 1e9) - (b.minutes ?? 1e9),
     title: (a, b) => a.title.localeCompare(b.title, 'fr'),
     recent: (a, b) => (b.lastmod ?? '').localeCompare(a.lastmod ?? ''),
+    ing: (a, b) => b.ingredients.length - a.ingredients.length,
+    unm: (a, b) => unmapped(b) - unmapped(a),
   }[$('sort').value];
   if (by) shown.sort(by);
   limit = PAGE;
@@ -248,19 +407,20 @@ function card(e) {
     `<span class="tag${e.course === 'AUTRE' ? ' warn' : ''}">${COURSES[e.course] ?? e.course}</span>`,
     `<span class="tag">${KINDS[e.kind] ?? e.kind}</span>`,
     e.balanced ? '<span class="tag">Assiette complète</span>' : '',
-    e.minutes ? `<span class="tag plain">${e.minutes} min</span>` : '<span class="tag warn">sans temps</span>',
+    e.minutes ? `<span class="tag plain">${e.minutes} min${e.prepMinutes != null || e.cookMinutes != null ? ` (prép. ${e.prepMinutes ?? '?'} · cuis. ${e.cookMinutes ?? '?'})` : ''}</span>` : '<span class="tag warn">sans temps</span>',
     e.rating != null ? `<span class="tag plain">★ ${String(e.rating).replace('.', ',')}${e.ratingCount ? ' (' + nb(e.ratingCount) + ')' : ''}</span>` : '<span class="tag warn">sans note</span>',
     `<span class="tag plain">${e.servings ?? 4} pers.</span>`,
   ].join('');
   const season = e.months.length === 12 ? 'toute l\'année' : e.months.length ? e.months.map(m => MONTHS[m - 1].slice(0, 4)).join(', ') : 'jamais (un produit est toujours hors saison)';
   const img = $('images').checked && e.imageUrl
     ? `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(e.imageUrl)}" alt="">` : '<div class="noimg"></div>';
+  const lines = matchLines(e).map(l => `<li><div class="line">${l.key ? `<span class="tag">${esc(l.key)}</span>` : '<span class="tag warn">non reconnu</span>'}<span>${esc(l.raw)}</span></div></li>`).join('');
   return `<div class="card">${img}<div class="body">
     <a href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">${esc(e.title)}</a>
     <div class="muted" style="font-size:12px">${esc(e.siteId)}${e.category ? ' · ' + esc(e.category) : ''}${e.lastmod ? ' · ' + esc(e.lastmod.slice(0, 10)) : ''}</div>
     <div class="tags">${tags}</div>
-    <details><summary>${e.ingredients.length} ingrédients · saison : ${esc(season)}</summary>
-      <ul>${e.ingredients.map(i => `<li>${esc(i)}</li>`).join('')}</ul>
+    <details><summary>${e.ingredients.length} lignes · ${e.keys.length} reconnus${e._unm ? ` · <b>${e._unm} sans clé</b>` : ''} · saison : ${esc(season)}</summary>
+      <ul>${lines}</ul>
       <div>Reconnus pour les courses : ${esc(e.keys.join(', ') || 'aucun')}</div>
       ${e.produce.length ? `<div>Produits de saison : ${esc(e.produce.join(', '))}</div>` : ''}
     </details></div></div>`;
@@ -272,14 +432,184 @@ function render() {
   $('more').classList.toggle('hidden', shown.length <= limit);
 }
 
+/* ---------- Vue ingrédients & mapping ---------- */
+
+const RAYONS = ['Fruits et légumes', 'Boucherie / volaille', 'Poissonnerie', 'Crèmerie / œufs', 'Épicerie salée', 'Épicerie sucrée', 'Boulangerie', 'Surgelés', 'Boissons', 'Placard (déjà chez moi)', 'Autre'];
+const STATUS = [['', '—'], ['ok', 'OK'], ['alias', 'Regrouper vers…'], ['staple', 'Placard'], ['ignore', 'Ignorer'], ['split', 'À découper']];
+const LS = 'mes-courses-mapping-v1';
+let ing = null;            // { keys: Map, lines: Map }
+let mode = 'keys', ipage = 0;
+const IPAGE = 100;
+let decisions = {};
+try { decisions = JSON.parse(localStorage.getItem(LS) || '{}'); } catch { decisions = {}; }
+const saveDec = () => { try { localStorage.setItem(LS, JSON.stringify(decisions)); } catch { /* stockage indisponible */ } $('dec-count').textContent = nb(Object.keys(decisions).length) + ' décision(s) enregistrée(s)'; };
+const decOf = (type, text) => decisions[type + ':' + text] ?? {};
+
+function analyse() {
+  if (ing) return;
+  const keys = new Map(), lines = new Map();
+  for (const e of all) {
+    for (const l of matchLines(e)) {
+      const bag = l.key ? keys : lines;
+      const id = l.key ?? l.variant;
+      let o = bag.get(id);
+      if (!o) bag.set(id, o = { id, n: 0, sites: new Map(), variants: new Map(), sample: e });
+      o.n++;
+      o.sites.set(e.siteId, (o.sites.get(e.siteId) ?? 0) + 1);
+      o.variants.set(l.variant, (o.variants.get(l.variant) ?? 0) + 1);
+    }
+  }
+  // Clés proches : une clé contenue, mot entier, dans une autre (« crème » / « crème liquide »).
+  const byWord = new Map();
+  keys.forEach(o => wordsOfKey(o.id).forEach(w => { (byWord.get(w) ?? byWord.set(w, []).get(w)).push(o.id); }));
+  keys.forEach(o => {
+    const w = wordsOfKey(o.id);
+    const cands = byWord.get(w[0]) ?? [];
+    o.near = cands.filter(c => c !== o.id && (c.startsWith(o.id + ' ') || o.id.startsWith(c + ' ') || (' ' + c + ' ').includes(' ' + o.id + ' ') || (' ' + o.id + ' ').includes(' ' + c + ' '))).slice(0, 8);
+  });
+  ing = { keys, lines };
+}
+
+function showIngredients() {
+  analyse();
+  const total = [...ing.lines.values()].reduce((a, o) => a + o.n, 0), ok = [...ing.keys.values()].reduce((a, o) => a + o.n, 0);
+  $('ing-status').textContent = `${nb(ing.keys.size)} ingrédients reconnus (${nb(ok)} lignes) · ${nb(ing.lines.size)} écritures non reconnues (${nb(total)} lignes, ${Math.round(100 * total / Math.max(1, total + ok))} %)`;
+  $('lbl-near').classList.toggle('hidden', mode !== 'keys');
+  renderIng();
+}
+
+function filteredIng() {
+  const words = norm($('iq').value).split(/\s+/).filter(Boolean);
+  const site = $('isite').value, min = +$('imin').value || 1, dec = $('idec').value, rayon = $('irayon').value, special = mode === 'keys' ? $('ispecial').value : '';
+  const type = mode === 'keys' ? 'k' : 'l';
+  let list = [...(mode === 'keys' ? ing.keys : ing.lines).values()].filter(o => {
+    const n = site ? (o.sites.get(site) ?? 0) : o.n;
+    if (n < min || (site && !n)) return false;
+    if (words.length && !words.every(w => norm(o.id + ' ' + [...o.variants.keys()].join(' ')).includes(w))) return false;
+    const d = decOf(type, o.id);
+    if (dec === 'none' ? d.status : dec === 'any' ? !d.status : dec ? d.status !== dec : false) return false;
+    if (rayon && d.rayon !== rayon) return false;
+    if (special === 'near' && !o.near.length) return false;
+    if (special === 'multi' && o.variants.size < 2) return false;
+    if (special === 'short' && !(o.id.length <= 3 && !o.id.includes(' '))) return false;
+    return true;
+  });
+  const by = { n: (a, b) => b.n - a.n, a: (a, b) => a.id.localeCompare(b.id, 'fr'), v: (a, b) => b.variants.size - a.variants.size || b.n - a.n }[$('isort').value];
+  return list.sort(by);
+}
+
+function renderIng() {
+  const type = mode === 'keys' ? 'k' : 'l';
+  const list = filteredIng();
+  const pages = Math.max(1, Math.ceil(list.length / IPAGE));
+  ipage = Math.min(ipage, pages - 1);
+  $('icount').textContent = nb(list.length) + (mode === 'keys' ? ' ingrédients reconnus' : ' écritures non reconnues');
+  $('ipage').textContent = `Page ${ipage + 1} / ${pages}`;
+  $('iprev').disabled = ipage === 0; $('inext').disabled = ipage >= pages - 1;
+  const head = mode === 'keys'
+    ? '<tr><th>Ingrédient reconnu (clé)</th><th>Recettes</th><th>Sites</th><th>Écritures vues dans les recettes</th><th>Clés proches</th><th>Décision</th></tr>'
+    : '<tr><th>Écriture non reconnue (sans quantité)</th><th>Lignes</th><th>Sites</th><th>Exemple</th><th>Décision</th></tr>';
+  const rows = list.slice(ipage * IPAGE, (ipage + 1) * IPAGE).map(o => {
+    const d = decOf(type, o.id);
+    const sites = [...o.sites].sort((a, b) => b[1] - a[1]).map(([s, n]) => `${esc(s)} ${nb(n)}`).join('<br>');
+    const decision = `<div style="display:grid;gap:4px;min-width:200px" data-id="${esc(o.id)}" data-type="${type}">
+      <select data-f="status">${STATUS.map(([v, l]) => `<option value="${v}"${d.status === v || (!d.status && !v) ? ' selected' : ''}>${l}</option>`).join('')}</select>
+      <input type="text" data-f="target" placeholder="${mode === 'keys' ? 'Clé cible (si regrouper)' : 'Clé cible ou nouvel ingrédient'}" value="${esc(d.target ?? '')}" list="dl-keys">
+      <select data-f="rayon"><option value="">Rayon…</option>${RAYONS.map(r => `<option${d.rayon === r ? ' selected' : ''}>${esc(r)}</option>`).join('')}</select>
+      <input type="text" data-f="search" placeholder="Terme de recherche drive" value="${esc(d.search ?? '')}">
+      <input type="text" data-f="note" placeholder="Note" value="${esc(d.note ?? '')}"></div>`;
+    if (mode === 'keys') {
+      const variants = [...o.variants].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([v, n]) => `${esc(v)} <span class="muted">×${nb(n)}</span>`).join('<br>') +
+        (o.variants.size > 8 ? `<br><span class="muted">… ${o.variants.size - 8} autres</span>` : '');
+      const near = o.near.map(k => `<a class="key" data-goto-key="${esc(k)}">${esc(k)}</a>`).join(', ');
+      return `<tr class="${d.status ? 'done' : ''}"><td><a class="key" data-goto-key="${esc(o.id)}" title="Voir les recettes">${esc(o.id)}</a></td><td class="n">${nb(o.n)}</td><td>${sites}</td><td>${variants}</td><td>${near || '<span class="muted">—</span>'}</td><td>${decision}</td></tr>`;
+    }
+    return `<tr class="${d.status ? 'done' : ''}"><td>${esc(o.id)}</td><td class="n">${nb(o.n)}</td><td>${sites}</td>` +
+      `<td><a href="${esc(o.sample.url)}" target="_blank" rel="noopener noreferrer">${esc(o.sample.title)}</a></td><td>${decision}</td></tr>`;
+  });
+  $('itable').innerHTML = head + rows.join('');
+}
+
+function exportRows() {
+  analyse();
+  return Object.entries(decisions).filter(([, d]) => d.status || d.target || d.rayon || d.search || d.note).map(([k, d]) => {
+    const [type, ...rest] = k.split(':'); const text = rest.join(':');
+    const o = (type === 'k' ? ing.keys : ing.lines).get(text);
+    return { type: type === 'k' ? 'key' : 'line', text, status: d.status ?? '', target: d.target ?? '', rayon: d.rayon ?? '', search: d.search ?? '', note: d.note ?? '', recipes: o?.n ?? 0 };
+  }).sort((a, b) => b.recipes - a.recipes);
+}
+function download(name, type, content) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content], { type })); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
 /* ---------- Événements ---------- */
 
 let timer;
 const later = () => { clearTimeout(timer); timer = setTimeout(apply, 200); };
-$('q').addEventListener('input', later);
-['site', 'course', 'kind', 'month', 'rating', 'time', 'check', 'sort', 'meal', 'balanced'].forEach(id => $(id).addEventListener('change', apply));
+const laterIng = () => { clearTimeout(timer); timer = setTimeout(() => { ipage = 0; renderIng(); }, 200); };
+const FILTERS = ['q', 'category', 'produce', 'withKey', 'withoutKey', 'monthsMin', 'monthsMax', 'votesMin', 'votesMax', 'timeMin', 'timeMax', 'prepMin', 'prepMax',
+  'cookMin', 'cookMax', 'servMin', 'servMax', 'ingMin', 'ingMax', 'keysMin', 'keysMax', 'unmMin', 'unmMax', 'lastFrom', 'lastTo'];
+FILTERS.forEach(id => $(id).addEventListener('input', later));
+['site', 'course', 'kind', 'month', 'rating', 'time', 'check', 'sort', 'meal', 'balanced', 'image'].forEach(id => $(id).addEventListener('change', apply));
+$('reset').addEventListener('click', () => {
+  FILTERS.forEach(id => { $(id).value = ''; });
+  ['site', 'course', 'kind', 'month', 'rating', 'time', 'check', 'sort', 'meal', 'balanced', 'image'].forEach(id => { $(id).value = ''; });
+  apply();
+});
 $('images').addEventListener('change', render);
 $('more').addEventListener('click', () => { limit += PAGE; render(); });
+
+function tab(name) {
+  $('view-recipes').classList.toggle('hidden', name !== 'recipes');
+  $('view-ingredients').classList.toggle('hidden', name !== 'ingredients');
+  $('tab-recipes').classList.toggle('on', name === 'recipes');
+  $('tab-ingredients').classList.toggle('on', name === 'ingredients');
+  if (name === 'ingredients') { $('ing-status').textContent = 'Analyse des ingrédients…'; setTimeout(showIngredients, 20); saveDec(); }
+}
+$('tab-recipes').addEventListener('click', () => tab('recipes'));
+$('tab-ingredients').addEventListener('click', () => tab('ingredients'));
+document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => {
+  mode = b.dataset.mode; ipage = 0;
+  $('mode-keys').classList.toggle('ghost', mode !== 'keys'); $('mode-lines').classList.toggle('ghost', mode !== 'lines');
+  showIngredients();
+}));
+['iq', 'imin'].forEach(id => $(id).addEventListener('input', laterIng));
+['isite', 'idec', 'irayon', 'ispecial', 'isort'].forEach(id => $(id).addEventListener('change', () => { ipage = 0; renderIng(); }));
+$('iprev').addEventListener('click', () => { ipage--; renderIng(); });
+$('inext').addEventListener('click', () => { ipage++; renderIng(); });
+
+$('itable').addEventListener('change', ev => {
+  const box = ev.target.closest('[data-id]'); if (!box) return;
+  const k = box.dataset.type + ':' + box.dataset.id;
+  const d = decisions[k] ?? (decisions[k] = {});
+  d[ev.target.dataset.f] = ev.target.value;
+  if (!Object.values(d).some(Boolean)) delete decisions[k];
+  saveDec();
+  if (ev.target.dataset.f === 'status') ev.target.closest('tr').classList.toggle('done', !!ev.target.value);
+});
+$('itable').addEventListener('click', ev => {
+  const a = ev.target.closest('[data-goto-key]'); if (!a) return;
+  $('withKey').value = a.dataset.gotoKey; tab('recipes'); apply(); window.scrollTo({ top: 0, behavior: 'smooth' });
+});
+$('exp-json').addEventListener('click', () => download('mapping-ingredients.json', 'application/json',
+  JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), decisions: exportRows() }, null, 2)));
+$('exp-csv').addEventListener('click', () => {
+  const cols = ['type', 'text', 'status', 'target', 'rayon', 'search', 'note', 'recipes'];
+  const q = v => '"' + String(v).replace(/"/g, '""') + '"';
+  download('mapping-ingredients.csv', 'text/csv', '﻿' + cols.join(';') + '\n' + exportRows().map(r => cols.map(c => q(r[c])).join(';')).join('\n'));
+});
+$('imp').addEventListener('change', async ev => {
+  try {
+    const data = JSON.parse(await ev.target.files[0].text());
+    (data.decisions ?? []).forEach(r => { decisions[(r.type === 'key' ? 'k' : 'l') + ':' + r.text] = { status: r.status, target: r.target, rayon: r.rayon, search: r.search, note: r.note }; });
+    saveDec(); renderIng();
+  } catch (err) { alert('Fichier illisible : ' + err.message); }
+  ev.target.value = '';
+});
+$('clear-dec').addEventListener('click', () => { if (confirm('Effacer toutes les décisions enregistrées dans ce navigateur ?')) { decisions = {}; saveDec(); renderIng(); } });
+
 $('file').addEventListener('change', e => load([...e.target.files]));
 const drop = $('drop');
 ['dragenter', 'dragover'].forEach(n => drop.addEventListener(n, e => { e.preventDefault(); drop.classList.add('over'); }));

@@ -83,7 +83,9 @@ les sites » de Découvrir garde la recherche en ligne en complément.
 - **Publication** : pousser `tools/catalog/publish.conf` rassemble le dernier passage terminé de chaque site dans la
   release « catalogue » ; la compilation suivante de l'APK embarque ces fichiers.
 - **Contrôle** : ouvrir `tools/catalog/viewer.html` dans un navigateur et y déposer les fichiers (ou l'archive .zip
-  téléchargée depuis GitHub) : recherche, filtres, fiches à contrôler, tableau par site.
+  téléchargée depuis GitHub) : recherche, tous les filtres de la base (durées, notes, saison, ingrédients, dates…), fiches à contrôler, tableau par site ;
+  onglet **Ingrédients & mapping** : ingrédients reconnus pour les courses, lignes non reconnues, décisions (regrouper, placard, rayon,
+  terme de recherche drive) exportables en JSON/CSV.
 - **Mise à jour hebdomadaire** : le workflow « Catalogue — mise à jour hebdomadaire » (`catalog-weekly.yml`, chaque dimanche, ou
   « Run workflow ») repart des bases déjà publiées, ne lit que les fiches nouvelles ou modifiées de chaque site, republie la
   release « catalogue » (bases `<site>.jsonl.gz`, état de lecture `<site>.seen.tsv.gz`, `version.txt`), puis relance « Build APK »
