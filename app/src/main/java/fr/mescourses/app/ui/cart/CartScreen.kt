@@ -648,8 +648,8 @@ private fun ChoiceSheet(
     val shownRelevant = if (showAll) relevant else minOf(relevant, 8)
     val searching = line.status == LineStatus.A_CHERCHER
     val canWiden = fr.mescourses.core.cart.CartPlanner.widen(line.query ?: query) != null
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        LazyColumn(Modifier.fillMaxWidth()) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), contentWindowInsets = { WindowInsets(0) }) {
+        LazyColumn(Modifier.fillMaxWidth().imePadding().navigationBarsPadding()) {
             item {
                 Column(Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
                     Text("Choisir pour « ${ShoppingListMerger.format(line.item)} »", style = MaterialTheme.typography.titleMedium)
