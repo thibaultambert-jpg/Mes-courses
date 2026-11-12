@@ -76,6 +76,9 @@ les sites » de Découvrir garde la recherche en ligne en complément.
   fichier `<site>.jsonl.gz` par site. 750g et Cuisine Actuelle, sans sitemap, sont lus par leurs rubriques paginées
   (workflow « Catalogue — sites par rubriques », lancé en poussant `tools/catalog/extra.conf`).
   fichier `<site>.jsonl.gz` par site.
+- **Rattrapage** : pousser `tools/catalog/retry.conf` (liste `SITES`) rejoue les fiches restées en erreur sur ces sites
+  (workflow « Catalogue — rattrapage »). Chaque passage écrit `<site>.erreurs.tsv` (toutes les fiches encore en erreur,
+  avec leur message), rangé dans l'artefact `erreurs-<site>-<passage>`. La publication prend le rattrapage le plus récent.
 - **Publication** : pousser `tools/catalog/publish.conf` rassemble le dernier passage terminé de chaque site dans la
   release « catalogue » ; la compilation suivante de l'APK embarque ces fichiers.
 - **Contrôle** : ouvrir `tools/catalog/viewer.html` dans un navigateur et y déposer les fichiers (ou l'archive .zip
