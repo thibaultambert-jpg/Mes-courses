@@ -119,11 +119,11 @@ fun StoreScreen(retailer: Retailer, onBack: () -> Unit, onOpenSite: (String) -> 
                 item {
                     InfoBanner(
                         "ℹ️",
-                        "Chez Auchan, le drive se choisit sur le site (connecte-toi, puis « Choisir mon drive »). " +
-                            "L'application lit ensuite le magasin dans ton panier.",
+                        "Chez Auchan, le drive ou la livraison à domicile se choisit sur le site. " +
+                            "L'application le lit ensuite dans ton panier (dès qu'il contient un article).",
                     )
                 }
-                item { Button(onClick = { onOpenSite(c.bridge(retailer).site.storeChoice()) }) { Text("Choisir le drive sur auchan.fr") } }
+                item { Button(onClick = { onOpenSite(c.bridge(retailer).site.storeChoice()) }) { Text("Choisir drive ou livraison sur auchan.fr") } }
                 return@LazyColumn
             }
             item {
