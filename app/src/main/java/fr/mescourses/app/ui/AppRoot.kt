@@ -25,6 +25,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
@@ -97,7 +98,11 @@ fun AppRoot(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
         container.shopping.observeAll().map { l -> l.filterNot { it.checked }.map { ShoppingListMerger.key(it.name) }.distinct().size }
     }.collectAsStateWithLifecycle(0)
 
+    // Le clavier est géré une seule fois, ici : les écrans n'ajoutent pas leur propre imePadding (sinon la barre du bas
+    // monterait deux fois) et la barre d'onglets est masquée quand il est ouvert.
+    val imeOpen = androidx.compose.foundation.layout.WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
     Scaffold(
+        modifier = Modifier.imePadding(),
         containerColor = MaterialTheme.colorScheme.background,
         // Pop-in d'annulation globales : elles survivent aux changements d'écran. Sur l'onglet Liste, on les remonte
         // au-dessus de la barre de saisie.
@@ -108,7 +113,7 @@ fun AppRoot(sharedUrl: String?, onSharedUrlConsumed: () -> Unit) {
             )
         },
         bottomBar = {
-            if (tabs.any { current?.startsWith(it.route) == true }) {
+            if (!imeOpen && tabs.any { current?.startsWith(it.route) == true }) {
                 NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
                     tabs.forEach { tab ->
                         val badge = when (tab.route) {

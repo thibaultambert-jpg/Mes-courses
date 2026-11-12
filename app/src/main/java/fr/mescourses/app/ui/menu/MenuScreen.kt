@@ -266,7 +266,7 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit, onOpenS
 
     state.picker?.let { recipes ->
         AddDishSheet(
-            recipes = recipes, busy = state.pickerBusy,
+            recipes = recipes, busy = state.pickerBusy, course = state.pickerCourse, onCourse = vm::setPickerCourse,
             onSearch = vm::searchPicker, onPick = { vm.addCandidate(it) }, onOpen = onOpenPreview, onDismiss = vm::closePicker,
         )
     }
@@ -1082,6 +1082,8 @@ private fun ChatSheet(
 private fun AddDishSheet(
     recipes: List<Candidate>,
     busy: Boolean,
+    course: Course?,
+    onCourse: (Course?) -> Unit,
     onSearch: (String) -> Unit,
     onPick: (Candidate) -> Unit,
     onOpen: (String) -> Unit,
@@ -1091,9 +1093,14 @@ private fun AddDishSheet(
     var query by remember { mutableStateOf("") }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, contentWindowInsets = { WindowInsets(0) }) {
         Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(horizontal = 16.dp)) {
-            Text("Ajouter un plat", style = MaterialTheme.typography.titleLarge)
+            Text("Ajouter au menu", style = MaterialTheme.typography.titleLarge)
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf<Pair<Course?, String>>(null to "Plat", Course.ENTREE to "Entrée", Course.DESSERT to "Dessert").forEach { (c, label) ->
+                    FilterChip(selected = course == c, onClick = { onCourse(c) }, label = { Text(label) })
+                }
+            }
             Text(
-                "Recettes disponibles pour ce menu. Touche une recette pour l'ajouter, ou cherche autre chose.",
+                "Touche une recette pour l'ajouter, ou cherche autre chose.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
