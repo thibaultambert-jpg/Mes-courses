@@ -21,6 +21,8 @@ private val Context.dataStore by preferencesDataStore(name = "settings")
 data class Settings(
     val modelPath: String = "",
     val preferGpu: Boolean = true,
+    /** Bloc « Bienvenue » de l'écran Menu replié. */
+    val welcomeCollapsed: Boolean = false,
     val hfToken: String = "",
     /** Adultes par défaut pour chaque repas. */
     val householdSize: Int = 2,
@@ -110,6 +112,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
     private object K {
         val modelPath = stringPreferencesKey("model_path")
         val preferGpu = booleanPreferencesKey("prefer_gpu")
+        val welcomeCollapsed = booleanPreferencesKey("welcome_collapsed")
         val hfToken = stringPreferencesKey("hf_token")
         val household = intPreferencesKey("household")
         val children = intPreferencesKey("children")
@@ -140,6 +143,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
     private fun Preferences.toSettings() = Settings(
         modelPath = this[K.modelPath].orEmpty(),
         preferGpu = this[K.preferGpu] ?: true,
+        welcomeCollapsed = this[K.welcomeCollapsed] ?: false,
         hfToken = this[K.hfToken].orEmpty(),
         householdSize = this[K.household] ?: 2,
         children = this[K.children] ?: 0,
@@ -178,6 +182,7 @@ class SettingsStore(private val context: Context, scope: CoroutineScope) {
             val s = transform(prefs.toSettings())
             prefs[K.modelPath] = s.modelPath
             prefs[K.preferGpu] = s.preferGpu
+            prefs[K.welcomeCollapsed] = s.welcomeCollapsed
             prefs[K.hfToken] = s.hfToken
             prefs[K.household] = s.householdSize
             prefs[K.children] = s.children

@@ -34,7 +34,7 @@ jobs:
         run: |
           . tools/catalog/publish.conf
           main="${RUN:-$(gh run list --workflow catalog.yml --limit 1 --json databaseId -q '.[0].databaseId')}"
-          # Sites lus par rubriques (750g, Cuisine Actuelle) : une collecte par site, donc plusieurs runs récents.
+          # Sites lus par rubriques (750g, Cuisine Actuelle, Cuisine Addict) : une collecte par site, donc plusieurs runs récents.
           extras="$(gh run list --workflow catalog-extra.yml --limit 6 --json databaseId -q '.[].databaseId' || true)"
           # Rattrapages (fiches rejouées après coup) : les plus récents d'abord, leur fichier remplace celui de la collecte.
           retries="$(gh run list --workflow catalog-retry.yml --limit 6 --json databaseId -q '.[].databaseId' || true)"
@@ -45,7 +45,7 @@ jobs:
           done
           # Pour chaque site : parmi les runs (collecte, rattrapage, rubriques), le dernier passage de chacun, et on garde le
           # fichier le plus complet (le plus de lignes) : un rattrapage interrompu ne doit pas remplacer une collecte entière.
-          for site in cuisineaz ptitchef marmiton chefsimon hellofresh jow jdf 750g cuisineactuelle; do
+          for site in cuisineaz ptitchef marmiton chefsimon hellofresh jow jdf 750g cuisineactuelle cuisineaddict; do
             best=""; best_lines=0
             for run in $retries $main $extras; do
               last=$(ls -d parts/$run/catalog-$site-* 2>/dev/null | sort -V | tail -1)

@@ -7,6 +7,7 @@ import fr.mescourses.core.catalog.CatalogQuery
 import fr.mescourses.core.catalog.CatalogRanking
 import fr.mescourses.core.catalog.toHit
 import fr.mescourses.core.model.MenuDish
+import fr.mescourses.core.menu.MenuValidator
 import fr.mescourses.core.model.Recipe
 import fr.mescourses.core.model.RecipeStatus
 import fr.mescourses.core.recipes.QuickIdea
@@ -252,9 +253,14 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
         }
     }
 
-    private fun filtered(r: RecipeSearchResult) = r.copy(hits = RecipeFilters.apply(r.hits, filters.value, sort.value))
+    /** Adresses (normalisées) des recettes en favoris : elles n'apparaissent plus dans les résultats. */
+    private var favoriteUrls: Set<String> = emptySet()
 
-    private fun show(r: RecipeSearchResult) {
+    private fun filtered(r: RecipeSearchResult) =
+        r.copy(hits = RecipeFilters.apply(r.hits.filterNot { RecipeSites.normalize(it.url) in favoriteUrls }, filters.value, sort.value))
+
+    private suspend fun show(r: RecipeSearchResult) {
+        favoriteUrls = c.recipes.all().filter { it.favorite && it.sourceUrl != null }.map { RecipeSites.normalize(it.sourceUrl!!) }.toSet()
         raw = r
         state.value = State.Done(filtered(r))
     }
@@ -299,16 +305,33 @@ class RecipePreviewViewModel(private val c: AppContainer, val url: String) : Vie
     val messages = MutableStateFlow<String?>(null)
     val site: RecipeSite? = RecipeSites.forUrl(url)
 
+    /** Vrai quand la fiche vient de ce qu'on savait déjà (hors ligne, ou site injoignable). */
+    val offline = MutableStateFlow(false)
+
+    /** Nombre de personnes pour cette recette : celui des Réglages au départ, modifiable ici. */
+    val portions = MutableStateFlow(c.defaultPortions())
+
+    fun childFactor() = c.settings.current.childFactor
+
+    /** État de l'assistant (le bouton « générer » n'a de sens que s'il est installé). */
+    val chefStatus = c.model.status
+
     init { load() }
 
     fun load() = viewModelScope.launch {
         state.value = State.Loading
+        offline.value = false
+        favorites.find(url)?.let { state.value = State.Loaded(it); return@launch }
+        // Sans internet, inutile d'attendre le site : on affiche tout de suite ce qui est déjà connu.
+        if (!c.online()) c.knownRecipe(url)?.let { offline.value = true; state.value = State.Loaded(it); return@launch }
         state.value = try {
-            State.Loaded(favorites.find(url) ?: c.importer.import(url))
+            State.Loaded(c.importer.import(url))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            State.Failed(e.message ?: "La page n'a pas pu être lue.")
+            val known = c.knownRecipe(url)
+            if (known != null) { offline.value = true; State.Loaded(known) }
+            else State.Failed(e.message ?: "La page n'a pas pu être lue.")
         }
     }
 
@@ -318,17 +341,44 @@ class RecipePreviewViewModel(private val c: AppContainer, val url: String) : Vie
         onSaved(id)
     }
 
-    /** Ajoute au menu en préparation (la recette rejoint aussi les favoris, pour garder ses ingrédients). */
+    /**
+     * Ajoute au menu en préparation, sans la mettre en favoris : le plat garde l'adresse du site, et la recette
+     * n'entre dans le livre (historique) qu'à la validation du menu. Déjà dans le livre : on la réutilise.
+     */
     fun addToMenu(r: Recipe) = viewModelScope.launch {
-        val id = favorites.add(r)
-        c.draft.set(c.draft.get() + MenuDish(r.title, r.description.orEmpty(), c.defaultPortions(), id))
-        messages.value = "« ${r.title} » ajoutée au menu en préparation (et aux favoris)"
+        val inBook = favorites.find(url) ?: r.sourceUrl?.let { favorites.find(it) }
+        val minutes = listOfNotNull(r.prepMinutes, r.cookMinutes).takeIf { it.isNotEmpty() }?.sum()
+        c.draft.set(
+            c.draft.get() + MenuDish(
+                title = r.title,
+                description = r.description.orEmpty(),
+                portions = portions.value,
+                recipeId = inBook?.id,
+                mainIngredients = r.ingredients.map { it.name }.take(8),
+                sourceUrl = r.sourceUrl ?: url,
+                imageUrl = r.imageUrl,
+                totalMinutes = minutes,
+            ),
+        )
+        messages.value = "« ${r.title} » ajoutée au menu en préparation"
     }
 
     fun addToList(r: Recipe) = viewModelScope.launch {
-        val p = c.defaultPortions()
+        val p = portions.value
         c.shopping.add(ShoppingListMerger.fromRecipe(r, p.equivalent(c.settings.current.childFactor), c.settings.current.pantryList()))
         messages.value = "Ingrédients ajoutés à la liste (${p.label()})"
+    }
+
+    /**
+     * Le chef complète une recette sans étapes. Elle doit être dans le livre pour recevoir ses étapes : on l'y range
+     * (favoris), on le lance sur demande seulement, puis [onSaved] ouvre la fiche du livre où l'on suit l'écriture.
+     */
+    fun generateSteps(r: Recipe, onSaved: (Long) -> Unit) = viewModelScope.launch {
+        val id = favorites.add(r.copy(tags = (r.tags + MenuValidator.STEPS_PENDING).distinct()))
+        val saved = c.recipes.get(id)
+        if (saved != null && saved.steps.isEmpty() && MenuValidator.STEPS_PENDING !in saved.tags) c.recipes.save(saved.copy(tags = saved.tags + MenuValidator.STEPS_PENDING))
+        c.chef.requestSteps(id, first = true)
+        onSaved(id)
     }
 }
 

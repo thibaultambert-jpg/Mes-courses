@@ -157,6 +157,8 @@ class RoomShoppingRepository(private val dao: ShoppingDao) : ShoppingRepository 
     }
     override suspend fun delete(id: Long) = dao.delete(id)
     override suspend fun clearChecked() = dao.clearChecked()
+    // Par paquets : SQLite limite le nombre de paramètres d'une requête.
+    override suspend fun setChecked(ids: List<Long>, checked: Boolean) = ids.chunked(500).forEach { dao.setChecked(it, checked) }
 }
 
 /** Mémoire des choix produit (présélection lors des envois suivants au panier). */

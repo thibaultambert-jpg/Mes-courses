@@ -51,6 +51,10 @@ class RecipeSearchTest {
         assertNull(RecipeSites.forUrl("https://exemple.fr/recette"))
         assertTrue(RecipeSites.byId("750g")!!.isRecipeUrl("https://www.750g.com/risotto-aux-champignons-r12345.htm"))
         assertTrue(!marmiton.isRecipeUrl("https://www.marmiton.org/recettes/selection_risottos.aspx"))
+        val addict = RecipeSites.byId("cuisineaddict")!!
+        assertEquals("cuisineaddict", RecipeSites.forUrl("https://www.cuisineaddict.com/recette-chakchouka.htm")?.id)
+        assertTrue(addict.isRecipeUrl("https://www.cuisineaddict.com/recette-chakchouka.htm?page=2"))
+        assertTrue(!addict.isRecipeUrl("https://www.cuisineaddict.com/recettes-plats.htm"))
         assertEquals(4, RecipeSites.searchable.size)
     }
 
