@@ -249,9 +249,12 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
 
     /** Demande au drive les articles du panier qu'il ne pourra pas servir, et cherche des remplaçants. */
     fun checkUnavailable() = viewModelScope.launch {
-        val eans = runCatching { c.backend().unavailableInCart() }.getOrDefault(emptyList())
-        if (eans.isEmpty()) { _state.update { it.copy(toReplace = emptyList()) }; return@launch }
         val cart = _state.value.cart ?: runCatching { c.backend().cart() }.getOrNull()
+        // Panier vidé (sur le site ou ailleurs) : la simulation du drive peut garder d'anciens articles, on les ignore.
+        val inCartEans = cart?.lines.orEmpty().filter { it.quantity > 0 }.map { it.ean }.toSet()
+        val eans = if (inCartEans.isEmpty()) emptyList()
+        else runCatching { c.backend().unavailableInCart() }.getOrDefault(emptyList()).filter { it in inCartEans }
+        if (eans.isEmpty()) { _state.update { it.copy(toReplace = emptyList()) }; return@launch }
         val replacements = eans.map { ean ->
             val inCart = cart?.lines?.firstOrNull { it.ean == ean }
             val sent = _state.value.lines.firstOrNull { it.product?.ean == ean }
