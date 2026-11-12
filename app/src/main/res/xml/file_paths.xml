@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Fichiers partageables : seulement les exports du debug (cache/debug). -->
+<!-- Fichiers partageables : exports du debug (cache/debug) et APK de mise à jour (cache/update). -->
 <paths>
     <cache-path name="debug" path="debug/" />
+    <cache-path name="update" path="update/" />
 </paths>
