@@ -193,4 +193,15 @@ class CatalogTest {
         assertEquals(1, updater.update().added)
         assertEquals("Soupe de courge et carottes", store.byUrl("https://www.cuisineaz.com/recettes/neuf-9.aspx")?.title)
     }
+
+    @Test fun mise_a_jour_ignore_les_sites_non_telecharges() = kotlinx.coroutines.test.runTest {
+        val source = fr.mescourses.core.catalog.CatalogSource("cuisineaz", listOf("https://x.fr/s.xml"), null, Regex("""cuisineaz\.com/recettes/[^/]+-\d+\.aspx$"""))
+        val fetched = mutableListOf<String>()
+        val updater = fr.mescourses.core.catalog.CatalogUpdater(InMemoryCatalog(emptyList()), { url -> fetched += url; "<urlset></urlset>" }, listOf(source)) { 0L }
+        // Base de ce site non téléchargée : aucune requête vers le site.
+        updater.update(only = setOf("marmiton"))
+        assertTrue(fetched.isEmpty())
+        updater.update(only = setOf("cuisineaz"))
+        assertEquals(listOf("https://x.fr/s.xml"), fetched)
+    }
 }

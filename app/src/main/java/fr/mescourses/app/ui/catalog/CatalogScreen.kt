@@ -1,0 +1,122 @@
+package fr.mescourses.app.ui.catalog
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import fr.mescourses.app.data.CatalogStatus
+import fr.mescourses.app.ui.common.ScreenScaffold
+import fr.mescourses.app.ui.common.appContainer
+import fr.mescourses.app.ui.components.SectionCard
+import fr.mescourses.core.catalog.CatalogSources
+import fr.mescourses.core.recipes.RecipeSites
+import java.util.Locale
+
+/**
+ * Choix des bases de recettes à télécharger (une par site). Premier écran au premier lancement ([firstRun]), puis
+ * accessible depuis les Réglages et depuis les filtres de recherche.
+ */
+@Composable
+fun CatalogScreen(firstRun: Boolean, onDone: () -> Unit) {
+    val c = appContainer()
+    val sync = c.catalogSync
+    val st by sync.status.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { sync.checkRemote() }
+
+    val sites = CatalogSources.all.map { it.siteId }.sortedBy { siteName(it).lowercase() }
+    val missing = sites.filter { it !in st.installed }
+    val busy = st.working != null
+
+    ScreenScaffold(title = "Bases de recettes", onBack = if (firstRun) null else onDone) { padding ->
+        Column(
+            Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp).navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                if (firstRun) "Choisis les sites dont tu veux avoir les recettes sur ton téléphone. Découvrir et le menu cherchent dedans sans réseau. " +
+                    "Tu pourras en ajouter ou en retirer plus tard dans Réglages › Bases de recettes."
+                else "Une base par site de recettes, enregistrée sur le téléphone. Seules les bases téléchargées sont utilisées par la recherche et le menu.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                "Chaque base pèse de quelques Mo à plusieurs dizaines de Mo : mieux vaut être en Wi-Fi.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (missing.isNotEmpty()) {
+                Button(onClick = { sync.install(missing) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (missing.size == sites.size) "Tout télécharger" else "Télécharger les ${missing.size} restantes")
+                }
+            }
+            sites.forEach { id -> SiteRow(id, st, busy, onInstall = { sync.install(listOf(id)) }, onRemove = { sync.remove(id) }) }
+
+            st.working?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            else st.lastResult?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+
+            if (firstRun) {
+                Button(onClick = onDone, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (st.installed.isEmpty()) "Passer pour l'instant" else "Continuer")
+                }
+                if (st.installed.isEmpty()) Text(
+                    "Sans base, la recherche se fait en ligne, site par site.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SiteRow(id: String, st: CatalogStatus, busy: Boolean, onInstall: () -> Unit, onRemove: () -> Unit) {
+    val installed = id in st.installed
+    val size = st.remote[id]?.bytes?.takeIf { it > 0 }?.let { mb(it) }
+    SectionCard(contentPadding = 12.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text(siteName(id), style = MaterialTheme.typography.titleSmall)
+                Text(
+                    when {
+                        installed -> "%,d recettes".format(Locale.FRANCE, st.bySite[id] ?: 0) + if (st.outdated(id)) " · mise à jour disponible" else " · à jour"
+                        else -> "Non téléchargée" + (size?.let { " · $it" }.orEmpty())
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            when {
+                st.installing == id -> CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                !installed -> Button(onClick = onInstall, enabled = !busy) { Text("Télécharger") }
+                st.outdated(id) -> OutlinedButton(onClick = onInstall, enabled = !busy) { Text("Mettre à jour") }
+                else -> TextButton(onClick = onRemove, enabled = !busy) { Text("Supprimer") }
+            }
+        }
+        // Base à jour : on peut aussi la retirer ; base à mettre à jour : retrait en plus.
+        if (installed && st.outdated(id)) TextButton(onClick = onRemove, enabled = !busy) { Text("Supprimer") }
+    }
+}
+
+private fun siteName(id: String) = RecipeSites.byId(id)?.name ?: id
+
+private fun mb(bytes: Long) = if (bytes < 1_000_000) "<1 Mo" else "%.0f Mo".format(Locale.FRANCE, bytes / 1_000_000.0)

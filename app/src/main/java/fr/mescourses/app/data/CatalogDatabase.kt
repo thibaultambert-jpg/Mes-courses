@@ -136,6 +136,16 @@ interface CatalogDao {
         }
     }
 
+    /** Retire la base d'un site (recettes et pages sans recette) ; l'index de recherche suit. */
+    @Query("DELETE FROM catalog_recipe WHERE siteId = :siteId")
+    suspend fun deleteSite(siteId: String)
+
+    @Query("DELETE FROM catalog_empty WHERE siteId = :siteId")
+    suspend fun deleteEmptySite(siteId: String)
+
+    @Query("DELETE FROM catalog_meta WHERE `key` = :key")
+    suspend fun deleteMeta(key: String)
+
     @Query("SELECT url, lastmod FROM catalog_recipe WHERE siteId = :siteId")
     suspend fun recipePages(siteId: String): List<UrlLastmod>
 
@@ -171,6 +181,13 @@ class RoomCatalogStore(private val dao: CatalogDao) : CatalogStore {
     override suspend fun markEmpty(siteId: String, url: String, lastmod: String?) = dao.markEmpty(CatalogEmptyEntity(url, siteId, lastmod))
     override suspend fun meta(key: String) = dao.meta(key)
     override suspend fun setMeta(key: String, value: String) = dao.setMeta(CatalogMetaEntity(key, value))
+    suspend fun deleteMeta(key: String) = dao.deleteMeta(key)
+
+    /** Supprime la base d'un site. */
+    suspend fun deleteSite(siteId: String) {
+        dao.deleteSite(siteId)
+        dao.deleteEmptySite(siteId)
+    }
 
     override suspend fun search(query: CatalogQuery): List<CatalogEntry> {
         val args = ArrayList<Any>()

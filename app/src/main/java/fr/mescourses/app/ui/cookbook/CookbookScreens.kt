@@ -121,6 +121,7 @@ fun CookbookScreen(
     onOpenSettings: () -> Unit,
     onOpenPreview: (String) -> Unit,
     onBrowse: (String) -> Unit,
+    onOpenCatalog: () -> Unit,
 ) {
     val vm = containerViewModel { CookbookViewModel(it) }
     val discover by vm.discover.collectAsStateWithLifecycle()
@@ -204,7 +205,7 @@ fun CookbookScreen(
                 }
             }
             if (discover) {
-                DiscoverContent(snackbar = snackbar, onOpenPreview = onOpenPreview, onBrowse = onBrowse)
+                DiscoverContent(snackbar = snackbar, onOpenPreview = onOpenPreview, onBrowse = onBrowse, onOpenCatalog = onOpenCatalog)
             } else {
             OutlinedTextField(
                 value = query,

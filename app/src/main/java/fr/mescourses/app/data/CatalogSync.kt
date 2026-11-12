@@ -4,12 +4,16 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.util.Log
 import fr.mescourses.core.catalog.CatalogEntry
+import fr.mescourses.core.catalog.CatalogSources
 import fr.mescourses.core.catalog.CatalogUpdater
+import fr.mescourses.core.recipes.RecipeSites
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.isSuccess
+import io.ktor.utils.io.jvm.javaio.toInputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -17,14 +21,18 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.BufferedInputStream
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.util.zip.GZIPInputStream
 
-/** État du catalogue affiché dans les Réglages. */
+/** Base d'un site telle que la release « catalogue » la publie. */
+data class RemoteSite(val url: String, val bytes: Long)
+
+/** État du catalogue affiché dans les Réglages et dans l'écran de choix des bases. */
 data class CatalogStatus(
     val count: Int = 0,
     val bySite: Map<String, Int> = emptyMap(),
@@ -33,11 +41,30 @@ data class CatalogStatus(
     /** Travail en cours (« Nouveautés de Marmiton… ») ; null = au repos. */
     val working: String? = null,
     val lastResult: String? = null,
-)
+    /** L'état a été lu dans la base au moins une fois (avant, « aucune base » ne veut encore rien dire). */
+    val loaded: Boolean = false,
+    /** Sites dont la base est sur le téléphone. */
+    val installed: Set<String> = emptySet(),
+    /** Version (date de publication) de la base de chaque site installé. */
+    val versions: Map<String, String> = emptyMap(),
+    /** Dernière version publiée ; null = pas encore cherchée ou hors ligne. */
+    val remoteVersion: String? = null,
+    /** Bases disponibles au téléchargement (taille comprise) ; vide = pas encore cherchées. */
+    val remote: Map<String, RemoteSite> = emptyMap(),
+    /** Site en cours de téléchargement. */
+    val installing: String? = null,
+) {
+    /** Une base installée dont une version plus récente est publiée. */
+    fun outdated(siteId: String): Boolean {
+        val mine = versions[siteId]
+        return siteId in installed && remoteVersion != null && siteId in remote && mine != remoteVersion
+    }
+}
 
 /**
- * Remplit et tient à jour le catalogue local : au lancement, charge le fichier embarqué dans l'appli s'il est nouveau,
- * puis cherche les nouveautés des sites, au plus une fois par jour.
+ * Les bases de recettes (une par site) : chacune se télécharge à la demande depuis la release « catalogue » du dépôt
+ * (refaite chaque semaine par la CI) ; à défaut de réseau, la copie embarquée dans l'appli à la compilation sert de secours.
+ * Une fois installée, la base est tenue à jour par le téléphone (nouveautés des sites, au plus une fois par jour).
  */
 class CatalogSync(
     private val context: Context,
@@ -46,27 +73,93 @@ class CatalogSync(
     private val http: HttpClient,
 ) {
     val status = MutableStateFlow(CatalogStatus())
+
+    /** Écran de choix à montrer au premier lancement : null = pas encore su, true = à montrer, false = déjà vu. */
+    val firstRun = MutableStateFlow<Boolean?>(null)
+
     private val lock = Mutex()
     private val json = Json { ignoreUnknownKeys = true }
     private val updater = CatalogUpdater(store, ::fetch)
 
+    @Serializable private data class Asset(val name: String = "", val size: Long = 0, val browser_download_url: String = "")
+    @Serializable private data class Release(val assets: List<Asset> = emptyList())
+
     /** Au lancement de l'appli. Ne bloque rien : tout se passe en arrière-plan. */
     fun start() {
         scope.launch(Dispatchers.IO) {
-            exclusive("Chargement du catalogue…") { importAssets() }
+            refresh(null)
+            val s = status.value
+            // Qui a déjà des recettes (version précédente de l'appli) n'a pas besoin de l'écran de choix.
+            if (s.count > 0 && store.meta(SETUP_DONE) == null) store.setMeta(SETUP_DONE, "1")
+            firstRun.value = store.meta(SETUP_DONE) == null
             // Laisse l'appli démarrer avant de solliciter le réseau ; pas de mise à jour d'office en données mobiles.
             delay(15_000)
-            if (updater.due() && !metered()) update()
+            if (!metered()) {
+                loadRemote()
+                if (status.value.installed.isNotEmpty() && updater.due()) update()
+            }
         }
     }
 
-    /** Bouton « Mettre à jour maintenant » des Réglages. */
+    /** L'écran de choix a été vu (ou passé) : il ne s'ouvre plus tout seul. */
+    fun finishSetup() {
+        firstRun.value = false
+        scope.launch(Dispatchers.IO) { store.setMeta(SETUP_DONE, "1") }
+    }
+
+    /** Cherche ce que la release publie (à l'ouverture de l'écran de choix). */
+    fun checkRemote() {
+        scope.launch(Dispatchers.IO) { loadRemote() }
+    }
+
+    /** Télécharge et installe les bases demandées, l'une après l'autre. */
+    fun install(siteIds: List<String>) {
+        scope.launch(Dispatchers.IO) {
+            exclusive("Téléchargement…") {
+                val results = ArrayList<String>()
+                val failed = ArrayList<String>()
+                for (id in siteIds) {
+                    if (CatalogSources.byId(id) == null) continue
+                    val name = siteName(id)
+                    status.value = status.value.copy(installing = id, working = "$name : téléchargement…")
+                    try {
+                        results += "$name : %,d".format(java.util.Locale.FRANCE, installOne(id))
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Base $id", e)
+                        failed += "$name (${e.message?.take(80)})"
+                    }
+                    refresh(null)
+                }
+                listOfNotNull(
+                    results.takeIf { it.isNotEmpty() }?.let { "Téléchargé · ${it.joinToString(" · ")}" },
+                    failed.takeIf { it.isNotEmpty() }?.let { "Échec : ${it.joinToString(", ")}" },
+                ).joinToString(" — ")
+            }
+        }
+    }
+
+    /** Retire la base d'un site du téléphone. */
+    fun remove(siteId: String) {
+        scope.launch(Dispatchers.IO) {
+            exclusive("Suppression…") {
+                store.deleteSite(siteId)
+                store.deleteMeta(versionKey(siteId))
+                "${siteName(siteId)} supprimée"
+            }
+        }
+    }
+
+    /** Bouton « Chercher les nouveautés maintenant ». */
     fun updateNow() {
         scope.launch(Dispatchers.IO) { update() }
     }
 
     private suspend fun update() = exclusive("Recherche des nouveautés…") {
-        val report = updater.update { message -> status.value = status.value.copy(working = message) }
+        val installed = status.value.installed
+        if (installed.isEmpty()) return@exclusive "Aucune base téléchargée"
+        val report = updater.update(only = installed) { message -> status.value = status.value.copy(working = message) }
         buildString {
             append(if (report.added == 0) "Aucune nouvelle recette" else "${report.added} nouvelle${if (report.added > 1) "s" else ""} recette${if (report.added > 1) "s" else ""}")
             if (report.failedSites.isNotEmpty()) append(" · sans réponse : ${report.failedSites.joinToString(", ")}")
@@ -93,51 +186,128 @@ class CatalogSync(
     }
 
     private suspend fun refresh(result: String?) {
-        status.value = CatalogStatus(
+        val bySite = store.countBySite()
+        val installed = bySite.filterValues { it > 0 }.keys
+        status.value = status.value.copy(
             count = store.count(),
-            bySite = store.countBySite(),
+            bySite = bySite,
             lastUpdate = store.meta(CatalogUpdater.LAST_UPDATE)?.toLongOrNull(),
             working = null,
+            installing = null,
             lastResult = result ?: status.value.lastResult,
+            loaded = true,
+            installed = installed,
+            versions = installed.mapNotNull { id -> storedVersion(id)?.let { id to it } }.toMap(),
         )
     }
 
-    /** Fichiers `assets/catalog/<site>.jsonl(.gz)` : chargés une fois par version (`assets/catalog/version.txt`). */
-    private suspend fun importAssets(): String? = withContext(Dispatchers.IO) {
-        val assets = context.assets
-        val files = assets.list(DIR).orEmpty().filter { it.endsWith(".jsonl") || it.endsWith(".jsonl.gz") }.sorted()
-        if (files.isEmpty()) return@withContext null
-        val version = runCatching { assets.open("$DIR/version.txt").bufferedReader().use { it.readText().trim() } }.getOrDefault("1")
-        var added = 0
-        val failed = mutableListOf<String>()
-        for (file in files) {
-            val key = "fichier:$file"
-            if (store.meta(key) == version) continue
-            // Un fichier en échec ne doit pas empêcher de charger les suivants ; il sera retenté au prochain lancement.
-            try {
-                val input = BufferedInputStream(assets.open("$DIR/$file"))
-                input.mark(2)
-                val gzip = input.read() == 0x1f && input.read() == 0x8b
-                input.reset()
-                (if (gzip) GZIPInputStream(input) else input).bufferedReader().useLines { lines ->
-                    lines.filter { it.isNotBlank() }.chunked(400).forEach { part ->
-                        val entries = part.mapNotNull { line -> runCatching { json.decodeFromString(CatalogEntry.serializer(), line) }.getOrNull() }
-                        store.upsert(entries)
-                        added += entries.size
-                        status.value = status.value.copy(working = "Chargement du catalogue… ($added recettes)")
-                    }
+    /** Version d'une base installée ; les bases chargées par une ancienne version de l'appli ont l'ancienne clé. */
+    private suspend fun storedVersion(siteId: String): String? =
+        store.meta(versionKey(siteId)) ?: store.meta("fichier:$siteId.jsonl.gz") ?: store.meta("fichier:$siteId.jsonl")
+
+    /** Release « catalogue » : liste des bases (adresse, taille) et version publiée. */
+    private suspend fun loadRemote() {
+        try {
+            val response = http.get("https://api.github.com/repos/$REPO/releases/tags/$TAG_NAME") { header("Accept", "application/vnd.github+json") }
+            check(response.status.isSuccess()) { "GitHub a répondu ${response.status.value}" }
+            val release = json.decodeFromString(Release.serializer(), response.body<String>())
+            val sites = release.assets.filter { it.name.endsWith(".jsonl.gz") }
+                .associate { it.name.removeSuffix(".jsonl.gz") to RemoteSite(it.browser_download_url, it.size) }
+            val version = release.assets.firstOrNull { it.name == "version.txt" }?.let {
+                http.get(it.browser_download_url).takeIf { r -> r.status.isSuccess() }?.body<String>()?.trim()
+            }
+            status.value = status.value.copy(remote = sites, remoteVersion = version)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Bases publiées", e)
+        }
+    }
+
+    /** Une base : téléchargée si possible, sinon prise dans la copie embarquée. Renvoie le nombre de recettes. */
+    private suspend fun installOne(siteId: String): Int = withContext(Dispatchers.IO) {
+        if (status.value.remote.isEmpty()) loadRemote()
+        val file = File(context.cacheDir, "base-$siteId.jsonl.gz")
+        try {
+            val remote = status.value.remote[siteId]
+            var version = status.value.remoteVersion
+            var downloaded = false
+            if (remote != null) {
+                try {
+                    download(remote, file) { done -> status.value = status.value.copy(working = "${siteName(siteId)} : téléchargement… (${done / 1_000_000} Mo)") }
+                    downloaded = true
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "Téléchargement de $siteId", e)
                 }
-                store.setMeta(key, version)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.w(TAG, "Catalogue : $file", e)
-                failed += "${file.substringBefore('.')} (${e.message?.take(60)})"
+            }
+            if (!downloaded) {
+                // Hors ligne ou release absente : la copie embarquée dans l'appli (date de la compilation).
+                val asset = embeddedName(siteId) ?: error("pas de connexion et aucune copie dans l'appli")
+                context.assets.open("$DIR/$asset").use { input -> file.outputStream().use { input.copyTo(it) } }
+                version = embeddedVersion()
+            }
+            val n = importFile(siteId, file)
+            check(n > 0) { "fichier vide" }
+            store.setMeta(versionKey(siteId), version ?: "inconnue")
+            n
+        } finally {
+            file.delete()
+        }
+    }
+
+    private suspend fun download(remote: RemoteSite, target: File, progress: (Long) -> Unit) {
+        val response = http.get(remote.url)
+        check(response.status.isSuccess()) { "téléchargement refusé (${response.status.value})" }
+        var done = 0L
+        var next = 0L
+        response.bodyAsChannel().toInputStream().use { input ->
+            target.outputStream().use { out ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    out.write(buffer, 0, n)
+                    done += n
+                    if (done >= next) { progress(done); next = done + 1_000_000 }
+                }
             }
         }
-        val ok = if (added > 0) "$added recettes chargées depuis l'appli" else null
-        if (failed.isEmpty()) ok else listOfNotNull(ok, "Échec : ${failed.joinToString(", ")}").joinToString(" · ")
+        check(remote.bytes <= 0 || done == remote.bytes) { "fichier incomplet ($done sur ${remote.bytes} octets)" }
     }
+
+    /** Lit un fichier `.jsonl(.gz)` et range ses recettes dans la base. */
+    private suspend fun importFile(siteId: String, file: File): Int {
+        var added = 0
+        val input = BufferedInputStream(file.inputStream())
+        input.use {
+            input.mark(2)
+            val gzip = input.read() == 0x1f && input.read() == 0x8b
+            input.reset()
+            (if (gzip) GZIPInputStream(input) else input).bufferedReader().useLines { lines ->
+                lines.filter { it.isNotBlank() }.chunked(400).forEach { part ->
+                    val entries = part.mapNotNull { line -> runCatching { json.decodeFromString(CatalogEntry.serializer(), line) }.getOrNull() }
+                        .filter { it.siteId == siteId }
+                    store.upsert(entries)
+                    added += entries.size
+                    status.value = status.value.copy(working = "${siteName(siteId)} : enregistrement… (%,d recettes)".format(java.util.Locale.FRANCE, added))
+                }
+            }
+        }
+        return added
+    }
+
+    /** Nom du fichier embarqué pour ce site (`assets/catalog/<site>.jsonl(.gz)`), s'il y en a un. */
+    private fun embeddedName(siteId: String): String? =
+        runCatching { context.assets.list(DIR).orEmpty() }.getOrDefault(emptyArray())
+            .firstOrNull { it == "$siteId.jsonl.gz" || it == "$siteId.jsonl" }
+
+    private fun embeddedVersion(): String =
+        runCatching { context.assets.open("$DIR/version.txt").bufferedReader().use { it.readText().trim() } }.getOrDefault("embarquée")
+
+    private fun versionKey(siteId: String) = "version:$siteId"
+    private fun siteName(siteId: String) = RecipeSites.byId(siteId)?.name ?: siteId
 
     /** Texte d'une page ou d'un sitemap (les sitemaps .gz sont décompressés). */
     private suspend fun fetch(url: String): String {
@@ -161,5 +331,8 @@ class CatalogSync(
     private companion object {
         const val TAG = "CatalogSync"
         const val DIR = "catalog"
+        const val REPO = "thibaultambert-jpg/Mes-courses"
+        const val TAG_NAME = "catalogue"
+        const val SETUP_DONE = "choix-des-bases-vu"
     }
 }

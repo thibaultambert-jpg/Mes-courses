@@ -213,10 +213,11 @@ class CatalogUpdater(
         }.sortedByDescending { it.lastmod.orEmpty() }
     }
 
-    suspend fun update(maxPerSite: Int = 150, onProgress: (String) -> Unit = {}): Report {
+    /** [only] : sites à mettre à jour (ceux dont la base est téléchargée) ; null = tous. */
+    suspend fun update(maxPerSite: Int = 150, only: Set<String>? = null, onProgress: (String) -> Unit = {}): Report {
         var added = 0
         val failed = ArrayList<String>()
-        for (source in sources) {
+        for (source in sources.filter { only == null || it.siteId in only }) {
             val name = RecipeSites.byId(source.siteId)?.name ?: source.siteId
             onProgress("Nouveautés de $name…")
             val pages = try {
