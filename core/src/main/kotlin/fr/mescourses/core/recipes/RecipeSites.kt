@@ -115,8 +115,8 @@ object RecipeSites {
         RecipeSite(
             id = "picnic", name = "Picnic", domain = "picnic.app",
             homeUrl = "https://picnic.app/fr/recettes/",
-            // Forme exacte inconnue : la détection de la recette dans la page (schema.org) prend le relais.
-            recipeUrl = Regex("""picnic\.app/fr/recettes?/[^/]+/[^/]+$"""),
+            // « …/fr/recettes/<identifiant à 24 caractères>/<nom> » (relevé dans le sitemap des recettes).
+            recipeUrl = Regex("""picnic\.app/fr/recettes/[0-9a-f]{24}/[^/]+$"""),
             browseUrl = "https://picnic.app/fr/recettes/",
         ),
         RecipeSite(

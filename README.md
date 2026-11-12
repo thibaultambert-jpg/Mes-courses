@@ -74,7 +74,8 @@ les sites » de Découvrir garde la recherche en ligne en complément.
 
 - **Construction** : `tools/catalog` lit les sitemaps des sites (`core/.../catalog/SiteCrawler.kt`) puis chaque fiche, en
   fichier `<site>.jsonl.gz` par site. 750g et Cuisine Actuelle, sans sitemap, sont lus par leurs rubriques paginées
-  (workflow « Catalogue — sites par rubriques », lancé en poussant `tools/catalog/extra.conf`).
+  (workflow « Catalogue — sites par rubriques », lancé en poussant `tools/catalog/extra.conf`, qui sert aussi à collecter à part
+  un nouveau site à sitemap comme Picnic : fiches lues dans le flux Next.js de la page, sans balise JSON-LD).
   fichier `<site>.jsonl.gz` par site.
 - **Rattrapage** : pousser `tools/catalog/retry.conf` (liste `SITES`) rejoue les fiches restées en erreur sur ces sites
   (workflow « Catalogue — rattrapage »). Chaque passage écrit `<site>.erreurs.tsv` (toutes les fiches encore en erreur,

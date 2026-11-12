@@ -204,4 +204,17 @@ class CatalogTest {
         updater.update(only = setOf("cuisineaz"))
         assertEquals(listOf("https://x.fr/s.xml"), fetched)
     }
+
+    /** Le sitemap Picnic mêle les langues et date toutes les adresses de sa génération : on ne garde que le français, sans date. */
+    @Test fun picnic_garde_les_fiches_francaises_sans_date() = kotlinx.coroutines.test.runTest {
+        val source = assertNotNull(fr.mescourses.core.catalog.CatalogSources.byId("picnic"))
+        val xml = """<urlset>
+            <url><loc>https://picnic.app/fr/recettes/</loc><lastmod>2026-11-12T19:11:32.424Z</lastmod></url>
+            <url><loc>https://picnic.app/fr/recettes/67f5341b94bb9a40e1a07be1/pia-colada</loc><lastmod>2026-11-12T19:11:32.449Z</lastmod></url>
+            <url><loc>https://picnic.app/nl/recepten/67f5341b94bb9a40e1a07be1/pina-colada</loc><lastmod>2026-11-12T19:11:32.449Z</lastmod></url>
+            <url><loc>https://picnic.app/de/rezepte/67f5341b94bb9a40e1a07be1/pina-colada</loc><lastmod>2026-11-12T19:11:32.449Z</lastmod></url></urlset>"""
+        val pages = fr.mescourses.core.catalog.SiteCrawler { xml }.pages(source)
+        assertEquals(listOf("https://picnic.app/fr/recettes/67f5341b94bb9a40e1a07be1/pia-colada"), pages.map { it.url })
+        assertNull(pages.single().lastmod)
+    }
 }

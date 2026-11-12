@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        site: [cuisineaz, ptitchef, marmiton, chefsimon, hellofresh, jow, jdf, 750g, cuisineactuelle, cuisineaddict]
+        site: [cuisineaz, ptitchef, marmiton, chefsimon, hellofresh, jow, jdf, 750g, cuisineactuelle, cuisineaddict, picnic]
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
