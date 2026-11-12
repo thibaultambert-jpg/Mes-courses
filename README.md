@@ -57,7 +57,7 @@ Toutes passent par l'interface `RetailerBackend` (`core/.../cart/RetailerBackend
 ### Sites de recettes
 
 L'import lit la fiche `schema.org/Recipe` que les sites publient pour Google ; il marche donc sur la plupart des sites
-(Marmiton, 750g, Cuisine AZ, Journal des Femmes, Cuisine Actuelle, Ptitchef, Chef Simon, Elle à table,
+(Marmiton, 750g, Cuisine AZ, Journal des Femmes, Cuisine Actuelle, Ptitchef, Chef Simon,
 HelloFresh, blogs WordPress…). La **recherche intégrée** (onglet Découvrir) couvre Marmiton, 750g, Cuisine AZ et
 Journal des Femmes : elle lit les pages de résultats sans dépendre de leur mise en page exacte (liens dont l'adresse a
 la forme d'une recette). Les pages sont d'abord demandées en HTTP, puis, si le site bloque, chargées dans un navigateur
