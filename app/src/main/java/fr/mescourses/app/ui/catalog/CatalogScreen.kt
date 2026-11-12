@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
@@ -20,6 +21,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -45,6 +49,7 @@ fun CatalogScreen(firstRun: Boolean, onDone: () -> Unit) {
 
     val sites = CatalogSources.all.map { it.siteId }.sortedBy { siteName(it).lowercase() }
     val missing = sites.filter { it !in st.installed }
+    val outdated = sites.filter { st.outdated(it) }
     val busy = st.working != null
 
     ScreenScaffold(title = "Bases de recettes", onBack = if (firstRun) null else onDone) { padding ->
@@ -54,7 +59,7 @@ fun CatalogScreen(firstRun: Boolean, onDone: () -> Unit) {
         ) {
             Text(
                 if (firstRun) "Choisis les sites dont tu veux avoir les recettes sur ton téléphone. Découvrir et le menu cherchent dedans sans réseau. " +
-                    "Tu pourras en ajouter ou en retirer plus tard dans Réglages › Bases de recettes."
+                    "Tu pourras en ajouter, les mettre à jour ou en retirer plus tard dans Réglages › Bases de recettes."
                 else "Une base par site de recettes, enregistrée sur le téléphone. Seules les bases téléchargées sont utilisées par la recherche et le menu.",
                 style = MaterialTheme.typography.bodyMedium,
             )
@@ -66,6 +71,11 @@ fun CatalogScreen(firstRun: Boolean, onDone: () -> Unit) {
             if (missing.isNotEmpty()) {
                 Button(onClick = { sync.install(missing) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                     Text(if (missing.size == sites.size) "Tout télécharger" else "Télécharger les ${missing.size} restantes")
+                }
+            }
+            if (outdated.isNotEmpty()) {
+                OutlinedButton(onClick = { sync.install(outdated) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (outdated.size == 1) "Mettre à jour la base disponible" else "Tout mettre à jour (${outdated.size} bases)")
                 }
             }
             sites.forEach { id -> SiteRow(id, st, busy, onInstall = { sync.install(listOf(id)) }, onRemove = { sync.remove(id) }) }
@@ -92,6 +102,7 @@ fun CatalogScreen(firstRun: Boolean, onDone: () -> Unit) {
 private fun SiteRow(id: String, st: CatalogStatus, busy: Boolean, onInstall: () -> Unit, onRemove: () -> Unit) {
     val installed = id in st.installed
     val size = st.remote[id]?.bytes?.takeIf { it > 0 }?.let { mb(it) }
+    var confirmRemove by remember { mutableStateOf(false) }
     SectionCard(contentPadding = 12.dp) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f)) {
@@ -109,12 +120,23 @@ private fun SiteRow(id: String, st: CatalogStatus, busy: Boolean, onInstall: () 
                 st.installing == id -> CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                 !installed -> Button(onClick = onInstall, enabled = !busy) { Text("Télécharger") }
                 st.outdated(id) -> OutlinedButton(onClick = onInstall, enabled = !busy) { Text("Mettre à jour") }
-                else -> TextButton(onClick = onRemove, enabled = !busy) { Text("Supprimer") }
             }
+            // Toute base installée peut être retirée (à jour ou non).
+            if (installed && st.installing != id) TextButton(onClick = { confirmRemove = true }, enabled = !busy) { Text("Supprimer") }
         }
-        // Base à jour : on peut aussi la retirer ; base à mettre à jour : retrait en plus.
-        if (installed && st.outdated(id)) TextButton(onClick = onRemove, enabled = !busy) { Text("Supprimer") }
     }
+    if (confirmRemove) AlertDialog(
+        onDismissRequest = { confirmRemove = false },
+        title = { Text("Supprimer la base ${siteName(id)} ?") },
+        text = {
+            Text(
+                "Ses %,d recettes seront retirées du téléphone : Découvrir et le menu ne les trouveront plus. ".format(Locale.FRANCE, st.bySite[id] ?: 0) +
+                    "Tes favoris et ton historique ne changent pas. Tu pourras la télécharger de nouveau.",
+            )
+        },
+        confirmButton = { TextButton(onClick = { confirmRemove = false; onRemove() }) { Text("Supprimer") } },
+        dismissButton = { TextButton(onClick = { confirmRemove = false }) { Text("Annuler") } },
+    )
 }
 
 private fun siteName(id: String) = RecipeSites.byId(id)?.name ?: id
