@@ -129,7 +129,8 @@ interface CatalogDao {
     /** Une fiche déjà connue (même adresse) est remplacée ; l'index de recherche suit. */
     @Transaction
     suspend fun replace(items: List<CatalogRecipeEntity>) {
-        items.chunked(400).forEach { part ->
+        // Un même fichier peut contenir deux fois la même adresse (collecte reprise, rattrapage) : on garde la dernière.
+        items.associateBy { it.url }.values.chunked(400).forEach { part ->
             delete(part.map { it.url })
             insert(part)
         }
