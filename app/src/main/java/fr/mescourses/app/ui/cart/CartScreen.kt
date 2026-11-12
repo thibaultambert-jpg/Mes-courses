@@ -440,14 +440,16 @@ private fun AccountCard(retailer: Retailer, session: SessionState, storeName: St
 private fun CartSummary(retailer: Retailer, cart: fr.mescourses.core.carrefour.Cart, slots: List<fr.mescourses.core.carrefour.TimeSlot>?, onOpenWebCart: () -> Unit) {
     SectionCard {
         Text("Mon panier ${retailer.label}", style = MaterialTheme.typography.titleMedium)
-        if (cart.lines.isEmpty()) Text("Panier vide.", style = MaterialTheme.typography.bodyMedium)
-        cart.lines.take(30).forEach { l ->
+        // Les lignes à 0 (articles retirés du panier) ne sont pas affichées.
+        val shown = cart.lines.filter { it.quantity > 0 }
+        if (shown.isEmpty()) Text("Panier vide.", style = MaterialTheme.typography.bodyMedium)
+        shown.take(30).forEach { l ->
             Row {
                 Text("${l.quantity} × ${l.name}", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 l.subtotal?.let { Text(euros(it), style = MaterialTheme.typography.bodyMedium) }
             }
         }
-        cart.total?.let { Text("Total : ${euros(it)}", style = MaterialTheme.typography.titleSmall) }
+        if (shown.isNotEmpty()) cart.total?.let { Text("Total : ${euros(it)}", style = MaterialTheme.typography.titleSmall) }
         if (!slots.isNullOrEmpty()) {
             Text("Prochains créneaux (à réserver sur le site)", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
             slots.forEach { s ->
