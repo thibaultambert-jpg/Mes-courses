@@ -109,24 +109,34 @@ class CatalogSync(
         if (files.isEmpty()) return@withContext null
         val version = runCatching { assets.open("$DIR/version.txt").bufferedReader().use { it.readText().trim() } }.getOrDefault("1")
         var added = 0
+        val failed = mutableListOf<String>()
         for (file in files) {
             val key = "fichier:$file"
             if (store.meta(key) == version) continue
-            val input = BufferedInputStream(assets.open("$DIR/$file"))
-            input.mark(2)
-            val gzip = input.read() == 0x1f && input.read() == 0x8b
-            input.reset()
-            (if (gzip) GZIPInputStream(input) else input).bufferedReader().useLines { lines ->
-                lines.filter { it.isNotBlank() }.chunked(400).forEach { part ->
-                    val entries = part.mapNotNull { line -> runCatching { json.decodeFromString(CatalogEntry.serializer(), line) }.getOrNull() }
-                    store.upsert(entries)
-                    added += entries.size
-                    status.value = status.value.copy(working = "Chargement du catalogue… ($added recettes)")
+            // Un fichier en échec ne doit pas empêcher de charger les suivants ; il sera retenté au prochain lancement.
+            try {
+                val input = BufferedInputStream(assets.open("$DIR/$file"))
+                input.mark(2)
+                val gzip = input.read() == 0x1f && input.read() == 0x8b
+                input.reset()
+                (if (gzip) GZIPInputStream(input) else input).bufferedReader().useLines { lines ->
+                    lines.filter { it.isNotBlank() }.chunked(400).forEach { part ->
+                        val entries = part.mapNotNull { line -> runCatching { json.decodeFromString(CatalogEntry.serializer(), line) }.getOrNull() }
+                        store.upsert(entries)
+                        added += entries.size
+                        status.value = status.value.copy(working = "Chargement du catalogue… ($added recettes)")
+                    }
                 }
+                store.setMeta(key, version)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Catalogue : $file", e)
+                failed += "${file.substringBefore('.')} (${e.message?.take(60)})"
             }
-            store.setMeta(key, version)
         }
-        if (added > 0) "$added recettes chargées depuis l'appli" else null
+        val ok = if (added > 0) "$added recettes chargées depuis l'appli" else null
+        if (failed.isEmpty()) ok else listOfNotNull(ok, "Échec : ${failed.joinToString(", ")}").joinToString(" · ")
     }
 
     /** Texte d'une page ou d'un sitemap (les sitemaps .gz sont décompressés). */
