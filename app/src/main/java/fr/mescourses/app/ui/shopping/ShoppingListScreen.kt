@@ -242,7 +242,7 @@ fun ShoppingListScreen(onOpenSettings: () -> Unit, onSendToCart: () -> Unit) {
             }
         },
         bottomBar = {
-            BottomActionBar(Modifier.imePadding()) {
+            BottomActionBar {
                 OutlinedTextField(
                     value = input,
                     onValueChange = { input = it },

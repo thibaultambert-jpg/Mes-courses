@@ -334,11 +334,18 @@ class CandidateFinder(
         val excluded = exclude.map(RecipeSites::normalize).toSet()
         local()?.let { store ->
             val query = CatalogQuery(courses = courses, limit = LOCAL_FETCH, seed = seed, month = date.monthValue)
-            val found = fromCatalog(store, query, wishes, past, date, index, excluded)
-                .ifEmpty { fromCatalog(store, query.copy(month = null), wishes, past, date, index, excluded) }
+            var found = fromCatalog(store, query, wishes, past, date, index, excluded)
+            // Pas assez de recettes de saison : on complète avec le reste du catalogue plutôt que de rendre moins que demandé.
+            if (found.size < count * 3) {
+                val have = found.map { ShoppingListMerger.key(it.recipe.title) }.toSet()
+                found = found + fromCatalog(store, query.copy(month = null), wishes, past, date, index, excluded)
+                    .filter { ShoppingListMerger.key(it.recipe.title) !in have }
+            }
             // Un tirage varié : on mélange les mieux notées au lieu de toujours prendre les mêmes.
-            val picked = perSite(found.take(count * 6).shuffled(kotlin.random.Random(seed ?: 0)), 2).take(count)
-            if (picked.size >= count) return picked
+            val shuffled = found.take(count * 6).shuffled(kotlin.random.Random(seed ?: 0))
+            // Au plus 2 recettes par site si possible, mais on complète pour atteindre le nombre demandé.
+            val varied = perSite(shuffled, 2).take(count)
+            val picked = varied + (shuffled - varied.toSet()).take(count - varied.size)
             if (picked.isNotEmpty()) return picked
         }
         if (fallbackWords.isBlank()) return emptyList()
@@ -356,6 +363,8 @@ class CandidateFinder(
         /** Identifiants des sites voulus (« une recette de Jow ») ; vide = tous. */
         sites: Set<String> = emptySet(),
         seed: Int? = null,
+        /** Types de recette voulus (plats par défaut ; entrées ou desserts pour « ajoute un dessert »). */
+        courses: Set<fr.mescourses.core.catalog.Course> = CatalogQuery.MEALS,
     ): List<Candidate> {
         val date = today()
         val cookbook = recipes.all()
@@ -365,7 +374,7 @@ class CandidateFinder(
         local()?.let { store ->
             val words = CatalogQuery.words(text)
             val base = CatalogQuery(
-                words = words, courses = CatalogQuery.MEALS, maxMinutes = wishes.time.maxMinutes, limit = LOCAL_FETCH, sites = sites,
+                words = words, courses = courses, maxMinutes = wishes.time.maxMinutes, limit = LOCAL_FETCH, sites = sites,
                 // Sans mots (« une recette de Jow ») : des plats de saison, tirés au sort parmi les bien notés.
                 month = date.monthValue.takeIf { words.isEmpty() }, seed = seed,
             )

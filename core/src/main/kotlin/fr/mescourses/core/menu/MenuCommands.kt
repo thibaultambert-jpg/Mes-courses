@@ -14,7 +14,8 @@ sealed interface MenuCommand {
     data class Remove(val dish: Int) : MenuCommand
     /** [words] : ce que l'utilisateur veut (« curry de légumes ») ; null = la meilleure recette disponible. */
     /** [site] : identifiant du site voulu (« une recette de Jow »), s'il est nommé. */
-    data class AddDish(val words: String?, val site: String? = null) : MenuCommand
+    /** [course] : entrée ou dessert demandé ; null = plat principal. */
+    data class AddDish(val words: String?, val site: String? = null, val course: fr.mescourses.core.catalog.Course? = null) : MenuCommand
     data class Replace(val dish: Int, val words: String?, val site: String? = null) : MenuCommand
 
     companion object {
@@ -84,8 +85,13 @@ sealed interface MenuCommand {
             }
             if (isRemove && dish != null && Regex("""\bplat\b""").containsMatchIn(text)) return Remove(dish)
             if (isReplace && dish != null) return Replace(dish, wanted(text, Regex("""\bpar (?:un |une |du |de la |des |le |la |les )?(.+)$""")), site)
-            if (isAdd && dish == null && Regex("""\b(un|une|1) (?:autre |nouveau |nouvelle |\d+ ?(?:e|eme|ieme) |[a-z]+ieme )?(?:plat|recette|repas)\b""").containsMatchIn(text)) {
-                return AddDish(wanted(text, Regex("""\b(?:plat|recette|repas) (?:de |d |avec |au |aux |a la |a base de )(?:du |de la |des |le |la |les )?(.+)$""")), site)
+            if (isAdd && dish == null && Regex("""\b(un|une|1) (?:autre |nouveau |nouvelle |\d+ ?(?:e|eme|ieme) |[a-z]+ieme )?(?:plat|recette|repas|entree|dessert)\b""").containsMatchIn(text)) {
+                val course = when {
+                    Regex("""\bdesserts?\b""").containsMatchIn(text) -> fr.mescourses.core.catalog.Course.DESSERT
+                    Regex("""\bentrees?\b""").containsMatchIn(text) -> fr.mescourses.core.catalog.Course.ENTREE
+                    else -> null
+                }
+                return AddDish(wanted(text, Regex("""\b(?:plat|recette|repas|entree|dessert) (?:de |d |avec |au |aux |a la |a base de )(?:du |de la |des |le |la |les )?(.+)$""")), site, course)
             }
             return null
         }

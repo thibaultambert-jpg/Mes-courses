@@ -1,5 +1,6 @@
 package fr.mescourses.app.ui.menu
 
+import fr.mescourses.core.catalog.Course
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import fr.mescourses.app.AppContainer
@@ -71,6 +72,8 @@ data class MenuUiState(
     /** Recettes proposées par « Ajouter un plat » ; null = fenêtre fermée. */
     val picker: List<Candidate>? = null,
     val pickerBusy: Boolean = false,
+    /** Type de recette cherché par « Ajouter un plat » : entrée ou dessert ; null = plat principal. */
+    val pickerCourse: fr.mescourses.core.catalog.Course? = null,
 )
 
 class MenuViewModel(private val c: AppContainer) : ViewModel() {
@@ -505,14 +508,18 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     /** Première recette trouvée pour des mots donnés qui n'est pas déjà au menu. */
-    private suspend fun searched(words: String?, site: String? = null, except: Int? = null): Candidate? {
+    private suspend fun searched(words: String?, site: String? = null, except: Int? = null, course: Course? = null): Candidate? {
         val siteName = site?.let { fr.mescourses.core.recipes.RecipeSites.byId(it)?.name }
         progress("Recherche" + (words?.let { " de « $it »" } ?: "") + (siteName?.let { " sur $it" } ?: "") + "…")
         val dishes = c.draft.get().filterIndexed { i, _ -> i != except }
         val found = runCatching {
-            c.candidateFinder.search(words.orEmpty(), wishes(), limit = 12, exclude = rejected, sites = setOfNotNull(site), seed = draw())
+            if (course == null) c.candidateFinder.search(words.orEmpty(), wishes(), limit = 12, exclude = rejected, sites = setOfNotNull(site), seed = draw())
+            else if (words.isNullOrBlank() && site == null) c.candidateFinder.forCourse(coursesOf(course), 12, wishes(), rejected, draw(), if (course == Course.DESSERT) "dessert" else "entrée")
+            else c.candidateFinder.search(words.orEmpty(), wishes(), limit = 12, exclude = rejected, sites = setOfNotNull(site), seed = draw(), courses = coursesOf(course))
         }.getOrNull().orEmpty().filterNot { blocked(it, dishes) }
         if (found.isEmpty()) return null
+        // Entrée ou dessert : pas de composition avec les plats principaux, on prend la mieux notée.
+        if (course != null) return found.first()
         // Parmi les recettes trouvées, celle qui va le mieux avec le reste du menu.
         val best = MenuComposer.replacement(found, wishes(), dishes.filter { it.isMain }.map(Chosen::of), emptySet()) ?: found.first()
         c.candidates.add(listOf(best))
@@ -540,11 +547,12 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                 say("« ${list[command.dish].title} » retiré")
             }
             is MenuCommand.AddDish -> {
-                val next = if (command.words != null || command.site != null) searched(command.words, command.site) else bestToAdd()
+                val next = if (command.course != null) searched(command.words, command.site, course = command.course)
+                else if (command.words != null || command.site != null) searched(command.words, command.site) else bestToAdd()
                 if (next == null) say("Aucune recette trouvée" + (command.words?.let { " pour « $it »" } ?: "") + ". Essaie « Ajouter un plat » pour chercher toi-même.", ok = false)
                 else {
-                    c.draft.set(c.draft.get() + next.toDish(wishes().portions))
-                    say("« ${next.recipe.title} » ajouté (plat ${list.size + 1})")
+                    c.draft.set(c.draft.get() + next.toDish(wishes().portions, command.course))
+                    say("« ${next.recipe.title} » ajouté (" + (when (command.course) { Course.ENTREE -> "entrée"; Course.DESSERT -> "dessert"; else -> "plat ${list.size + 1}" }) + ")")
                 }
             }
             is MenuCommand.Replace -> {
@@ -573,28 +581,55 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
         return c.candidates.all().filterNot { blocked(it, dishes.value) }
     }
 
+    /** Types de recette cherchés pour une entrée ou un dessert. */
+    private fun coursesOf(course: Course): Set<Course> = when (course) {
+        Course.DESSERT -> setOf(Course.DESSERT)
+        else -> setOf(Course.ENTREE, Course.SOUPE, Course.SALADE)
+    }
+
     /** Ouvre la liste des recettes disponibles (celles trouvées pour ce menu ; cherchées si l'appli a été relancée). */
     fun openPicker() {
-        _state.update { it.copy(picker = available()) }
+        _state.update { it.copy(picker = available(), pickerCourse = null) }
         if (available().size >= 4) return
         viewModelScope.launch {
             _state.update { it.copy(pickerBusy = true) }
             val more = runCatching { c.candidateFinder.find(wishes(), round = ++searchRound, exclude = rejected, seed = draw()) }.getOrNull()
             c.candidates.add(more?.candidates.orEmpty())
-            _state.update { s -> s.copy(pickerBusy = false, picker = s.picker?.let { available() }) }
+            _state.update { s -> s.copy(pickerBusy = false, picker = s.picker?.takeIf { s.pickerCourse == null }?.let { available() } ?: s.picker) }
         }
     }
 
-    fun closePicker() = _state.update { it.copy(picker = null, pickerBusy = false) }
+    /** Change le type de recette cherché : plat (recettes du menu), entrée ou dessert (cherchés à part). */
+    fun setPickerCourse(course: Course?) {
+        if (course == null) { openPicker(); return }
+        _state.update { it.copy(pickerCourse = course, picker = emptyList(), pickerBusy = true) }
+        viewModelScope.launch {
+            val taken = dishes.value.mapNotNull { it.sourceUrl }.toSet() + rejected
+            val found = runCatching {
+                c.candidateFinder.forCourse(coursesOf(course), 12, wishes(), taken, draw(), if (course == Course.DESSERT) "dessert" else "entrée")
+            }.getOrNull().orEmpty().filterNot { blocked(it, dishes.value) }
+            _state.update { s -> if (s.pickerCourse != course) s else s.copy(pickerBusy = false, picker = found) }
+        }
+    }
+
+    fun closePicker() = _state.update { it.copy(picker = null, pickerBusy = false, pickerCourse = null) }
 
     /** Recherche libre depuis la fenêtre : les résultats passent en tête de liste. */
     fun searchPicker(text: String) {
         val words = text.trim()
-        if (words.isEmpty()) { _state.update { it.copy(picker = available()) }; return }
+        val course = _state.value.pickerCourse
+        if (words.isEmpty()) {
+            if (course == null) _state.update { it.copy(picker = available()) } else setPickerCourse(course)
+            return
+        }
         viewModelScope.launch {
             _state.update { it.copy(pickerBusy = true) }
-            val found = runCatching { c.candidateFinder.search(words, wishes(), limit = 12, exclude = rejected) }.getOrNull().orEmpty()
-            c.candidates.add(found)
+            val found = runCatching {
+                if (course == null) c.candidateFinder.search(words, wishes(), limit = 12, exclude = rejected)
+                else c.candidateFinder.search(words, wishes(), limit = 12, exclude = rejected, courses = coursesOf(course))
+            }.getOrNull().orEmpty()
+            // Entrées et desserts ne rejoignent pas les candidates des plats principaux.
+            if (course == null) c.candidates.add(found)
             _state.update { s -> s.copy(pickerBusy = false, picker = s.picker?.let { found.filterNot { blocked(it, dishes.value) } }) }
             if (found.isEmpty()) _state.update { it.copy(message = "Aucune recette trouvée pour « $words ».") }
         }
@@ -602,9 +637,9 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
 
     fun addCandidate(candidate: Candidate) = viewModelScope.launch {
         snapshot()
-        c.candidates.add(listOf(candidate))
-        c.draft.set(c.draft.get() + candidate.toDish(wishes().portions))
-        _state.update { it.copy(picker = null, message = "« ${candidate.recipe.title} » ajouté au menu.") }
+        if (_state.value.pickerCourse == null) c.candidates.add(listOf(candidate))
+        c.draft.set(c.draft.get() + candidate.toDish(wishes().portions, _state.value.pickerCourse))
+        _state.update { it.copy(picker = null, pickerCourse = null, message = "« ${candidate.recipe.title} » ajouté au menu.") }
     }
 
     /**
