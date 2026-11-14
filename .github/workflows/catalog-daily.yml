@@ -1,14 +1,14 @@
-name: Catalogue — mise à jour hebdomadaire
+name: Catalogue — mise à jour quotidienne
 
-# Chaque semaine : relit les fiches nouvelles ou modifiées de chaque site à partir des bases brutes déjà publiées
+# Chaque nuit : relit les fiches nouvelles ou modifiées de chaque site à partir des bases brutes déjà publiées
 # (<site>.source.jsonl.gz dans la release « catalogue »), rationalise et vectorise les bases pour l'appli,
-# republie la release « catalogue », puis relance la compilation de l'appli pour que l'APK embarque les bases à jour.
-# Les bases publiées sont aussi celles que l'appli télécharge (écran « Bases de recettes »).
+# puis republie la release « catalogue ».
+# Les bases publiées sont téléchargées automatiquement en priorité par l'appli (CI-first, hors données mobiles) :
+# aucune recompilation de l'APK n'est déclenchée après publication.
 # Les déclencheurs planifiés ne tournent que sur la branche par défaut (main).
 on:
-  # Transition : désactivé jusqu'au premier import réussi via catalog-import.yml.
-  # schedule:
-  #   - cron: "17 2 * * 0" # dimanche, 02 h 17 UTC
+  schedule:
+    - cron: "0 22 * * *" # tous les jours, 22 h 00 UTC (23 h 00 heure de Paris en hiver)
   workflow_dispatch:
 
 permissions:
@@ -66,7 +66,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: steps.base.outputs.ok == 'true'
         with:
-          name: hebdo-${{ matrix.site }}
+          name: daily-${{ matrix.site }}
           path: |
             catalog/${{ matrix.site }}.jsonl
             catalog/${{ matrix.site }}.seen.tsv
@@ -78,5 +78,5 @@ jobs:
     uses: ./.github/workflows/catalog-release.yml
     with:
       source: raw
-      raw_from: hebdo
-      rebuild_android: true
+      raw_from: daily
+      rebuild_android: false

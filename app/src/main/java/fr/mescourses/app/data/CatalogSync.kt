@@ -93,8 +93,10 @@ data class CatalogStatus(
 
 /**
  * Les bases de recettes (une par site) : chacune se télécharge à la demande depuis la release « catalogue » du dépôt
- * (refaite chaque semaine par la CI) ; à défaut de réseau, la copie embarquée dans l'appli à la compilation sert de secours.
- * Une fois installée, la base est tenue à jour par le téléphone (nouveautés des sites, au plus une fois par jour).
+ * (refaite chaque jour par la CI) ; à défaut de réseau à la première installation, la copie embarquée dans l'appli
+ * sert de secours. Au lancement (hors données mobiles) ou sur demande, l'appli vérifie d'abord s'il existe une base CI
+ * plus récente pour les sites installés, l'importe, puis complète en scannant les nouveautés sur les sites (au plus
+ * une fois par jour en automatique).
  */
 class CatalogSync(
     private val context: Context,
@@ -129,7 +131,11 @@ class CatalogSync(
             delay(15_000)
             if (!metered()) {
                 loadRemote()
-                if (status.value.installed.isNotEmpty() && updater.due()) update()
+                val current = status.value
+                val hasOutdated = current.installed.any { current.outdated(it) }
+                if (current.installed.isNotEmpty() && (hasOutdated || updater.due())) {
+                    syncAndUpdate(forceCrawl = false)
+                }
             }
         }
     }
@@ -154,9 +160,10 @@ class CatalogSync(
                 for (id in siteIds) {
                     if (CatalogSources.byId(id) == null) continue
                     val name = siteName(id)
+                    val alreadyInstalled = id in status.value.installed
                     status.update { it.copy(installing = id, working = "$name : téléchargement…") }
                     try {
-                        results += "$name : %,d".format(java.util.Locale.FRANCE, installOne(id))
+                        results += "$name : %,d".format(java.util.Locale.FRANCE, installOne(id, allowEmbeddedFallback = !alreadyInstalled))
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -186,7 +193,7 @@ class CatalogSync(
 
     /** Bouton « Chercher les nouveautés maintenant ». */
     fun updateNow() {
-        scope.launch(Dispatchers.IO) { update() }
+        scope.launch(Dispatchers.IO) { syncAndUpdate(forceCrawl = true) }
     }
 
     /** Télécharge le modèle d'embeddings (reprise possible via `.part`, vérifié par SHA-256). */
@@ -271,16 +278,57 @@ class CatalogSync(
         }
     }
 
-    private suspend fun update() = exclusive("Recherche des nouveautés…") {
+    /**
+     * Stratégie CI-first puis scan incrémental :
+     * 1. Télécharge d'abord les bases CI plus récentes pour les sites déjà installés ;
+     * 2. Si le délai quotidien est écoulé (ou sur demande manuelle), scanne les sites pour les nouveautés publiées
+     *    depuis la dernière base CI, puis vectorise localement les fiches ajoutées.
+     */
+    private suspend fun syncAndUpdate(forceCrawl: Boolean) = exclusive("Vérification du catalogue…") {
         val installed = status.value.installed
         if (installed.isEmpty()) return@exclusive "Aucune base téléchargée"
-        val report = updater.update(only = installed) { message -> status.update { it.copy(working = message) } }
-        val embedded = embedMissing()
-        buildString {
-            append(if (report.added == 0) "Aucune nouvelle recette" else "${report.added} nouvelle${if (report.added > 1) "s" else ""} recette${if (report.added > 1) "s" else ""}")
-            if (embedded > 0) append(" · $embedded vectorisée${if (embedded > 1) "s" else ""}")
-            if (report.failedSites.isNotEmpty()) append(" · sans réponse : ${report.failedSites.joinToString(", ")}")
+
+        if (forceCrawl || status.value.remoteVersion == null) loadRemote()
+        val outdated = installed.sorted().filter { status.value.outdated(it) }
+        val ciUpdated = ArrayList<String>()
+        val ciFailed = ArrayList<String>()
+        for (id in outdated) {
+            val name = siteName(id)
+            status.update { it.copy(installing = id, working = "$name : mise à jour de la base…") }
+            try {
+                installOne(id, allowEmbeddedFallback = false)
+                ciUpdated += name
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Mise à jour CI $id", e)
+                ciFailed += name
+            }
         }
+        status.update { it.copy(installing = null) }
+
+        val shouldCrawl = forceCrawl || updater.due()
+        val report = if (shouldCrawl) {
+            updater.update(only = installed) { message -> status.update { it.copy(working = message) } }
+        } else null
+        val embedded = if (shouldCrawl) embedMissing() else 0
+
+        buildString {
+            if (ciUpdated.isNotEmpty()) append("Bases MAJ : ${ciUpdated.joinToString(", ")}")
+            if (ciFailed.isNotEmpty()) {
+                if (isNotEmpty()) append(" · ")
+                append("MAJ CI échouée : ${ciFailed.joinToString(", ")}")
+            }
+            if (report != null) {
+                if (isNotEmpty()) append(" · ")
+                append(
+                    if (report.added == 0) "Aucune nouvelle recette"
+                    else "${report.added} nouvelle${if (report.added > 1) "s" else ""} recette${if (report.added > 1) "s" else ""}",
+                )
+                if (embedded > 0) append(" · $embedded vectorisée${if (embedded > 1) "s" else ""}")
+                if (report.failedSites.isNotEmpty()) append(" · sans réponse : ${report.failedSites.joinToString(", ")}")
+            }
+        }.ifEmpty { "Catalogue à jour" }
     }
 
     /**
@@ -394,8 +442,11 @@ class CatalogSync(
         }
     }
 
-    /** Une base : téléchargée si possible, sinon prise dans la copie embarquée. Renvoie le nombre de recettes. */
-    private suspend fun installOne(siteId: String): Int = withContext(Dispatchers.IO) {
+    /**
+     * Installe ou met à jour une base : téléchargée depuis la release CI si possible, sinon prise dans la copie
+     * embarquée lorsque [allowEmbeddedFallback] est vrai (première installation hors-ligne). Renvoie le nombre de recettes.
+     */
+    private suspend fun installOne(siteId: String, allowEmbeddedFallback: Boolean = true): Int = withContext(Dispatchers.IO) {
         if (status.value.remote.isEmpty()) loadRemote()
         val file = File(context.cacheDir, "base-$siteId.jsonl.gz")
         try {
@@ -413,15 +464,17 @@ class CatalogSync(
                 }
             }
             if (!downloaded) {
+                if (!allowEmbeddedFallback) error("téléchargement depuis la release impossible")
                 // Hors ligne ou release absente : la copie embarquée dans l'appli (date de la compilation).
                 val asset = embeddedName(siteId) ?: error("pas de connexion et aucune copie dans l'appli")
                 context.assets.open("$DIR/$asset").use { input -> file.outputStream().use { input.copyTo(it) } }
                 version = embeddedVersion()
             }
-            val n = importFile(siteId, file)
-            check(n > 0) { "fichier vide" }
+            val importedUrls = importFile(siteId, file)
+            check(importedUrls.isNotEmpty()) { "fichier vide" }
+            store.pruneSite(siteId, importedUrls)
             store.setMeta(versionKey(siteId), version ?: "inconnue")
-            n
+            importedUrls.size
         } finally {
             file.delete()
         }
@@ -447,9 +500,9 @@ class CatalogSync(
         check(remote.bytes <= 0 || done == remote.bytes) { "fichier incomplet ($done sur ${remote.bytes} octets)" }
     }
 
-    /** Lit un fichier `.jsonl(.gz)` et range ses recettes dans la base. */
-    private suspend fun importFile(siteId: String, file: File): Int {
-        var added = 0
+    /** Lit un fichier `.jsonl(.gz)` et range ses recettes dans la base ; renvoie les URLs importées. */
+    private suspend fun importFile(siteId: String, file: File): Set<String> {
+        val importedUrls = HashSet<String>()
         val input = BufferedInputStream(file.inputStream())
         input.use {
             input.mark(2)
@@ -460,12 +513,12 @@ class CatalogSync(
                     val entries = part.mapNotNull { line -> runCatching { json.decodeFromString(CatalogEntry.serializer(), line) }.getOrNull() }
                         .filter { it.siteId == siteId }
                     store.upsert(entries)
-                    added += entries.size
-                    status.update { it.copy(working = "${siteName(siteId)} : enregistrement… (%,d recettes)".format(java.util.Locale.FRANCE, added)) }
+                    entries.forEach { importedUrls += it.url }
+                    status.update { it.copy(working = "${siteName(siteId)} : enregistrement… (%,d recettes)".format(java.util.Locale.FRANCE, importedUrls.size)) }
                 }
             }
         }
-        return added
+        return importedUrls
     }
 
     /** Nom du fichier embarqué pour ce site (`assets/catalog/<site>.jsonl(.gz)`), s'il y en a un. */

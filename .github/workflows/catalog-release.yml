@@ -15,7 +15,7 @@ on:
         required: true
         type: string
       raw_from:
-        description: "En mode raw : collect (runs de collecte via publish.conf) ou hebdo (artefacts hebdo-* du run)"
+        description: "En mode raw : collect (runs de collecte via publish.conf) ou daily/hebdo (artefacts du run)"
         required: false
         type: string
         default: "collect"
@@ -49,8 +49,8 @@ jobs:
           esac
           if [ "$SOURCE" = "raw" ]; then
             case "$RAW_FROM" in
-              collect|hebdo) ;;
-              *) echo "Entrée raw_from invalide : '$RAW_FROM' (attendu : collect ou hebdo)" >&2; exit 2 ;;
+              collect|hebdo|daily) ;;
+              *) echo "Entrée raw_from invalide : '$RAW_FROM' (attendu : collect, daily ou hebdo)" >&2; exit 2 ;;
             esac
           fi
 
@@ -63,21 +63,21 @@ jobs:
 
       # --- Mode raw : rassemblement des bruts, stats, upload *.source.jsonl.gz + *.seen.tsv.gz, rationalisation ---
 
-      - name: Téléchargement des bases hebdomadaires
-        if: inputs.source == 'raw' && inputs.raw_from == 'hebdo'
+      - name: Téléchargement des bases quotidiennes / hebdomadaires
+        if: inputs.source == 'raw' && (inputs.raw_from == 'daily' || inputs.raw_from == 'hebdo')
         uses: actions/download-artifact@v4
         with:
-          pattern: hebdo-*
+          pattern: "${{ inputs.raw_from }}-*"
           path: parts
           merge-multiple: false
 
-      - name: Rassembler les bases hebdomadaires
-        if: inputs.source == 'raw' && inputs.raw_from == 'hebdo'
+      - name: Rassembler les bases quotidiennes / hebdomadaires
+        if: inputs.source == 'raw' && (inputs.raw_from == 'daily' || inputs.raw_from == 'hebdo')
         run: |
           mkdir -p raw
-          for dir in parts/hebdo-*; do
+          for dir in parts/${{ inputs.raw_from }}-*; do
             [ -d "$dir" ] || continue
-            site="${dir#parts/hebdo-}"
+            site="${dir#parts/${{ inputs.raw_from }}-}"
             [ -s "$dir/$site.jsonl" ] || continue
             cp "$dir"/* raw/
           done

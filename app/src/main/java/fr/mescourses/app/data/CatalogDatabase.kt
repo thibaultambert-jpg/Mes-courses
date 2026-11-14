@@ -341,6 +341,21 @@ class RoomCatalogStore(private val dao: CatalogDao) : CatalogStore {
         }
     }
 
+    /**
+     * Retire les fiches d'un site qui ne figurent plus dans [keepUrls] (après réimport d'une base CI mise à jour).
+     * Retourne le nombre de fiches retirées.
+     */
+    suspend fun pruneSite(siteId: String, keepUrls: Set<String>): Int {
+        val stale = dao.recipePages(siteId).map { it.url }.filter { it !in keepUrls }
+        if (stale.isEmpty()) return 0
+        try {
+            stale.chunked(400).forEach { dao.delete(it) }
+        } finally {
+            vectorCache.invalidate()
+        }
+        return stale.size
+    }
+
     override suspend fun search(query: CatalogQuery): List<CatalogEntry> {
         if (query.limit <= 0) return emptyList()
         val vector = query.vector ?: return searchSql(query)

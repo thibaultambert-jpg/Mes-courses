@@ -359,7 +359,7 @@ fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStor
                 Button(onClick = onOpenCatalog) { Text("Choisir les bases à télécharger") }
                 OutlinedButton(onClick = { vm.c.catalogSync.updateNow() }, enabled = catalog.working == null && catalog.installed.isNotEmpty()) { Text("Chercher les nouveautés maintenant") }
                 Text(
-                    "Les nouveautés des bases téléchargées sont cherchées toutes seules, une fois par jour à l'ouverture de l'appli (hors données mobiles).",
+                    "Les bases téléchargées sont d’abord mises à jour depuis le serveur si une version plus récente existe, puis les nouveautés des sites sont cherchées une fois par jour à l’ouverture de l’appli (hors données mobiles).",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
