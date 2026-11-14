@@ -13,6 +13,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicInteger
@@ -37,6 +39,8 @@ class ChefWork(
 
     private companion object {
         const val NO_MODEL = "L'assistant n'est pas installé : installe-le dans les Réglages."
+        /** Attente maximale d'une discussion Courses en cours avant d'écrire quand même des étapes. */
+        const val CHAT_WAIT_MS = 2 * 60_000L
     }
 
     private val _validation = MutableStateFlow<Validation?>(null)
@@ -149,6 +153,8 @@ class ChefWork(
             _stepsFailures.update { it + (id to NO_MODEL) }
             return
         }
+        // Une discussion Courses est en cours : on la laisse finir (2 minutes au plus) pour ne pas fermer sa conversation.
+        withTimeoutOrNull(CHAT_WAIT_MS) { model.chatForeground.first { !it } }
         keepAwake("Le chef écrit les recettes…") { writeOne(id) }
     }
 

@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import fr.mescourses.app.AppContainer
 import fr.mescourses.app.llm.ChatEvent
+import fr.mescourses.app.llm.ModelController
 import fr.mescourses.app.llm.ModelStatus
 import fr.mescourses.app.work.Validation
 import fr.mescourses.core.menu.Candidate
@@ -746,15 +747,12 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     /** Le modèle a écrit un appel d'outil illisible (« [1,2,] ») : fréquent sur un petit modèle, on redemande. */
     private fun isBadToolCall(e: Exception) = "parse tool call" in e.message.orEmpty().lowercase()
 
-    private fun isContextFull(e: Exception) =
-        e.message.orEmpty().let { "exceeds available" in it || "state entries" in it || "context" in it.lowercase() && "exceed" in it.lowercase() }
-
     /** Envoie un message au LLM et suit les appels d'outils ; renvoie le texte de la réponse. */
     private suspend fun exchange(prompt: String, shownAs: String?, retry: Boolean = true): String {
         _state.update { s -> s.copy(busy = true, chat = if (shownAs != null) s.chat + ChatLine(true, shownAs) else s.chat) }
         val answer = StringBuilder()
         try {
-            c.model.use { c.model.send(prompt).collect { ev ->
+            c.model.use { c.model.send(OWNER, prompt).collect { ev ->
                 when (ev) {
                     is ChatEvent.Token -> {
                         answer.append(ev.text)
@@ -780,7 +778,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                     return exchange(prompt, shownAs = null, retry = false)
                 }
                 say("Le chef n'a pas réussi à faire cette retouche. Reformule plus simplement (un seul changement à la fois), ou utilise les boutons des plats.", ok = false)
-            } else if (isContextFull(e)) {
+            } else if (ModelController.isContextFull(e)) {
                 // Mémoire de travail du modèle pleine : on repart d'une conversation vide, une fois.
                 if (retry) {
                     startConversation(adjusting)
