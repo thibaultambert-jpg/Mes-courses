@@ -222,6 +222,21 @@ Vagues :
 5. **V5** : 5.3, 6.5, 4.6.
 6. **Mise en service** (manuelle, après fusion et push) : run de `embedder-publish.yml` → run de `catalog-import.yml` (base consolidée → vecteurs → release) → `android.yml` → réactivation du cron hebdo.
 
+## 6b. Suivi d'avancement (à cocher au fur et à mesure ; copie tenue à jour dans `docs/PLAN-vectorisation.md`)
+
+Branche de travail : `claude/inspiring-curie-5xcuup`. Chaque tâche cochée est fusionnée dans la branche avec `./gradlew -p core test` vert.
+
+- [x] **V1** — 0.1 contrats (`4162c49`) · 1.0 FoodName (`f8a47ef`) · 3.3 embedder-publish.yml (`220008b`) · 6.1 politique de contexte core (`d20626f`) · 6.2 moteur LlmEngine/LiteRtLmEngine (`7c557db`) — fusion `7e00fec`, 193 tests verts, poussée.
+- [x] **V2** — 1.1 IngredientMapper (`e578aee`) · 1.3 NutritionTags (`94f4051`) · 1.4 pairings.json 60 paires (`e938ec8`) · 2.1 RationalizationConfig/filterSingle/process (`06ff16a`) · 3.1 embed.py validé avec le vrai modèle, 17 fiches/s (`47daf36`) · 4.1 Int8Vectors/Int8VectorIndex/RRF (`240fbaf`, 200 k vecteurs en 33 ms) · 4.2 Room v2 (`8815505`) — fusion `30bc3a3`, 235 tests dont 1 échec attendu (`texte_de_passage_stable`, réconciliation V2bis).
+- [ ] **V2bis** — réconciliation 3.1/4.1 : golden unique `tools/catalog/embedder-golden.json` (chaînes), arrondi au pair le plus proche dans `embed.py` (`round()`), `EmbeddingText.passage` sans suffixe quand `keys` est vide, suppression de `core/src/test/resources/embedder-golden.json`. (Sonnet 5.5, dépôt principal.)
+- [ ] **V3** — 1.2 branchement du mapper (Sonnet) · 2.1b TitleDeduplicator (Opus) · 2.2 CLI `rationalize`/`split` (Sonnet) · 2.3 filterSingle dans CatalogUpdater (Sonnet) · 4.3 LiteRtTextEmbedder (Opus) · 5.1 CandidateFinder sémantique (Opus) · 6.3 ModelController propriété/suspension (Opus). Première tentative interrompue par la limite d'utilisation avant tout commit : à relancer telle quelle.
+- [ ] **V4** — 3.4 workflows catalog-release/catalog-import (Opus) · 4.4 téléchargement de l'embedder (Sonnet) · 4.5 recherche hybride (Opus) · 5.2 scoring nutrition/accords + prompt budgété (Sonnet) · 6.4 assistant Courses bascule proactive (Sonnet).
+- [ ] **V5** — 5.3 câblage AppContainer/MenuViewModel (Sonnet) · 6.5 menu pré-chauffé + CarryOver + JSON (Opus) · 4.6 vecteurs des fiches lues par le téléphone (Sonnet).
+- [ ] **Validation finale** — relecture de conformité au plan, `./gradlew -p core test`, push ; compilation `app/` par `android.yml` (pas de SDK Android dans la session).
+- [ ] **Mise en service** (manuelle) — `embedder-publish.yml` → `catalog-import.yml` → `android.yml` → réactivation du cron hebdo.
+
+Faits appris en cours de route (à connaître pour la suite) : `ResponseFormat.Type` n'a pas de `JSON_SCHEMA` (utiliser `ResponseFormat.json(schema)`, type `JSON_OBJECT`) ; `Role` = SYSTEM/USER/MODEL/TOOL, `Message.user()/model()` ; `litert-lm` Python 0.19.2 : `EmbeddingEngine(model_path, backend=Backend.CPU(thread_count), …)`, `compute_embedding_batch`, `EmbeddingOptions(normalize, output_size)` ; les worktrees des sous-agents partent de `main`, chaque agent doit d'abord `git merge --no-edit claude/inspiring-curie-5xcuup` ; les méthodes DAO ajoutées en 4.2 sont bloquantes (à appeler hors thread principal) ; 0,9 % des composantes dépassent ±0,25 et sont tronquées par SCALE = 0,25 (acceptable).
+
 ## 7. Vérification de bout en bout
 
 - `./gradlew -p core test` après chaque vague ; `./gradlew :app:assembleDebug` dès qu'`app/` change ; `actionlint` sur les workflows (3.4).
