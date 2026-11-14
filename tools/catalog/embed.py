@@ -11,7 +11,8 @@ Contrat partagé avec Kotlin (`core/.../catalog/Vectors.kt`, `EmbeddingText`) :
   (fiche sans `keys` : "task: search result | text: {title}") ;
 - requête : "task: search query | text: {texte sans espaces autour}" ;
 - vecteur : `--dim` (256) dimensions (Matryoshka), L2-normalisé, quantifié INT8 signé par
-  q = clamp(round_half_up(x / SCALE * 127), -127, 127) avec SCALE = 0.25 (arrondi comme `Math.round` de Kotlin),
+  q = clamp(round(x / SCALE * 127), -127, 127) avec SCALE = 0.25 (arrondi au pair le plus proche, comme
+  `Math.rint` de Kotlin ; le `round` natif de Python sur un flottant arrondit ainsi),
   encodé en Base64 standard (256 octets -> 344 caractères).
 
 Cache incrémental : les fiches de `--previous` (mêmes noms de site, `.jsonl` ou `.jsonl.gz`) qui ont un
@@ -94,10 +95,10 @@ def l2_normalize(vec) -> list[float]:
 
 
 def quantize(vec: list[float]) -> bytes:
-    """INT8 signé : q = clamp(round(x / SCALE * 127), -127, 127), arrondi au plus proche, moitiés vers +inf."""
+    """INT8 signé : q = clamp(round(x / SCALE * 127), -127, 127), arrondi au pair le plus proche (`round` natif, = `Math.rint` côté Kotlin)."""
     out = bytearray()
     for x in vec:
-        q = math.floor(x / SCALE * 127 + 0.5)
+        q = round(x / SCALE * 127)
         q = max(-127, min(127, q))
         out.append(q & 0xFF)
     return bytes(out)
@@ -157,6 +158,13 @@ def write_jsonl(path, entries, compress: bool | None = None) -> None:
         raise
 
 
+GOLDEN_FORMULA = (
+    "float[i] = sin(i/7) en float64 pour i = 0..dim-1, normalise L2, arrondi en float32 ; "
+    "q = clamp(round(x / 0.25 * 127), -127, 127), arrondi au pair le plus proche (round Python, Math.rint Kotlin) ; "
+    "int8_base64 = Base64 des octets signes calcules sur les float32 du fichier"
+)
+
+
 def golden(dim: int = DIM) -> dict:
     # Flottants ramenés en float32 (via struct) : Kotlin les relit sans écart de représentation.
     import struct
@@ -168,6 +176,7 @@ def golden(dim: int = DIM) -> dict:
         "textVersion": TEXT_VERSION,
         "scale": SCALE,
         "dim": dim,
+        "formula": GOLDEN_FORMULA,
         "float": floats,
         "int8_base64": encode(quantize(floats)),
         "passage_example": passage_text(GOLDEN_ENTRY),

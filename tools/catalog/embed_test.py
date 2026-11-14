@@ -27,8 +27,13 @@ class EmbedTest(unittest.TestCase):
         self.assertTrue(all(-127 <= v <= 127 for v in signed))
         # Formule : x / 0.25 * 127, arrondi au plus proche, borné à ±127.
         self.assertEqual(list(embed.quantize([0.25, -0.25, 1.0, -1.0, 0.0])), [127, 129, 127, 129, 0])
-        self.assertEqual(embed.quantize([0.125])[0], 64)  # 63.5 -> 64 (moitié vers le haut, comme Math.round)
-        self.assertEqual(embed.quantize([-0.125])[0], (-63) & 0xFF)  # -63.5 -> -63
+        # Moitiés exactes : arrondi au pair le plus proche (comme Math.rint côté Kotlin).
+        self.assertEqual(embed.quantize([0.125])[0], 64)  # 63.5 -> 64
+        self.assertEqual(embed.quantize([-0.125])[0], (-64) & 0xFF)  # -63.5 -> -64
+        self.assertEqual(embed.quantize([0.5 / 127 * 0.25])[0], 0)  # 0.5 -> 0
+        self.assertEqual(embed.quantize([1.5 / 127 * 0.25])[0], 2)  # 1.5 -> 2
+        self.assertEqual(embed.quantize([2.5 / 127 * 0.25])[0], 2)  # 2.5 -> 2
+        self.assertEqual(embed.quantize([-2.5 / 127 * 0.25])[0], (-2) & 0xFF)  # -2.5 -> -2
         self.assertEqual(embed.quantize([0.1])[0], round(0.1 / 0.25 * 127))
         # Vecteur unitaire sur un axe : saturé à 127, le reste à 0.
         unit = [1.0] + [0.0] * 255
@@ -53,6 +58,10 @@ class EmbedTest(unittest.TestCase):
         self.assertEqual(embed.passage_text({"title": "Pain"}), "task: search result | text: Pain")
         self.assertEqual(embed.passage_text({"title": "Pain", "keys": []}), "task: search result | text: Pain")
         self.assertEqual(embed.query_text("  soupe d'hiver "), "task: search query | text: soupe d'hiver")
+
+    def test_passage_text_sans_cles(self):
+        for e in ({"title": "Pain"}, {"title": "Pain", "keys": []}, {"title": "Pain", "keys": None}):
+            self.assertEqual(embed.passage_text(e), "task: search result | text: Pain")
 
     def test_dry_run_reutilise_le_cache(self):
         fiche = {"url": "https://ex.fr/r1", "siteId": "ex", "title": "Soupe", "keys": ["poireau"]}
@@ -85,6 +94,7 @@ class EmbedTest(unittest.TestCase):
         self.assertEqual(embed.encode(embed.quantize(g["float"])), g["int8_base64"])
         self.assertEqual(g, embed.golden())
         self.assertEqual(g["passage_example"], embed.passage_text(embed.GOLDEN_ENTRY))
+        self.assertEqual(g["formula"], embed.GOLDEN_FORMULA)
         self.assertEqual(g["query_example"], "task: search query | text: quelque chose de réconfortant")
 
 

@@ -27,15 +27,14 @@ import kotlin.test.assertTrue
 class VectorsTest {
 
     /**
-     * Fixtures de référence : celle du module (`core/src/test/resources/embedder-golden.json`, vecteur
-     * `float[i] = sin((i + 1) / 7.0)` normalisé L2) et, quand elle existe, celle écrite par `embed.py --dry-run`
-     * (`tools/catalog/embedder-golden.json`). Toutes doivent passer.
+     * Fixture de référence unique, partagée avec la CI : `tools/catalog/embedder-golden.json` (écrite par
+     * `embed.py --dry-run` ; vecteur `float[i] = sin(i / 7.0)` normalisé L2, arrondi en float32).
      */
     private fun goldens(): List<JsonObject> {
-        val own = javaClass.getResourceAsStream("/embedder-golden.json")!!.bufferedReader(Charsets.UTF_8).use { it.readText() }
-        val shared = listOf(File("../tools/catalog/embedder-golden.json"), File("tools/catalog/embedder-golden.json"))
-            .firstOrNull { it.isFile }?.readText(Charsets.UTF_8)
-        return listOfNotNull(own, shared).map { Json.parseToJsonElement(it).jsonObject }
+        val file = listOf(File("../tools/catalog/embedder-golden.json"), File("tools/catalog/embedder-golden.json"))
+            .firstOrNull { it.isFile }
+            ?: error("Golden introuvable : tools/catalog/embedder-golden.json (cherché depuis ${File(".").absoluteFile.normalize()}) ; le régénérer avec `python3 -I tools/catalog/embed.py --in <dossier> --dry-run`")
+        return listOf(Json.parseToJsonElement(file.readText(Charsets.UTF_8)).jsonObject)
     }
 
     private fun randomVector(r: Random) = ByteArray(Int8Vectors.DIM) { (r.nextInt(255) - 127).toByte() }
@@ -52,8 +51,9 @@ class VectorsTest {
             // Un vecteur non normalisé est normalisé avant quantification.
             assertEquals(expected, Int8Vectors.encode(Int8Vectors.quantize(FloatArray(v.size) { v[it] * 3f })))
         }
-        // La formule de la fixture du module, recalculée ici.
-        val sin = DoubleArray(Int8Vectors.DIM) { kotlin.math.sin((it + 1) / 7.0) }
+        // La formule de la fixture, recalculée ici.
+        assertTrue(goldens().first()["formula"]!!.jsonPrimitive.content.isNotBlank())
+        val sin = DoubleArray(Int8Vectors.DIM) { kotlin.math.sin(it / 7.0) }
         val norm = kotlin.math.sqrt(sin.sumOf { it * it })
         val own = goldens().first()["float"]!!.jsonArray.map { it.jsonPrimitive.float }
         own.forEachIndexed { i, x -> assertEquals((sin[i] / norm).toFloat(), x) }
@@ -192,19 +192,24 @@ class VectorsTest {
 
     @Test fun texte_de_passage_stable() {
         for (g in goldens()) {
-            val p = g["passage_example"]!!.jsonObject
+            // Le texte du golden se décompose en titre et clés, que `passage` doit reconstituer à l'identique.
+            val text = g["passage_example"]!!.jsonPrimitive.content
+            val body = text.removePrefix("task: search result | text: ")
+            val (title, keys) = body.split(". Ingrédients : ", limit = 2).let { it[0] to it.getOrNull(1) }
             val entry = CatalogEntry(
-                url = "https://exemple.fr/gratin", siteId = "exemple", title = p["title"]!!.jsonPrimitive.content,
-                keys = p["keys"]!!.jsonArray.map { it.jsonPrimitive.content },
+                url = "https://exemple.fr/gratin", siteId = "exemple", title = title,
+                keys = keys?.split(", ").orEmpty(),
             )
-            assertEquals(p["text"]!!.jsonPrimitive.content, EmbeddingText.passage(entry))
-            val q = g["query_example"]!!.jsonObject
-            assertEquals(q["text"]!!.jsonPrimitive.content, EmbeddingText.query(q["input"]!!.jsonPrimitive.content))
+            assertEquals(text, EmbeddingText.passage(entry))
+            assertEquals("task: search query | text: quelque chose de réconfortant", g["query_example"]!!.jsonPrimitive.content)
+            assertEquals(g["query_example"]!!.jsonPrimitive.content, EmbeddingText.query("  quelque chose de réconfortant "))
             assertEquals(EmbeddingText.VERSION, g["textVersion"]!!.jsonPrimitive.int)
         }
         // Changer ce texte oblige à recalculer les vecteurs du catalogue (et à augmenter EmbeddingText.VERSION).
         val e = CatalogEntry(url = "u", siteId = "s", title = "Soupe de potiron", keys = listOf("potiron", "creme"))
         assertEquals("task: search result | text: Soupe de potiron. Ingrédients : potiron, creme", EmbeddingText.passage(e))
+        // Sans clés : le titre seul, comme `passage_text` de embed.py.
+        assertEquals("task: search result | text: Pain", EmbeddingText.passage(CatalogEntry(url = "u", siteId = "s", title = "Pain", keys = emptyList())))
         assertEquals("task: search query | text: velouté", EmbeddingText.query(" velouté\n"))
     }
 }

@@ -3,6 +3,7 @@
   "textVersion": 1,
   "scale": 0.25,
   "dim": 256,
+  "formula": "float[i] = sin(i/7) en float64 pour i = 0..dim-1, normalise L2, arrondi en float32 ; q = clamp(round(x / 0.25 * 127), -127, 127), arrondi au pair le plus proche (round Python, Math.rint Kotlin) ; int8_base64 = Base64 des octets signes calcules sur les float32 du fichier",
   "float": [
     0.0,
     0.012538126669824123,

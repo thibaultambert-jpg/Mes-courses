@@ -22,7 +22,10 @@ interface TextEmbedder {
 object EmbeddingText {
     const val VERSION = 1
 
-    fun passage(e: CatalogEntry): String = "task: search result | text: ${e.title}. Ingrédients : ${e.keys.joinToString(", ")}"
+    /** Sans clés : le titre seul (comme `passage_text` de `tools/catalog/embed.py`). */
+    fun passage(e: CatalogEntry): String =
+        if (e.keys.isEmpty()) "task: search result | text: ${e.title}"
+        else "task: search result | text: ${e.title}. Ingrédients : ${e.keys.joinToString(", ")}"
 
     fun query(text: String): String = "task: search query | text: ${text.trim()}"
 }
@@ -32,7 +35,7 @@ object EmbeddingText {
 /**
  * Vecteurs INT8 du catalogue. Contrat partagé avec `tools/catalog/embed.py` (fixture `embedder-golden.json`) :
  * [DIM] dimensions, vecteur flottant normalisé L2, `q = clamp(rint(x / SCALE × 127), −127, 127)` calculé en float32
- * (arrondi au pair le plus proche, comme `numpy.rint`), octets signés encodés en Base64 standard (344 caractères).
+ * (arrondi au pair le plus proche, comme `round` de Python), octets signés encodés en Base64 standard (344 caractères).
  *
  * Avec des vecteurs normalisés, le produit scalaire de deux vecteurs quantifiés vaut ≈ cos × (127 / SCALE)² : il
  * suffit pour classer (même ordre que le cosinus, à l'erreur de quantification près).
