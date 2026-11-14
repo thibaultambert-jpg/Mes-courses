@@ -1,6 +1,7 @@
 package fr.mescourses.core.catalog
 
 import fr.mescourses.core.ingredients.FoodName
+import fr.mescourses.core.ingredients.IngredientMapper
 import fr.mescourses.core.ingredients.IngredientParser
 import fr.mescourses.core.menu.DishKind
 import fr.mescourses.core.menu.DishKinds
@@ -149,11 +150,19 @@ fun CatalogEntry.recompute(): CatalogEntry {
 
 /**
  * Clés des ingrédients à acheter (hors placard) d'une recette : point d'édition unique du calcul des clés.
- * [raws] (lignes telles qu'écrites) est réservé au mapping des ingrédients et n'est pas encore utilisé.
+ * [raws] (lignes telles qu'écrites) sert au mapping canonique : une ligne ignorée est sautée, une ligne
+ * reconnue donne sa clé canonique ; sinon la chaîne habituelle s'applique. Si [raws] est plus court que
+ * [names], le nom sert de repli.
  */
 fun keysOf(names: List<String>, raws: List<String>): List<String> =
-    names.map { FoodName.clean(it) }.filter { it.isNotBlank() && !Pantry.isStaple(it) }
-        .map(IngredientOverlap::key).filter { it.isNotEmpty() }.distinct()
+    names.mapIndexedNotNull { i, name ->
+        val line = IngredientMapper.mapLine(raws.getOrElse(i) { name })
+        when {
+            line?.status == IngredientMapper.Status.IGNORE -> null
+            line?.key != null -> IngredientMapper.mapKey(line.key)
+            else -> FoodName.clean(name).takeIf { it.isNotBlank() && !Pantry.isStaple(it) }?.let(IngredientOverlap::key)
+        }
+    }.filter { it.isNotEmpty() && IngredientMapper.status(it) != IngredientMapper.Status.IGNORE }.distinct()
 
 /** Champs calculés d'une fiche du catalogue. */
 private class Computed(

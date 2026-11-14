@@ -1,6 +1,8 @@
 package fr.mescourses.core.cart
 
 import fr.mescourses.core.carrefour.Product
+import fr.mescourses.core.ingredients.IngredientMapper
+import fr.mescourses.core.menu.IngredientOverlap
 import fr.mescourses.core.model.ShoppingItem
 import fr.mescourses.core.shopping.ShoppingListMerger
 import kotlinx.coroutines.delay
@@ -46,7 +48,8 @@ object CartPlanner {
 
     /** Recherche à utiliser : celle corrigée par l'utilisateur pour cet ingrédient, sinon la recherche calculée. */
     fun queryFor(item: ShoppingItem, custom: Map<String, String> = emptyMap()): String =
-        custom[ShoppingListMerger.key(item.name)]?.takeIf { it.isNotBlank() } ?: searchQuery(item)
+        custom[ShoppingListMerger.key(item.name)]?.takeIf { it.isNotBlank() } 
+        ?: IngredientMapper.searchQueryOverride(IngredientOverlap.key(item.name)) ?: searchQuery(item)
 
     private val stopWords = setOf("les", "des", "aux", "avec", "pour", "sans", "une", "the")
 

@@ -1,7 +1,9 @@
 package fr.mescourses.core.shopping
 
 import fr.mescourses.core.ingredients.FoodName
+import fr.mescourses.core.ingredients.IngredientMapper
 import fr.mescourses.core.ingredients.IngredientParser
+import fr.mescourses.core.menu.IngredientOverlap
 import fr.mescourses.core.model.Ingredient
 import fr.mescourses.core.model.ItemSource
 import fr.mescourses.core.model.Recipe
@@ -55,11 +57,17 @@ object ShoppingListMerger {
 
     /**
      * Articles de la liste pour une recette : l'aliment seul (« morceaux de poulet » → poulet),
-     * sans les produits de placard (sel, huile, beurre…).
+     * sans les produits de placard (sel, huile, beurre…) ni les lignes que le mapping canonique ignore.
+     * Le libellé de l'article reste le nom nettoyé ([FoodName.clean]) : le mapping n'agit que sur les clés
+     * (fusion à `merge()` via [key], rayon, recherche drive), jamais sur ce que l'utilisateur lit.
      */
     fun fromRecipe(recipe: Recipe, portions: Double, pantry: List<String> = Pantry.DEFAULTS): List<ShoppingItem> = scale(recipe, portions)
         .map(IngredientParser::repair)
         .filterNot { Pantry.isStaple(it.name, pantry) }
+        .filterNot {
+            IngredientMapper.mapLine(it.raw)?.status == IngredientMapper.Status.IGNORE ||
+                IngredientMapper.status(IngredientOverlap.key(it.name)) == IngredientMapper.Status.IGNORE
+        }
         .map {
         val small = it.unit in smallMeasures
         ShoppingItem(
@@ -95,7 +103,8 @@ object ShoppingListMerger {
             // Œufs : jaunes, blancs, « œufs bio »… tout se retrouve dans une seule ligne, sans unité.
             val item = if (isEgg(raw.name)) raw.copy(name = "Œufs", unit = null) else raw
             val n = normalizeUnit(item.quantity, item.unit)
-            val groupKey = key(item.name) + "|" + (n.unit ?: "")
+            // Clé canonique du mapping : deux libellés regroupés par un merge du mapping ne font qu'une ligne.
+            val groupKey = IngredientMapper.mapKey(key(item.name)) + "|" + (n.unit ?: "")
             groups.getOrPut(groupKey) { mutableListOf() }.add(item.copy(quantity = n.quantity, unit = n.unit))
         }
         return groups.values.map { group ->

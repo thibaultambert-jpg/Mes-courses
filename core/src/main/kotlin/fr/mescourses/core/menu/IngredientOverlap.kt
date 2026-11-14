@@ -1,5 +1,6 @@
 package fr.mescourses.core.menu
 
+import fr.mescourses.core.ingredients.IngredientMapper
 import fr.mescourses.core.model.MenuDish
 import fr.mescourses.core.shopping.ShoppingListMerger
 
@@ -23,7 +24,10 @@ object IngredientOverlap {
     )
 
     /** Clé de regroupement : « Poireaux » = « poireau », « crème fraîche épaisse » ≈ « crème fraîche ». */
-    fun key(name: String): String = ShoppingListMerger.key(name)
+    fun key(name: String): String = IngredientMapper.mapKey(rawKey(name))
+
+    /** Clé calculée, avant les regroupements du mapping canonique. */
+    fun rawKey(name: String): String = ShoppingListMerger.key(name)
         .replace(Regex("""\b(bio|frais|fraiche|fraiches|gros|grosse|petit|petite|epaisse|liquide|entier|entiere)\b"""), " ")
         .replace(Regex("\\s+"), " ").trim()
 
