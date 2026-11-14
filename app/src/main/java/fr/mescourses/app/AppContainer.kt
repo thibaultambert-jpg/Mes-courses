@@ -24,6 +24,7 @@ import fr.mescourses.app.data.RoomRecipeRepository
 import fr.mescourses.app.data.RoomShoppingRepository
 import fr.mescourses.app.data.SettingsStore
 import fr.mescourses.app.llm.LiteRtLmEngine
+import fr.mescourses.app.llm.LiteRtTextEmbedder
 import fr.mescourses.app.llm.LlmEngine
 import fr.mescourses.app.llm.ModelController
 import fr.mescourses.app.llm.ModelManager
@@ -119,6 +120,8 @@ class AppContainer(context: Context) {
     val catalog = RoomCatalogStore(
         Room.databaseBuilder(context, CatalogDatabase::class.java, "catalogue.db").fallbackToDestructiveMigration(true).build().dao(),
     )
+    /** Vecteurs sémantiques sur l'appareil (modèle d'embeddings chargé à la demande, libéré en cas de manque de mémoire). */
+    val embedder: LiteRtTextEmbedder = LiteRtTextEmbedder(context)
     val catalogSync = CatalogSync(context.applicationContext, catalog, appScope, http).also { it.start() }
     /** Mise à jour de l'appli elle-même (release « appli » du dépôt). */
     val appUpdater = fr.mescourses.app.data.AppUpdater(context.applicationContext, appScope, http).also { it.start() }
