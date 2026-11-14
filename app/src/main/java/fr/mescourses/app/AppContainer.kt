@@ -40,6 +40,7 @@ import fr.mescourses.core.leclerc.LeclercClient
 import fr.mescourses.core.retail.Retailer
 import fr.mescourses.core.retail.RetailerProductMemory
 import fr.mescourses.core.carrefour.ShoppingPrompt
+import fr.mescourses.core.ingredients.PairingGraph
 import fr.mescourses.core.menu.CandidateFinder
 import fr.mescourses.core.menu.CandidatePool
 import fr.mescourses.core.menu.MenuHistory
@@ -47,6 +48,7 @@ import fr.mescourses.core.menu.MenuWishes
 import fr.mescourses.core.menu.MenuPrompt
 import fr.mescourses.core.menu.MenuTools
 import fr.mescourses.core.menu.MenuValidator
+import fr.mescourses.core.menu.PromptBuild
 import fr.mescourses.core.menu.RecipeStepsWriter
 import fr.mescourses.core.menu.TextGenerator
 import fr.mescourses.app.work.ChefWork
@@ -310,15 +312,27 @@ class AppContainer(context: Context) {
     /** Envies du menu en cours, pour le bilan que les outils renvoient au modèle. */
     @Volatile var currentWishes: MenuWishes? = null
 
-    val candidateFinder = CandidateFinder(recipeSearch, importer, recipes, menuHistory, pantry = { settings.current.pantryList() }, catalog = catalog)
+    /** Accords d'ingrédients, chargés une fois depuis les ressources. */
+    val pairings: PairingGraph by lazy { PairingGraph.load() }
+
+    val candidateFinder = CandidateFinder(
+        recipeSearch,
+        importer,
+        recipes,
+        menuHistory,
+        pantry = { settings.current.pantryList() },
+        catalog = catalog,
+        embedder = embedder,
+        pairings = pairings,
+    )
 
     /** Prompt du menu : choix parmi les candidates des sites, ou invention des plats s'il n'y en a pas. */
-    suspend fun menuSystemPrompt(wishes: MenuWishes, adjusting: Boolean = false): String {
+    suspend fun menuSystemPrompt(wishes: MenuWishes, adjusting: Boolean = false): PromptBuild {
         val today = LocalDate.now()
         val cookbook = recipes.all()
         val pool = candidates.all()
-        return if (pool.isEmpty()) MenuPrompt.system(today, wishes, cookbook, settings.current.preferences)
-        else MenuPrompt.systemWeb(today, wishes, pool, MenuHistory(menuHistory.all(), cookbook, today), settings.current.preferences, adjusting)
+        return if (pool.isEmpty()) PromptBuild(MenuPrompt.system(today, wishes, cookbook, settings.current.preferences), emptyList())
+        else MenuPrompt.systemWebBuild(today, wishes, pool, MenuHistory(menuHistory.all(), cookbook, today), settings.current.preferences, adjusting)
     }
 
     fun menuTools(adjusting: Boolean = false, maxChanges: Int? = null): List<AgentTool> = MenuTools(

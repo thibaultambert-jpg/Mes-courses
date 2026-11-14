@@ -16,7 +16,6 @@ import fr.mescourses.core.menu.CookingTime
 import fr.mescourses.core.menu.DishKind
 import fr.mescourses.core.menu.IngredientOverlap
 import fr.mescourses.core.menu.MenuComposer
-import fr.mescourses.core.menu.MenuHistory
 import fr.mescourses.core.menu.MenuInsights
 import fr.mescourses.core.menu.MenuPrompt
 import fr.mescourses.core.menu.MenuTextParser
@@ -299,7 +298,9 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     private suspend fun startConversation(adjusting: Boolean = false, maxChanges: Int? = this.maxChanges) {
         this.adjusting = adjusting
         this.maxChanges = maxChanges
-        c.model.startConversation(OWNER, c.menuSystemPrompt(config(), adjusting), c.menuTools(adjusting, maxChanges))
+        val build = c.menuSystemPrompt(config(), adjusting)
+        if (!adjusting && build.shown.size < c.candidates.size) c.candidates.set(build.shown)
+        c.model.startConversation(OWNER, build.text, c.menuTools(adjusting, maxChanges))
     }
     private var maxChanges: Int? = null
     private var adjusting = false
@@ -359,14 +360,9 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                     // Les recettes que le compositeur retiendrait d'abord : la composition demandée y est toujours possible.
                     // … puis les autres, en alternant les sites pour que le chef ait vraiment le choix.
                     val bySite = fr.mescourses.core.recipes.RecipeSearcher.interleave(list.groupBy { it.siteName }.values.toList())
-                    val shortlist = (MenuComposer.compose(list, wishes) + bySite).distinct().take(SHORTLIST)
-                    val today = java.time.LocalDate.now()
-                    val shown = if (shortlist.isEmpty()) emptyList() else MenuPrompt.systemWebBuild(
-                        today, wishes, shortlist,
-                        MenuHistory(c.menuHistory.all(), c.recipes.all(), today),
-                        c.settings.current.preferences,
-                    ).shown
-                    c.candidates.set(shown)
+                    val shortlist = (MenuComposer.compose(list, wishes, pairings = c.pairings) + bySite).distinct().take(SHORTLIST)
+                    c.candidates.set(shortlist)
+                    if (shortlist.isNotEmpty()) c.candidates.set(c.menuSystemPrompt(wishes).shown)
                     when {
                         list.isNotEmpty() -> chooseFromCandidates(wishes, found?.failedSites.orEmpty()).also { addCourseDishes(wishes) }
                         _state.value.model.available -> {
@@ -405,7 +401,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
         val chosen = c.draft.get().take(wishes.meals)
         val missing = wishes.meals - chosen.size
         val extra = if (missing > 0) {
-            MenuComposer.compose(c.candidates.all(), wishes, chosen.map(Chosen::of), chosen.mapNotNull { c.candidates.of(it) }.toSet())
+            MenuComposer.compose(c.candidates.all(), wishes, chosen.map(Chosen::of), chosen.mapNotNull { c.candidates.of(it) }.toSet(), pairings = c.pairings)
         } else emptyList()
         c.draft.set(chosen + extra.map { it.toDish(wishes.portions) })
         val size = chosen.size + extra.size
@@ -505,7 +501,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
         suspend fun pick(): Candidate? {
             val dishes = c.draft.get()
             val pool = c.candidates.all()
-            return MenuComposer.replacement(pool, wishes, dishes.filter { it.isMain }.map(Chosen::of), pool.filter { blocked(it, dishes) }.toSet())
+            return MenuComposer.replacement(pool, wishes, dishes.filter { it.isMain }.map(Chosen::of), pool.filter { blocked(it, dishes) }.toSet(), pairings = c.pairings)
         }
         return pick() ?: run {
             progress("Recherche d'autres recettes…")
@@ -530,7 +526,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
         // Entrée ou dessert : pas de composition avec les plats principaux, on prend la mieux notée.
         if (course != null) return found.first()
         // Parmi les recettes trouvées, celle qui va le mieux avec le reste du menu.
-        val best = MenuComposer.replacement(found, wishes(), dishes.filter { it.isMain }.map(Chosen::of), emptySet()) ?: found.first()
+        val best = MenuComposer.replacement(found, wishes(), dishes.filter { it.isMain }.map(Chosen::of), emptySet(), pairings = c.pairings) ?: found.first()
         c.candidates.add(listOf(best))
         return best
     }
@@ -695,7 +691,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                 val others = rest.filter { it.isMain }
 
                 fun pick() = c.candidates.all().let { pool ->
-                    MenuComposer.replacement(pool, wishes, others.map(Chosen::of), pool.filter { blocked(it, rest) }.toSet())
+                    MenuComposer.replacement(pool, wishes, others.map(Chosen::of), pool.filter { blocked(it, rest) }.toSet(), pairings = c.pairings)
                 }
 
                 val next = pick() ?: run {
@@ -734,6 +730,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
             val swap = MenuComposer.improveSharing(
                 pool, wishes, mainIdx.map { i -> dishes[i].let { d -> Chosen.of(d) to c.candidates.of(d) } },
                 exclude = pool.filter { blocked(it, dishes) }.toSet(),
+                pairings = c.pairings,
             )
             if (swap == null) {
                 _state.update { it.copy(message = "Le menu partage déjà bien ses ingrédients : aucune recette trouvée ne ferait mieux.") }
