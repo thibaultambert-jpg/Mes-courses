@@ -78,6 +78,9 @@ les sites » de Découvrir garde la recherche en ligne en complément.
   fichier `<site>.jsonl.gz` par site.
 - **Publication** : pousser `tools/catalog/publish.conf` rassemble le dernier passage terminé de chaque site dans la
   release « catalogue » ; la compilation suivante de l'APK embarque ces fichiers.
+- **Recherche par le sens** : le workflow `embedder-publish.yml` publie `embedder.json` (URL, taille, empreinte,
+  dimension) dans la release « catalogue » ; l'appli télécharge le modèle d'embedding (~485 Mo) directement depuis
+  Hugging Face.
 - **Contrôle** : ouvrir `tools/catalog/viewer.html` dans un navigateur et y déposer les fichiers (ou l'archive .zip
   téléchargée depuis GitHub) : recherche, filtres, fiches à contrôler, tableau par site.
 - **Dans l'appli** : les fichiers placés dans `app/src/main/assets/catalog/` (avec un `version.txt`) sont chargés au
