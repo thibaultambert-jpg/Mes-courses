@@ -1,6 +1,9 @@
 package fr.mescourses.core
 
+import fr.mescourses.core.catalog.NutritionTag
 import fr.mescourses.core.ingredients.IngredientParser
+import fr.mescourses.core.ingredients.PairingGraph
+import fr.mescourses.core.llm.TokenEstimate
 import fr.mescourses.core.menu.Candidate
 import fr.mescourses.core.menu.CandidateFinder
 import fr.mescourses.core.menu.CandidatePool
@@ -288,6 +291,7 @@ class MenuPlannerTest {
     @Test fun bilans_et_prompt_bornes_pour_le_contexte_du_telephone() {
         val many = (1..18).map { i -> candidate("Recette numéro $i aux poireaux", "3 poireaux", "20 cl de crème", "200 g de riz", "100 g de comté", "2 carottes", "1 oignon", "ingrédient$i") }
         val prompt = MenuPrompt.systemWeb(today, wishes.copy(meals = 5), many, noHistory)
+        assertTrue(TokenEstimate.text(prompt) <= 1_300, "prompt de ${TokenEstimate.text(prompt)} tokens")
         assertTrue(prompt.length < 4500, "prompt de ${prompt.length} caractères")
         assertTrue("n'écris pas ta réflexion" in prompt)
         val dishes = many.take(5).map { it.toDish(Portions(2)) }
@@ -619,5 +623,89 @@ class MenuPlannerTest {
         assertEquals(listOf("poulet"), spy.queries.first().words)
         assertEquals(listOf("Raclette"), finder.search("une raclette", wishes).map { it.recipe.title })
         assertTrue(spy.queries.last().vector == null)
+    }
+
+    // ---------- Scoring nutrition/accords et prompt budgété (lot 5.2) ----------
+
+    @Test fun score_harmonie_et_confort() {
+        val w = wishes.copy(meals = 4, novelty = Novelty.DECOUVERTES)
+        val pairings = PairingGraph(listOf(PairingGraph.Pairing("poireau", "citron", 0.9)))
+
+        // Bonus d'affinité via PairingGraph : +3.0 * affinityScore(c.keys + chosenKeys).
+        val baseSoup = candidate("Velouté de légumes", "2 panais", "200 g de lentilles").copy(tags = emptySet())
+        val withPairing = candidate("Poêlée au citron", "1 citron", "200 g de lentilles").copy(tags = emptySet())
+        val chosenLeek = Chosen(setOf("poireau"), DishKind.VEGE, null, fromCookbook = false, tags = emptySet())
+        val pairingDelta = (MenuComposer.score(withPairing, listOf(chosenLeek), w, pairings) - withPairing.base) -
+            (MenuComposer.score(withPairing, listOf(chosenLeek), w, PairingGraph.EMPTY) - withPairing.base)
+        assertEquals(3.0 * 0.9, pairingDelta, 1e-6)
+        assertTrue(MenuComposer.score(withPairing, listOf(chosenLeek), w, pairings) > MenuComposer.score(baseSoup, listOf(chosenLeek), w, pairings))
+
+        // COMFORT répété : -3.0 * n pour n >= 1 plats COMFORT déjà choisis.
+        val comfort = candidate("Gratin de pommes de terre", "500 g de pommes de terre", "20 cl de crème", "100 g de comté")
+            .copy(tags = setOf(NutritionTag.COMFORT))
+        val chosenComfort = Chosen(setOf("lardons"), DishKind.VIANDE, null, fromCookbook = false, tags = setOf(NutritionTag.COMFORT))
+        val s0 = MenuComposer.score(comfort, emptyList(), w)
+        val s1 = MenuComposer.score(comfort, listOf(chosenComfort), w)
+        val s2 = MenuComposer.score(comfort, listOf(chosenComfort, chosenComfort.copy(keys = setOf("reblochon"))), w)
+        assertEquals(-3.0, s1 - s0, 1e-6)
+        assertEquals(-6.0, s2 - s0, 1e-6)
+
+        // LIGHT après COMFORT : +2.0 si au moins un plat COMFORT est déjà choisi.
+        val light = candidate("Soupe légère", "2 carottes", "200 g de lentilles").copy(tags = setOf(NutritionTag.LIGHT))
+        val chosenNeutral = Chosen(setOf("riz"), DishKind.VEGE, null, fromCookbook = false, tags = emptySet())
+        assertEquals(2.0, MenuComposer.score(light, listOf(chosenComfort), w) - MenuComposer.score(light, listOf(chosenNeutral), w), 1e-6)
+
+        // OMEGA3 : +2.0 si aucun plat déjà choisi n'a OMEGA3 ni n'est un poisson.
+        val walnutSalad = candidate("Salade aux noix", "100 g de noix", "200 g de lentilles").copy(tags = setOf(NutritionTag.OMEGA3))
+        val chosenFishNoTag = Chosen(setOf("cabillaud"), DishKind.POISSON, "cabillaud", fromCookbook = false, tags = emptySet())
+        val chosenOmega3Veg = Chosen(setOf("colza"), DishKind.VEGE, null, fromCookbook = false, tags = setOf(NutritionTag.OMEGA3))
+        val baseOmega = MenuComposer.score(walnutSalad, listOf(chosenNeutral), w)
+        assertEquals(-2.0, MenuComposer.score(walnutSalad, listOf(chosenFishNoTag), w) - baseOmega, 1e-6)
+        assertEquals(-2.0, MenuComposer.score(walnutSalad, listOf(chosenOmega3Veg), w) - baseOmega, 1e-6)
+    }
+
+    @Test fun score_sans_graphe_identique_a_avant() {
+        val w = wishes.copy(meals = 3, novelty = Novelty.DECOUVERTES)
+        val untaggedPool = all.map { it.copy(tags = emptySet()) }
+        val untaggedChosen = listOf(Chosen.of(untaggedPool.first()))
+        for (c in untaggedPool) {
+            assertEquals(
+                MenuComposer.score(c, untaggedChosen, w),
+                MenuComposer.score(c, untaggedChosen, w, PairingGraph.EMPTY),
+                1e-9,
+            )
+        }
+        assertEquals(
+            MenuComposer.compose(untaggedPool, w),
+            MenuComposer.compose(untaggedPool, w, pairings = PairingGraph.EMPTY),
+        )
+        assertEquals(
+            MenuComposer.replacement(untaggedPool, w, untaggedChosen, setOf(untaggedPool.first())),
+            MenuComposer.replacement(untaggedPool, w, untaggedChosen, setOf(untaggedPool.first()), PairingGraph.EMPTY),
+        )
+        val menu = listOf(untaggedPool[0], untaggedPool[4]) // leekTart, beef
+        assertEquals(
+            MenuComposer.improveSharing(untaggedPool, w, menu.map { Chosen.of(it) to it }),
+            MenuComposer.improveSharing(untaggedPool, w, menu.map { Chosen.of(it) to it }, pairings = PairingGraph.EMPTY),
+        )
+    }
+
+    @Test fun prompt_coupe_les_candidates_au_budget() {
+        val many = (1..18).map { i ->
+            candidate(
+                "Recette numéro $i très gourmande de poireaux gratinés au fromage et aux herbes fraîches",
+                "3 poireaux", "20 cl de crème", "200 g de riz", "100 g de comté", "2 carottes",
+                fromCookbook = true,
+            )
+        }
+        val budget = 880
+        val build = MenuPrompt.systemWebBuild(today, wishes.copy(meals = 5), many, noHistory, budgetTokens = budget)
+        assertTrue(build.shown.isNotEmpty() && build.shown.size < many.size, "shown=${build.shown.size}")
+        assertTrue(TokenEstimate.text(build.text) <= budget, "tokens=${TokenEstimate.text(build.text)}")
+        // Les premières lignes restent complètes (« déjà cuisiné »), les suivantes basculent en forme compacte avant la coupure.
+        assertTrue("1. Recette numéro 1" in build.text && "déjà cuisiné" in build.text, build.text)
+        val lastLine = build.text.lines().first { it.startsWith("${build.shown.size}. ") }
+        assertTrue(lastLine.length <= 120 && "déjà cuisiné" !in lastLine, lastLine)
+        assertFalse("${build.shown.size + 1}. Recette" in build.text)
     }
 }
