@@ -1,0 +1,13 @@
+{
+  "requireUniqueImage": true,
+  "excludedCourses": ["BOISSON"],
+  "defaultMinRating": 4.5,
+  "minRatingBySite": {
+    "hellofresh": 4.0
+  },
+  "minRatingCount": 10,
+  "keepUnrated": true,
+  "requireTime": true,
+  "minIngredients": 3,
+  "dedupeTitles": false
+}

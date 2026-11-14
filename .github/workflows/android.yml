@@ -57,6 +57,7 @@ jobs:
           mkdir -p app/src/main/assets/catalog
           gh release download catalogue --repo "$GITHUB_REPOSITORY" --dir app/src/main/assets/catalog \
             --pattern '*.jsonl.gz' --pattern 'version.txt' --clobber || echo "Pas de catalogue publié : l'appli démarre avec un catalogue vide."
+          rm -f app/src/main/assets/catalog/*.source.jsonl.gz
           ls -la app/src/main/assets/catalog
 
       - name: Compilation de l'APK

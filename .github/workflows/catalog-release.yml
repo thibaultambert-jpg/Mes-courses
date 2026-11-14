@@ -1,0 +1,493 @@
+name: Catalogue — publication réutilisable
+
+# Chaîne réutilisable de préparation, vectorisation et publication de la release « catalogue » :
+# - source=import : découpe la base consolidée (tools/catalog/data/catalogue-rationalise-v2.jsonl.gz) et migre une seule
+#   fois les anciens <site>.jsonl.gz en <site>.source.jsonl.gz s'ils n'existent pas encore.
+# - source=raw : rassemble les bases brutes (de la collecte ou de la mise à jour hebdo), publie *.source.jsonl.gz et
+#   *.seen.tsv.gz, puis applique la rationalisation (tools/catalog/rationalize.json).
+# Dans les deux modes : vectorisation par site via embed.py (cache sur le <site>.jsonl.gz précédent), publication des
+# *.jsonl.gz + version.txt, reconstruction de catalogue-complet.gz depuis *.source.jsonl.gz, et relance optionnelle de l'APK.
+on:
+  workflow_call:
+    inputs:
+      source:
+        description: "Origine des fiches : import (base consolidée) ou raw (collecte / hebdo)"
+        required: true
+        type: string
+      raw_from:
+        description: "En mode raw : collect (runs de collecte via publish.conf) ou hebdo (artefacts hebdo-* du run)"
+        required: false
+        type: string
+        default: "collect"
+      rebuild_android:
+        description: "Relancer android.yml après la publication"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  preparer:
+    name: Préparer (${{ inputs.source }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      sites: ${{ steps.sites.outputs.sites }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE: ${{ inputs.source }}
+      RAW_FROM: ${{ inputs.raw_from }}
+    steps:
+      - name: Validation des entrées
+        run: |
+          case "$SOURCE" in
+            import|raw) ;;
+            *) echo "Entrée source invalide : '$SOURCE' (attendu : import ou raw)" >&2; exit 2 ;;
+          esac
+          if [ "$SOURCE" = "raw" ]; then
+            case "$RAW_FROM" in
+              collect|hebdo) ;;
+              *) echo "Entrée raw_from invalide : '$RAW_FROM' (attendu : collect ou hebdo)" >&2; exit 2 ;;
+            esac
+          fi
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+
+      # --- Mode raw : rassemblement des bruts, stats, upload *.source.jsonl.gz + *.seen.tsv.gz, rationalisation ---
+
+      - name: Téléchargement des bases hebdomadaires
+        if: inputs.source == 'raw' && inputs.raw_from == 'hebdo'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: hebdo-*
+          path: parts
+          merge-multiple: false
+
+      - name: Rassembler les bases hebdomadaires
+        if: inputs.source == 'raw' && inputs.raw_from == 'hebdo'
+        run: |
+          mkdir -p raw
+          for dir in parts/hebdo-*; do
+            [ -d "$dir" ] || continue
+            site="${dir#parts/hebdo-}"
+            [ -s "$dir/$site.jsonl" ] || continue
+            cp "$dir"/* raw/
+          done
+          compgen -G "raw/*.jsonl" >/dev/null || { echo "Aucune base mise à jour : rien à publier." >&2; exit 1; }
+          ls -la raw
+
+      - name: Rassembler les fichiers de la collecte
+        if: inputs.source == 'raw' && inputs.raw_from == 'collect'
+        run: |
+          . tools/catalog/publish.conf
+          main="${RUN:-$(gh run list --workflow catalog.yml --limit 1 --json databaseId -q '.[0].databaseId' || true)}"
+          # Sites lus par rubriques (750g, Cuisine Actuelle, Cuisine Addict) : une collecte par site, donc plusieurs runs récents.
+          extras="$(gh run list --workflow catalog-extra.yml --limit 6 --json databaseId -q '.[].databaseId' || true)"
+          # Rattrapages (fiches rejouées après coup) : les plus récents d'abord, leur fichier remplace celui de la collecte.
+          retries="$(gh run list --workflow catalog-retry.yml --limit 6 --json databaseId -q '.[].databaseId' || true)"
+          mkdir -p raw
+          for run in $retries $main $extras; do
+            [ -n "$run" ] || continue
+            echo "Collecte : run $run"
+            gh run download "$run" --dir "parts/$run" || echo "  aucun fichier dans ce run"
+          done
+          # Pour chaque site : parmi les runs (collecte, rattrapage, rubriques), le dernier passage de chacun, et on garde le
+          # fichier le plus complet (le plus de lignes) : un rattrapage interrompu ne doit pas remplacer une collecte entière.
+          for site in cuisineaz ptitchef marmiton chefsimon hellofresh jow jdf 750g cuisineactuelle cuisineaddict picnic; do
+            best=""; best_lines=0
+            for run in $retries $main $extras; do
+              [ -n "$run" ] || continue
+              last="$(find "parts/$run" -maxdepth 1 -type d -name "catalog-${site}-*" 2>/dev/null | sort -V | tail -1 || true)"
+              if [ -n "$last" ] && [ -s "$last/$site.jsonl" ]; then
+                n="$(wc -l < "$last/$site.jsonl")"
+                echo "  $site : $last ($n lignes)"
+                if [ "$n" -gt "$best_lines" ]; then best="$last"; best_lines=$n; fi
+              fi
+            done
+            if [ -n "$best" ]; then cp "$best/$site.jsonl" raw/; echo "  -> $site : $best"; fi
+          done
+          compgen -G "raw/*.jsonl" >/dev/null || { echo "Aucun fichier brut trouvé." >&2; exit 1; }
+          ls -la raw
+
+      - name: Bilan et publication des bases brutes
+        if: inputs.source == 'raw'
+        run: |
+          set -o pipefail
+          {
+            echo "### Bases brutes (raw)"
+            ./gradlew -q -p tools/catalog run --args="stats --out $PWD/raw"
+            echo ""
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+          mkdir -p source-upload
+          for f in raw/*.jsonl; do
+            [ -e "$f" ] || continue
+            site="$(basename "$f" .jsonl)"
+            gzip -9 -c "$f" > "source-upload/${site}.source.jsonl.gz"
+          done
+          for f in raw/*.seen.tsv; do
+            [ -e "$f" ] || continue
+            gzip -9 -c "$f" > "source-upload/$(basename "$f").gz"
+          done
+
+          if ! gh release view catalogue --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create catalogue --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Catalogue de recettes" \
+              --notes "Bases de recettes (une par site, sans étapes ni images) : téléchargées par l'appli et embarquées dans l'APK."
+          fi
+          gh release upload catalogue source-upload/*.gz --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Rationalisation des bases brutes
+        if: inputs.source == 'raw'
+        run: |
+          mkdir -p app
+          ./gradlew -q -p tools/catalog run --args="rationalize --in $PWD/raw --out $PWD/app --config $PWD/tools/catalog/rationalize.json"
+          if [ -f app/rationalize-report.md ]; then
+            {
+              echo "### Rationalisation"
+              cat app/rationalize-report.md
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # --- Mode import : sauvegarde unique des anciens <site>.jsonl.gz en <site>.source.jsonl.gz + split ---
+
+      - name: Migration des anciens assets vers *.source.jsonl.gz
+        if: inputs.source == 'import'
+        run: |
+          if ! gh release view catalogue --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release « catalogue » absente : aucune migration .source à effectuer."
+            exit 0
+          fi
+          assets="$(gh release view catalogue --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')"
+          mkdir -p migrate
+          while IFS= read -r asset; do
+            case "$asset" in
+              ""|*.source.jsonl.gz) continue ;;
+              *.jsonl.gz) ;;
+              *) continue ;;
+            esac
+            site="${asset%.jsonl.gz}"
+            if printf '%s\n' "$assets" | grep -Fxq "${site}.source.jsonl.gz"; then
+              echo "$site : ${site}.source.jsonl.gz existe déjà dans la release, conservé sans modification."
+              continue
+            fi
+            echo "$site : copie de $asset vers ${site}.source.jsonl.gz…"
+            gh release download catalogue --repo "$GITHUB_REPOSITORY" --dir migrate --pattern "$asset" --clobber
+            test -s "migrate/$asset"
+            gzip -t "migrate/$asset"
+            cp "migrate/$asset" "migrate/${site}.source.jsonl.gz"
+            # Sans --clobber : interdit tout écrasement d'un asset .source.jsonl.gz déjà présent.
+            gh release upload catalogue "migrate/${site}.source.jsonl.gz" --repo "$GITHUB_REPOSITORY"
+          done <<EOF
+          $assets
+          EOF
+
+      - name: Découpage de la base consolidée (split)
+        if: inputs.source == 'import'
+        run: |
+          set -o pipefail
+          mkdir -p app
+          {
+            echo "### Import de la base consolidée (split)"
+            echo '```'
+            ./gradlew -q -p tools/catalog run --args="split --in $PWD/tools/catalog/data/catalogue-rationalise-v2.jsonl.gz --out $PWD/app"
+            echo '```'
+            echo ""
+            ./gradlew -q -p tools/catalog run --args="stats --out $PWD/app"
+            echo ""
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # --- Sortie commune : liste des sites et artefacts app-<site> ---
+
+      - name: Liste des sites préparés
+        id: sites
+        run: |
+          find app -maxdepth 1 -name '*.jsonl' -empty -delete
+          sites_json=$(
+            for site in cuisineaz ptitchef marmiton chefsimon hellofresh jow jdf 750g cuisineactuelle cuisineaddict picnic; do
+              if [ -s "app/${site}.jsonl" ]; then
+                printf '%s\n' "$site"
+              fi
+            done | jq -R . | jq -sc .
+          )
+          echo "sites=$sites_json" >> "$GITHUB_OUTPUT"
+          echo "Sites à vectoriser : $sites_json"
+          [ "$sites_json" != "[]" ] || { echo "Aucun site préparé dans app/." >&2; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('app/cuisineaz.jsonl') != ''
+        with:
+          name: app-cuisineaz
+          path: app/cuisineaz.jsonl
+          retention-days: 2
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('app/ptitchef.jsonl') != ''
+        with:
+          name: app-ptitchef
+          path: app/ptitchef.jsonl
+          retention-days: 2
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('app/marmiton.jsonl') != ''
+        with:
+          name: app-marmiton
+          path: app/marmiton.jsonl
+          retention-days: 2
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('app/chefsimon.jsonl') != ''
+        with:
+          name: app-chefsimon
+          path: app/chefsimon.jsonl
+          retention-days: 2
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('app/hellofresh.jsonl') != ''
+        with:
+          name: app-hellofresh
+          path: app/hellofresh.jsonl
+          retention-days: 2
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('app/jow.jsonl') != ''
+        with:
+          name: app-jow
+          path: app/jow.jsonl
+          retention-days: 2
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('app/jdf.jsonl') != ''
+        with:
+          name: app-jdf
+          path: app/jdf.jsonl
+          retention-days: 2
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('app/750g.jsonl') != ''
+        with:
+          name: app-750g
+          path: app/750g.jsonl
+          retention-days: 2
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('app/cuisineactuelle.jsonl') != ''
+        with:
+          name: app-cuisineactuelle
+          path: app/cuisineactuelle.jsonl
+          retention-days: 2
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('app/cuisineaddict.jsonl') != ''
+        with:
+          name: app-cuisineaddict
+          path: app/cuisineaddict.jsonl
+          retention-days: 2
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('app/picnic.jsonl') != ''
+        with:
+          name: app-picnic
+          path: app/picnic.jsonl
+          retention-days: 2
+
+  vectoriser:
+    needs: preparer
+    if: ${{ !cancelled() && needs.preparer.result == 'success' }}
+    name: Vectoriser (${{ matrix.site }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        site: ${{ fromJSON(needs.preparer.outputs.sites) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SITE: ${{ matrix.site }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+          cache-dependency-path: tools/catalog/requirements-embed.txt
+
+      - name: Installation de litert-lm
+        run: pip install -r tools/catalog/requirements-embed.txt
+
+      - name: Vérification des fonctions de vectorisation
+        run: python3 -I tools/catalog/embed_test.py
+
+      - name: Métadonnées du modèle (embedder.json)
+        id: model_meta
+        run: |
+          mkdir -p model-meta
+          default_url="https://huggingface.co/litert-community/embeddinggemma-2-740m-litert-lm/resolve/main/embeddinggemma-2-740m.litertlm"
+          if gh release download catalogue --repo "$GITHUB_REPOSITORY" --dir model-meta --pattern embedder.json --clobber \
+              && [ -s model-meta/embedder.json ]; then
+            url="$(jq -r '.url // empty' model-meta/embedder.json)"
+            file="$(jq -r '.file // "embeddinggemma-2-740m.litertlm"' model-meta/embedder.json)"
+            sha256="$(jq -r '.sha256 // empty' model-meta/embedder.json)"
+            dim="$(jq -r '.dim // 256' model-meta/embedder.json)"
+          else
+            echo "embedder.json absent de la release : repli sur l'URL Hugging Face."
+            url="$default_url"
+            file="embeddinggemma-2-740m.litertlm"
+            sha256=""
+            dim="256"
+          fi
+          url="${url:-$default_url}"
+          if [ -z "$sha256" ]; then
+            sha256="$(curl -sI "$url" | awk 'tolower($1) == "x-linked-etag:" { gsub(/["\r]/, "", $2); print $2; exit }')"
+            sha256="${sha256:-hf-main}"
+          fi
+          {
+            echo "url=$url"
+            echo "file=$file"
+            echo "sha256=$sha256"
+            echo "dim=$dim"
+          } >> "$GITHUB_OUTPUT"
+          echo "Modèle : $file (dim=$dim, sha256=$sha256)"
+
+      - name: Cache du modèle
+        id: model_cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/model
+          key: embedder-${{ steps.model_meta.outputs.sha256 }}
+
+      - name: Téléchargement du modèle
+        env:
+          MODEL_URL: ${{ steps.model_meta.outputs.url }}
+          MODEL_FILE: ${{ steps.model_meta.outputs.file }}
+          MODEL_SHA256: ${{ steps.model_meta.outputs.sha256 }}
+        run: |
+          if [ -s "$RUNNER_TEMP/model/$MODEL_FILE" ]; then
+            echo "Modèle déjà présent dans le cache."
+          else
+            mkdir -p "$RUNNER_TEMP/model"
+            curl -L --fail --retry 3 -o "$RUNNER_TEMP/model/$MODEL_FILE" "$MODEL_URL"
+          fi
+          if printf '%s' "$MODEL_SHA256" | grep -Eq '^[0-9a-fA-F]{64}$'; then
+            echo "$MODEL_SHA256  $RUNNER_TEMP/model/$MODEL_FILE" | sha256sum -c -
+          fi
+          ls -lh "$RUNNER_TEMP/model/$MODEL_FILE"
+
+      - name: Téléchargement des fiches à vectoriser
+        uses: actions/download-artifact@v4
+        with:
+          name: app-${{ matrix.site }}
+          path: work
+
+      - name: Téléchargement du cache vectoriel précédent
+        run: |
+          mkdir -p prev
+          gh release download catalogue --repo "$GITHUB_REPOSITORY" --dir prev --pattern "${SITE}.jsonl.gz" --clobber \
+            || echo "Aucun catalogue publié précédent pour $SITE : calcul complet."
+          ls -la prev
+
+      - name: Vectorisation (${{ matrix.site }})
+        env:
+          MODEL_FILE: ${{ steps.model_meta.outputs.file }}
+          MODEL_DIM: ${{ steps.model_meta.outputs.dim }}
+        run: |
+          python3 -I tools/catalog/embed.py \
+            --in "$PWD/work" \
+            --model "$RUNNER_TEMP/model/$MODEL_FILE" \
+            --previous "$PWD/prev" \
+            --sites "$SITE" \
+            --dim "$MODEL_DIM"
+          if [ -f work/embed-report.md ]; then
+            cat work/embed-report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vec-${{ matrix.site }}
+          path: |
+            work/${{ matrix.site }}.jsonl
+            work/embed-report.md
+          retention-days: 2
+
+  publier:
+    needs: [preparer, vectoriser]
+    if: ${{ !cancelled() && needs.preparer.result == 'success' && needs.vectoriser.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: vec-*
+          path: parts
+          merge-multiple: false
+
+      - name: Rassembler et contrôler les bases vectorisées
+        run: |
+          set -o pipefail
+          mkdir -p out
+          for dir in parts/vec-*; do
+            [ -d "$dir" ] || continue
+            site="${dir#parts/vec-}"
+            [ -s "$dir/$site.jsonl" ] || continue
+            cp "$dir/$site.jsonl" out/
+          done
+          compgen -G "out/*.jsonl" >/dev/null || { echo "Aucun fichier vectorisé : rien à publier." >&2; exit 1; }
+          {
+            echo "### Bases vectorisées publiées"
+            ./gradlew -q -p tools/catalog run --args="stats --out $PWD/out"
+            echo ""
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          if compgen -G "parts/vec-*/embed-report.md" >/dev/null; then
+            {
+              echo "### Vectorisation (détail par site)"
+              echo "| Site | Fiches | Réutilisés | Calculés | Échecs | Restants | Secondes |"
+              echo "|---|---:|---:|---:|---:|---:|---:|"
+              for r in parts/vec-*/embed-report.md; do
+                grep -E '^\| [^|]+ \|' "$r" | grep -Ev '^\| (Site|\*\*Total\*\*|---)' || true
+              done
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          gzip -9 -f out/*.jsonl
+          date -u +%Y-%m-%dT%H:%M:%SZ > out/version.txt
+          ls -lh out
+          {
+            echo '```'
+            ls -lh out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Release « catalogue » (bases appli + version)
+        run: |
+          if ! gh release view catalogue --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create catalogue --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Catalogue de recettes" \
+              --notes "Bases de recettes (une par site, sans étapes ni images) : téléchargées par l'appli et embarquées dans l'APK."
+          fi
+          gh release upload catalogue out/*.jsonl.gz out/version.txt --repo "$GITHUB_REPOSITORY" --clobber
+
+      # Un seul fichier pour le viewer (tools/catalog/viewer.html), construit à partir des bases brutes (*.source.jsonl.gz)
+      # pour ne pas y embarquer les vecteurs ; sans extension .jsonl.gz pour que l'appli et l'APK ne le prennent pas pour un site.
+      - name: Catalogue complet
+        run: |
+          mkdir -p all
+          if gh release download catalogue --repo "$GITHUB_REPOSITORY" --dir all --pattern '*.source.jsonl.gz' --clobber \
+              && compgen -G "all/*.source.jsonl.gz" >/dev/null; then
+            zcat all/*.source.jsonl.gz | gzip -9 > catalogue-complet.gz
+            ls -la catalogue-complet.gz
+            gh release upload catalogue catalogue-complet.gz --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            echo "Aucun fichier *.source.jsonl.gz dans la release : catalogue-complet.gz non reconstruit."
+          fi
+
+      # L'APK embarque les bases à la compilation : on la relance sur la branche par défaut (sur main, elle publie aussi la mise à jour).
+      - name: Recompiler l'appli
+        if: inputs.rebuild_android
+        run: gh workflow run android.yml --repo "$GITHUB_REPOSITORY" --ref "${{ github.event.repository.default_branch }}"

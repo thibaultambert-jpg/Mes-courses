@@ -1,10 +1,16 @@
 name: Publier le catalogue
 
-# Rassemble les fichiers de la dernière collecte (même en cours : on prend le dernier passage terminé de chaque site)
-# et les publie dans la release « catalogue ». La compilation de l'appli les embarque ensuite.
-# Se lance en poussant tools/catalog/publish.conf.
+# Rassemble les fichiers bruts de la dernière collecte (même en cours : on prend le dernier passage terminé de chaque site),
+# les publie en *.source.jsonl.gz, applique la rationalisation et la vectorisation, puis publie la release « catalogue ».
+# Se lance en poussant tools/catalog/publish.conf ou manuellement.
 on:
   workflow_dispatch:
+    inputs:
+      rebuild_android:
+        description: "Relancer la compilation de l'APK après publication"
+        type: boolean
+        required: false
+        default: false
   push:
     branches: ["claude/**"]
     paths:
@@ -12,72 +18,16 @@ on:
 
 permissions:
   contents: write
-  actions: read
+  actions: write
 
 concurrency:
-  group: ${{ github.workflow }}
+  group: catalogue-release
   cancel-in-progress: false
 
 jobs:
   publier:
-    runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Fichiers de la collecte
-        run: |
-          . tools/catalog/publish.conf
-          main="${RUN:-$(gh run list --workflow catalog.yml --limit 1 --json databaseId -q '.[0].databaseId')}"
-          # Sites lus par rubriques (750g, Cuisine Actuelle, Cuisine Addict) : une collecte par site, donc plusieurs runs récents.
-          extras="$(gh run list --workflow catalog-extra.yml --limit 6 --json databaseId -q '.[].databaseId' || true)"
-          # Rattrapages (fiches rejouées après coup) : les plus récents d'abord, leur fichier remplace celui de la collecte.
-          retries="$(gh run list --workflow catalog-retry.yml --limit 6 --json databaseId -q '.[].databaseId' || true)"
-          mkdir -p catalog
-          for run in $retries $main $extras; do
-            echo "Collecte : run $run"
-            gh run download "$run" --dir "parts/$run" || echo "  aucun fichier dans ce run"
-          done
-          # Pour chaque site : parmi les runs (collecte, rattrapage, rubriques), le dernier passage de chacun, et on garde le
-          # fichier le plus complet (le plus de lignes) : un rattrapage interrompu ne doit pas remplacer une collecte entière.
-          for site in cuisineaz ptitchef marmiton chefsimon hellofresh jow jdf 750g cuisineactuelle cuisineaddict picnic; do
-            best=""; best_lines=0
-            for run in $retries $main $extras; do
-              last=$(ls -d parts/$run/catalog-$site-* 2>/dev/null | sort -V | tail -1)
-              if [ -n "$last" ]; then
-                n=$(wc -l < "$last/$site.jsonl")
-                echo "  $site : $last ($n lignes)"
-                if [ "$n" -gt "$best_lines" ]; then best="$last"; best_lines=$n; fi
-              fi
-            done
-            if [ -n "$best" ]; then cp "$best/$site.jsonl" catalog/; echo "  -> $site : $best"; fi
-          done
-          ls -la catalog
-      - name: Bilan
-        run: |
-          ./gradlew -q -p tools/catalog run --args="stats --out $PWD/catalog" | tee -a "$GITHUB_STEP_SUMMARY"
-          gzip -9 catalog/*.jsonl
-          date -u +%Y-%m-%dT%H:%M:%SZ > catalog/version.txt
-          ls -la catalog | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Release « catalogue »
-        run: |
-          if ! gh release view catalogue >/dev/null 2>&1; then
-            gh release create catalogue --target "$GITHUB_SHA" --title "Catalogue de recettes" \
-              --notes "Fichiers du catalogue embarqués dans l'appli à la compilation (un par site, sans étapes ni images)."
-          fi
-          gh release upload catalogue catalog/*.jsonl.gz catalog/version.txt --clobber
-
-      # Un seul fichier pour le viewer (tools/catalog/viewer.html). Volontairement pas en « .jsonl.gz » :
-      # l'appli et l'APK prennent chaque *.jsonl.gz de la release pour la base d'un site.
-      - name: Catalogue complet
-        run: |
-          mkdir -p all
-          gh release download catalogue --repo "$GITHUB_REPOSITORY" --dir all --pattern '*.jsonl.gz' --clobber
-          zcat all/*.jsonl.gz | gzip -9 > catalogue-complet.gz
-          ls -la catalogue-complet.gz
-          gh release upload catalogue catalogue-complet.gz --clobber
+    uses: ./.github/workflows/catalog-release.yml
+    with:
+      source: raw
+      raw_from: collect
+      rebuild_android: ${{ github.event_name == 'workflow_dispatch' && inputs.rebuild_android == true }}
