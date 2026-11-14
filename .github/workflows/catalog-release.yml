@@ -494,4 +494,5 @@ jobs:
       # L'APK embarque les bases à la compilation : on la relance sur la branche courante (sur main, elle publie aussi la mise à jour).
       - name: Recompiler l'appli
         if: inputs.rebuild_android
-        run: gh workflow run android.yml --repo "$GITHUB_REPOSITORY" --ref "${{ github.ref_name }}" || echo "Note : lancement manuel d'android.yml requis si GITHUB_TOKEN ne déclenche pas workflow_dispatch."
+        run: |
+          gh workflow run android.yml --repo "$GITHUB_REPOSITORY" --ref "${{ github.ref_name }}" || echo "Note - lancement manuel d'android.yml requis si GITHUB_TOKEN ne déclenche pas workflow_dispatch."
