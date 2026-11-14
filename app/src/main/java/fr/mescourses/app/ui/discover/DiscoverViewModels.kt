@@ -23,13 +23,17 @@ import fr.mescourses.core.recipes.RecipeSites
 import fr.mescourses.core.season.Seasonality
 import fr.mescourses.core.shopping.ShoppingListMerger
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 
 /** Recettes du livre indexées par adresse d'origine, et ajout aux favoris sans doublon. */
@@ -110,11 +114,30 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
     /** Ce site a une base de recettes téléchargeable (sinon il ne se cherche qu'en ligne). */
     fun hasCatalog(siteId: String) = fr.mescourses.core.catalog.CatalogSources.byId(siteId) != null
 
+    private var job: Job? = null
+    private var debounceJob: Job? = null
+    private var suppressDebounceFor: String? = null
+
     init {
         // Une base supprimée ne reste pas cochée dans les filtres.
         viewModelScope.launch {
             c.catalogSync.status.collect { st ->
                 if (st.loaded) sites.value = sites.value.filter { !hasCatalog(it) || it in st.installed }.toSet()
+            }
+        }
+        // Recherche automatique à la frappe avec anti-rebond de 250 ms.
+        viewModelScope.launch {
+            query.drop(1).collect { text ->
+                if (text == suppressDebounceFor) {
+                    suppressDebounceFor = null
+                    return@collect
+                }
+                suppressDebounceFor = null
+                debounceJob?.cancel()
+                debounceJob = launch {
+                    delay(250)
+                    search()
+                }
             }
         }
     }
@@ -123,7 +146,10 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
     private fun chosenSites(): List<RecipeSite> =
         if (sites.value.isEmpty()) searchableSites else allSitesList.filter { it.id in sites.value }
 
-    private var job: Job? = null
+    private fun setQueryQuietly(text: String) {
+        if (query.value != text) suppressDebounceFor = text
+        query.value = text
+    }
 
     fun toggleSite(id: String) {
         sites.value = if (id in sites.value) sites.value - id else sites.value + id
@@ -156,6 +182,7 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
      */
     fun back(): Boolean {
         if (state.value == State.Idle && !popularMode.value) return false
+        debounceJob?.cancel()
         job?.cancel()
         popularMode.value = false
         localOnly.value = false
@@ -166,6 +193,7 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
 
     /** Recettes populaires du moment sur les sites choisis (filtres et tri appliqués par l'app). */
     fun popular() {
+        debounceJob?.cancel()
         popularMode.value = true
         localOnly.value = false
         val chosen = chosenSites()
@@ -210,18 +238,19 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     fun applyIdea(idea: QuickIdea) {
-        query.value = ""
+        setQueryQuietly("")
         filters.value = idea.filters
         popularMode.value = false
         search()
     }
 
     fun searchIdea(idea: String) {
-        query.value = idea
+        setQueryQuietly(idea)
         search()
     }
 
     fun search() {
+        debounceJob?.cancel()
         val q = RecipeFilters.query(query.value, filters.value)
         popularMode.value = false
         if (q.isBlank()) {
@@ -230,6 +259,10 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
             return
         }
         val chosen = chosenSites()
+        val text = query.value.trim()
+        val currentFilters = filters.value
+        val currentSites = sites.value
+        val month = LocalDate.now().monthValue
         job?.cancel()
         searchingOnline.value = false
         seed = newSeed()
@@ -237,10 +270,22 @@ class DiscoverViewModel(private val c: AppContainer) : ViewModel() {
         job = viewModelScope.launch {
             state.value = State.Loading
             // Le catalogue local d'abord (immédiat, sans réseau) ; les sites seulement s'il est vide.
-            val local = runCatching {
+            val local = try {
                 if (c.catalog.count() == 0) null
-                else CatalogRanking.search(c.catalog, CatalogQuery.of(query.value, filters.value, LocalDate.now().monthValue, sites.value), draw).map { it.toHit() }
-            }.getOrNull()
+                else {
+                    val vector = if (text.isNotEmpty()) {
+                        withContext(Dispatchers.Default) {
+                            if (c.embedder.available()) c.embedder.embedQuery(text) else null
+                        }
+                    } else null
+                    val catalogQuery = CatalogQuery.of(text, currentFilters, month, currentSites).copy(vector = vector)
+                    CatalogRanking.search(c.catalog, catalogQuery, draw).map { it.toHit() }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
             localOnly.value = local != null
             show(if (local != null) RecipeSearchResult(local, emptyMap(), emptyList()) else c.recipeSearch.search(q, chosen))
         }
