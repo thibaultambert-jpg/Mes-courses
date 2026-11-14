@@ -124,7 +124,7 @@ class AppContainer(context: Context) {
     )
     /** Vecteurs sémantiques sur l'appareil (modèle d'embeddings chargé à la demande, libéré en cas de manque de mémoire). */
     val embedder: LiteRtTextEmbedder = LiteRtTextEmbedder(context)
-    val catalogSync = CatalogSync(context.applicationContext, catalog, appScope, http).also { it.start() }
+    val catalogSync = CatalogSync(context.applicationContext, catalog, appScope, http, embedder).also { it.start() }
     /** Mise à jour de l'appli elle-même (release « appli » du dépôt). */
     val appUpdater = fr.mescourses.app.data.AppUpdater(context.applicationContext, appScope, http).also { it.start() }
 
