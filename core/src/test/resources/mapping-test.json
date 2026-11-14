@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "exportedAt": "2026-11-14T00:00:00Z",
+  "merges": [
+    { "from": "oignon jaune", "to": "oignon doux" },
+    { "from": "oignon doux", "to": "oignon" },
+    { "from": "Échalotes grises", "to": "echalote" },
+    { "from": "creme legere", "to": "creme fraiche" },
+    { "from": "creme legere", "to": "creme allegee" },
+    { "from": "sel et poivre du moulin", "to": "sel et poivre" }
+  ],
+  "keys": [
+    { "key": "oignon", "status": "ok", "rayon": "FRUITS_LEGUMES", "search": null },
+    { "key": "echalote", "status": "ok", "rayon": "Fruits & légumes", "search": null },
+    { "key": "creme allegee", "status": "ok", "rayon": "Crèmerie & œufs", "search": "crème légère 15%" },
+    { "key": "sel et poivre", "status": "split", "rayon": null, "search": null },
+    { "key": "eau", "status": "ignore", "rayon": null, "search": null },
+    { "key": "champignon de pari", "status": "ok", "rayon": "EPICERIE", "search": "champignons de Paris" },
+    { "key": "mystere", "status": null, "rayon": null, "search": null }
+  ],
+  "lines": [
+    { "text": "200 g", "key": null, "status": "ignore" },
+    { "text": "2", "key": null, "status": "ignore" },
+    { "text": "l", "key": null, "status": "ignore" },
+    { "text": "échalotes grises ciselées", "key": "Échalotes grises", "status": null }
+  ]
+}
