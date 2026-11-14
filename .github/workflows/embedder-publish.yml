@@ -1,0 +1,70 @@
+name: Embedder — publication des métadonnées
+
+# Publie embedder.json (url, taille, sha256, dimension…) dans la release « catalogue ».
+# Le modèle lui-même n'est PAS redistribué : l'appli le télécharge depuis Hugging Face.
+# Le fichier est téléchargé ici uniquement pour calculer sa taille et son empreinte, puis supprimé.
+on:
+  workflow_dispatch:
+    inputs:
+      model_url:
+        description: "URL de téléchargement du modèle"
+        required: false
+        default: "https://huggingface.co/litert-community/embeddinggemma-2-740m-litert-lm/resolve/main/embeddinggemma-2-740m.litertlm"
+      dim:
+        description: "Dimension des vecteurs conservés"
+        required: false
+        default: "256"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  publier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MODEL_URL: ${{ inputs.model_url }}
+      DIM: ${{ inputs.dim }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Téléchargement du modèle
+        run: |
+          curl -L --fail --retry 3 -o "$RUNNER_TEMP/model.litertlm" "$MODEL_URL"
+          ls -lh "$RUNNER_TEMP/model.litertlm"
+      - name: Empreinte et taille
+        run: |
+          echo "SHA256=$(sha256sum "$RUNNER_TEMP/model.litertlm" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "BYTES=$(stat -c %s "$RUNNER_TEMP/model.litertlm")" >> "$GITHUB_ENV"
+          rm -f "$RUNNER_TEMP/model.litertlm"
+      - name: Écriture de embedder.json
+        run: |
+          jq -n \
+            --arg model "embeddinggemma-2-740m@$DIM" \
+            --argjson dim "$DIM" \
+            --arg url "$MODEL_URL" \
+            --argjson bytes "$BYTES" \
+            --arg sha256 "$SHA256" \
+            --arg publishedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{model: $model, file: "embeddinggemma-2-740m.litertlm", dim: $dim, textVersion: 1, scale: 0.25,
+              url: $url, bytes: $bytes, sha256: $sha256, publishedAt: $publishedAt}' > embedder.json
+          cat embedder.json
+      - name: Release « catalogue »
+        run: |
+          if ! gh release view catalogue >/dev/null 2>&1; then
+            gh release create catalogue --target "$GITHUB_SHA" --title "Catalogue de recettes" \
+              --notes "Fichiers du catalogue embarqués dans l'appli à la compilation (un par site, sans étapes ni images)."
+          fi
+          gh release upload catalogue embedder.json --clobber
+      - name: Résumé
+        run: |
+          {
+            echo "### Embedder publié"
+            echo '```json'
+            cat embedder.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

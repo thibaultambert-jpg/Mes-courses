@@ -82,6 +82,9 @@ les sites » de Découvrir garde la recherche en ligne en complément.
   avec leur message), rangé dans l'artefact `erreurs-<site>-<passage>`. La publication prend le rattrapage le plus récent.
 - **Publication** : pousser `tools/catalog/publish.conf` rassemble le dernier passage terminé de chaque site dans la
   release « catalogue » ; la compilation suivante de l'APK embarque ces fichiers.
+- **Recherche par le sens** : le workflow `embedder-publish.yml` publie `embedder.json` (URL, taille, empreinte,
+  dimension) dans la release « catalogue » ; l'appli télécharge le modèle d'embedding (~485 Mo) directement depuis
+  Hugging Face.
 - **Contrôle** : ouvrir `tools/catalog/viewer.html` dans un navigateur et y déposer `catalogue-complet.gz` (toutes les bases en un
   seul fichier, ajouté à la release « catalogue » à chaque publication), ou les fichiers par site (ou l'archive .zip
   téléchargée depuis GitHub) : recherche, tous les filtres de la base (durées, notes, saison, ingrédients, dates…), fiches à contrôler, tableau par site ;
