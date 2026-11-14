@@ -1,6 +1,7 @@
 package fr.mescourses.app.data
 
 import android.util.Base64
+import android.util.Log
 import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
@@ -20,11 +21,19 @@ import fr.mescourses.core.catalog.CatalogEntry
 import fr.mescourses.core.catalog.CatalogPolicy
 import fr.mescourses.core.catalog.CatalogQuery
 import fr.mescourses.core.catalog.CatalogStore
-import fr.mescourses.core.recipes.RecipeRating
 import fr.mescourses.core.catalog.Course
+import fr.mescourses.core.catalog.Int8VectorIndex
+import fr.mescourses.core.catalog.Int8Vectors
 import fr.mescourses.core.catalog.NutritionTag
+import fr.mescourses.core.catalog.ReciprocalRankFusion
 import fr.mescourses.core.catalog.minutes
 import fr.mescourses.core.menu.DishKind
+import fr.mescourses.core.recipes.RecipeRating
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import java.util.Locale
 
 /**
  * Une recette du catalogue local. Base séparée de celle de l'appli : elle peut être vidée et reconstruite
@@ -216,13 +225,87 @@ abstract class CatalogDatabase : RoomDatabase() {
     abstract fun dao(): CatalogDao
 }
 
+/**
+ * Cache paresseux en mémoire de l'index vectoriel du catalogue ([Int8VectorIndex]).
+ *
+ * Thread-safe : [invalidate] incrémente le compteur de génération sans attendre une reconstruction en cours, et
+ * [get] vérifie ce compteur avant de publier l'index construit pour ne jamais mettre en cache une lecture antérieure
+ * à une écriture.
+ */
+class VectorIndexCache {
+    private val buildMutex = Mutex()
+    private val lock = Any()
+    private var cached: Int8VectorIndex? = null
+    private var generation = 0L
+
+    /** Invalide le cache (appelé après toute écriture ou suppression dans le catalogue). */
+    fun invalidate() {
+        synchronized(lock) {
+            generation++
+            cached = null
+        }
+    }
+
+    /** Retourne l'index en mémoire, en le construisant paresseusement hors du thread principal si besoin. */
+    suspend fun get(dao: CatalogDao): Int8VectorIndex {
+        synchronized(lock) { cached }?.let { return it }
+        return buildMutex.withLock {
+            synchronized(lock) { cached }?.let { return@withLock it }
+            withContext(Dispatchers.IO) {
+                var index: Int8VectorIndex
+                var attempts = 0
+                do {
+                    val gen = synchronized(lock) { generation }
+                    val startNs = System.nanoTime()
+                    val rows = dao.vectors()
+                    val pairs = ArrayList<Pair<Long, ByteArray>>(rows.size)
+                    for (row in rows) {
+                        if (row.embedding.size == Int8Vectors.DIM) pairs.add(row.id to row.embedding)
+                    }
+                    index = Int8VectorIndex.build(pairs)
+                    val published = synchronized(lock) {
+                        if (generation == gen) {
+                            cached = index
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    if (published) {
+                        val ms = (System.nanoTime() - startNs) / 1_000_000.0
+                        Log.d(TAG, "Index vectoriel chargé : ${index.size} vecteurs en ${"%.1f".format(Locale.ROOT, ms)} ms")
+                    }
+                } while (!published && ++attempts < MAX_BUILD_ATTEMPTS)
+                index
+            }
+        }
+    }
+
+    private companion object {
+        const val TAG = "VectorIndexCache"
+        const val MAX_BUILD_ATTEMPTS = 3
+    }
+}
+
 class RoomCatalogStore(private val dao: CatalogDao) : CatalogStore {
+    private val vectorCache = VectorIndexCache()
+
     override suspend fun count() = dao.count()
     override suspend fun countBySite() = dao.countBySite().associate { it.siteId to it.n }
     override suspend fun byUrl(url: String) = dao.byUrl(url)?.toEntry()
-    override suspend fun upsert(entries: List<CatalogEntry>) = dao.replace(entries.map(CatalogRecipeEntity::of))
+
+    override suspend fun upsert(entries: List<CatalogEntry>) {
+        if (entries.isEmpty()) return
+        try {
+            dao.replace(entries.map(CatalogRecipeEntity::of))
+        } finally {
+            vectorCache.invalidate()
+        }
+    }
+
     override suspend fun known(siteId: String): Map<String, String?> =
         (dao.emptyPages(siteId) + dao.recipePages(siteId)).associate { it.url to it.lastmod }
+
     override suspend fun markEmpty(siteId: String, url: String, lastmod: String?) = dao.markEmpty(CatalogEmptyEntity(url, siteId, lastmod))
     override suspend fun meta(key: String) = dao.meta(key)
     override suspend fun setMeta(key: String, value: String) = dao.setMeta(CatalogMetaEntity(key, value))
@@ -231,22 +314,107 @@ class RoomCatalogStore(private val dao: CatalogDao) : CatalogStore {
     /** Nombre de fiches qui ont un vecteur sémantique. */
     fun countWithEmbedding(): Int = dao.countWithEmbedding()
 
+    /** Fiches sans vecteur sémantique (jusqu'à [limit]). */
+    suspend fun withoutEmbedding(limit: Int): List<IdTitleKeys> = withContext(Dispatchers.IO) {
+        dao.withoutEmbedding(limit)
+    }
+
+    /** Enregistre le vecteur d'une fiche et invalide l'index en mémoire. */
+    suspend fun setEmbedding(id: Long, bytes: ByteArray) = withContext(Dispatchers.IO) {
+        try {
+            dao.setEmbedding(id, bytes)
+        } finally {
+            vectorCache.invalidate()
+        }
+    }
+
+    /** Invalide l'index vectoriel en mémoire. */
+    fun invalidateVectorIndex() = vectorCache.invalidate()
+
     /** Supprime la base d'un site. */
     suspend fun deleteSite(siteId: String) {
-        dao.deleteSite(siteId)
-        dao.deleteEmptySite(siteId)
+        try {
+            dao.deleteSite(siteId)
+            dao.deleteEmptySite(siteId)
+        } finally {
+            vectorCache.invalidate()
+        }
     }
 
     override suspend fun search(query: CatalogQuery): List<CatalogEntry> {
+        if (query.limit <= 0) return emptyList()
+        val vector = query.vector ?: return searchSql(query)
+        return searchHybrid(query, vector)
+    }
+
+    private suspend fun searchSql(query: CatalogQuery): List<CatalogEntry> {
+        val filter = whereClause(query, includeFts = true)
+        val sql = StringBuilder("SELECT r.* FROM ").append(filter.from).append(filter.where)
+        val args = ArrayList<Any>(filter.args.size + 2).apply { addAll(filter.args) }
+        appendOrder(sql, args, query.seed)
+        sql.append(" LIMIT ?")
+        args += query.limit
+        return dao.search(SimpleSQLiteQuery(sql.toString(), args.toTypedArray())).map { it.toEntry() }
+    }
+
+    private suspend fun searchHybrid(query: CatalogQuery, vector: ByteArray): List<CatalogEntry> = withContext(Dispatchers.IO) {
+        val index = vectorCache.get(dao)
+        // Aucun vecteur en base : repli sur FTS/SQL (seed ignoré).
+        if (index.size == 0) return@withContext searchSql(query.copy(seed = null))
+
+        val candidateLimit = if (query.limit > Int.MAX_VALUE / 3) Int.MAX_VALUE else query.limit * 3
+        val hardFilter = whereClause(query, includeFts = false)
+        val mask = if (hardFilter.where.isEmpty()) {
+            null
+        } else {
+            val idsSql = StringBuilder("SELECT r.id FROM ").append(hardFilter.from).append(hardFilter.where).append(" ORDER BY r.id ASC")
+            val allowedIds = dao.ids(SimpleSQLiteQuery(idsSql.toString(), hardFilter.args.toTypedArray()))
+            if (allowedIds.isEmpty()) return@withContext emptyList()
+            index.mask(allowedIds.toLongArray())
+        }
+
+        val startNs = System.nanoTime()
+        val vectorHits = index.topK(vector, candidateLimit, mask)
+        val elapsedMs = (System.nanoTime() - startNs) / 1_000_000.0
+        Log.d(TAG, "topK (${index.size} vecteurs, ${vectorHits.size} retenus) en ${"%.1f".format(Locale.ROOT, elapsedMs)} ms")
+        val vectorIds = vectorHits.map { it.id }
+
+        val words = cleanWords(query.words)
+        val rankings = ArrayList<List<Long>>(2)
+        if (vectorIds.isNotEmpty()) rankings += vectorIds
+        if (words.isNotEmpty()) {
+            val ftsFilter = whereClause(query, includeFts = true)
+            val ftsSql = StringBuilder("SELECT r.id FROM ").append(ftsFilter.from).append(ftsFilter.where)
+            val ftsArgs = ArrayList<Any>(ftsFilter.args.size + 1).apply { addAll(ftsFilter.args) }
+            // seed est ignoré quand vector != null : la branche FTS classe par note pondérée.
+            appendOrder(ftsSql, ftsArgs, seed = null)
+            ftsSql.append(" LIMIT ?")
+            ftsArgs += candidateLimit
+            val ftsIds = dao.ids(SimpleSQLiteQuery(ftsSql.toString(), ftsArgs.toTypedArray()))
+            if (ftsIds.isNotEmpty()) rankings += ftsIds
+        }
+
+        if (rankings.isEmpty()) return@withContext emptyList()
+        val fusedIds = ReciprocalRankFusion.fuse(rankings, k = RRF_K).take(query.limit)
+        if (fusedIds.isEmpty()) return@withContext emptyList()
+        val byId = fusedIds.chunked(SQLITE_MAX_VARS).flatMap { dao.byIds(it) }.associateBy { it.id }
+        fusedIds.mapNotNull { byId[it]?.toEntry() }
+    }
+
+    private data class SqlFilter(val from: String, val where: String, val args: List<Any>)
+
+    /** Source unique des filtres durs (et, si [includeFts], de la jointure plein texte FTS4). */
+    private fun whereClause(query: CatalogQuery, includeFts: Boolean): SqlFilter {
         val args = ArrayList<Any>()
         val where = ArrayList<String>()
-        val sql = StringBuilder("SELECT r.* FROM catalog_recipe r")
-        // Chaque mot doit commencer un mot du texte de recherche ; seuls lettres et chiffres atteignent l'index.
-        val words = query.words.map { w -> w.filter { it in 'a'..'z' || it in '0'..'9' } }.filter { it.isNotEmpty() }
-        if (words.isNotEmpty()) {
-            sql.append(" JOIN catalog_fts ON catalog_fts.docid = r.id")
-            where += "catalog_fts MATCH ?"
-            args += words.joinToString(" ") { "$it*" }
+        val from = StringBuilder("catalog_recipe r")
+        if (includeFts) {
+            val words = cleanWords(query.words)
+            if (words.isNotEmpty()) {
+                from.append(" JOIN catalog_fts ON catalog_fts.docid = r.id")
+                where += "catalog_fts MATCH ?"
+                args += words.joinToString(" ") { "$it*" }
+            }
         }
         if (query.courses.isNotEmpty()) {
             where += "r.course IN (${query.courses.joinToString(",") { "?" }})"
@@ -260,8 +428,15 @@ class RoomCatalogStore(private val dao: CatalogDao) : CatalogStore {
             where += "r.siteId IN (${query.sites.joinToString(",") { "?" }})"
             args.addAll(query.sites)
         }
-        if (where.isNotEmpty()) sql.append(" WHERE ").append(where.joinToString(" AND "))
-        val seed = query.seed
+        val whereSql = if (where.isEmpty()) "" else " WHERE ${where.joinToString(" AND ")}"
+        return SqlFilter(from.toString(), whereSql, args)
+    }
+
+    private fun cleanWords(words: List<String>): List<String> =
+        // Chaque mot doit commencer un mot du texte de recherche ; seuls lettres et chiffres atteignent l'index.
+        words.map { w -> w.filter { it in 'a'..'z' || it in '0'..'9' } }.filter { it.isNotEmpty() }
+
+    private fun appendOrder(sql: StringBuilder, args: MutableList<Any>, seed: Int?) {
         if (seed == null) {
             // Note pondérée par le nombre d'avis : même calcul que RecipeRating.score.
             val n = "(CASE WHEN r.rating IS NULL THEN 0 ELSE COALESCE(r.ratingCount, 1) END)"
@@ -272,8 +447,11 @@ class RoomCatalogStore(private val dao: CatalogDao) : CatalogStore {
             sql.append("((r.id * ?) % 1009)")
             args += (seed % 997) + 1
         }
-        sql.append(" LIMIT ?")
-        args += query.limit
-        return dao.search(SimpleSQLiteQuery(sql.toString(), args.toTypedArray())).map { it.toEntry() }
+    }
+
+    private companion object {
+        const val TAG = "RoomCatalogStore"
+        const val RRF_K = 60
+        const val SQLITE_MAX_VARS = 900
     }
 }
