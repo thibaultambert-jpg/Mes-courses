@@ -132,7 +132,7 @@ object MenuPrompt {
                 compact = true
             }
             val short = c.line(number, compact = true)
-            if (fits(short)) {
+            if (fits(short) || shown.isEmpty()) {
                 lines.append(short).append('\n')
                 shown += c
             } else {

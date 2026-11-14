@@ -16,7 +16,7 @@ permissions:
   actions: write
 
 concurrency:
-  group: catalogue-hebdo
+  group: catalogue-release
   cancel-in-progress: false
 
 jobs:

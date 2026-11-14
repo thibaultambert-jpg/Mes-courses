@@ -180,15 +180,19 @@ jobs:
               continue
             fi
             echo "$site : copie de $asset vers ${site}.source.jsonl.gz…"
-            gh release download catalogue --repo "$GITHUB_REPOSITORY" --dir migrate --pattern "$asset" --clobber
+            gh release download catalogue --repo "$GITHUB_REPOSITORY" --dir migrate --pattern "$asset" --clobber </dev/null
             test -s "migrate/$asset"
             gzip -t "migrate/$asset"
             cp "migrate/$asset" "migrate/${site}.source.jsonl.gz"
             # Sans --clobber : interdit tout écrasement d'un asset .source.jsonl.gz déjà présent.
-            gh release upload catalogue "migrate/${site}.source.jsonl.gz" --repo "$GITHUB_REPOSITORY"
+            gh release upload catalogue "migrate/${site}.source.jsonl.gz" --repo "$GITHUB_REPOSITORY" </dev/null
           done <<EOF
           $assets
           EOF
+          after="$(gh release view catalogue --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')"
+          for a in $(printf '%s\n' "$after" | grep -E '\.jsonl\.gz$' | grep -v '\.source\.jsonl\.gz$'); do
+            printf '%s\n' "$after" | grep -Fxq "${a%.jsonl.gz}.source.jsonl.gz" || { echo "Source manquante pour $a" >&2; exit 1; }
+          done
 
       - name: Découpage de la base consolidée (split)
         if: inputs.source == 'import'

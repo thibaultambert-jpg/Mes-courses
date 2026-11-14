@@ -312,7 +312,7 @@ class RoomCatalogStore(private val dao: CatalogDao) : CatalogStore {
     suspend fun deleteMeta(key: String) = dao.deleteMeta(key)
 
     /** Nombre de fiches qui ont un vecteur sémantique. */
-    fun countWithEmbedding(): Int = dao.countWithEmbedding()
+    suspend fun countWithEmbedding(): Int = withContext(Dispatchers.IO) { dao.countWithEmbedding() }
 
     /** Fiches sans vecteur sémantique (jusqu'à [limit]). */
     suspend fun withoutEmbedding(limit: Int): List<IdTitleKeys> = withContext(Dispatchers.IO) {
