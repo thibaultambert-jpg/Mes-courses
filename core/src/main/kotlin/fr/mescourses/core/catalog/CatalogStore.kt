@@ -199,10 +199,15 @@ class CatalogUpdater(
     fetch: suspend (url: String) -> String,
     private val sources: List<CatalogSource> = CatalogSources.all,
     private val now: () -> Long = System::currentTimeMillis,
+    /**
+     * Règles de rationalisation appliquées à chaque fiche lue. Pas d'unicité d'image sur le téléphone
+     * (`seenImages = null`) : le téléphone ne voit que les nouveautés, sans le reste du catalogue en mémoire.
+     */
+    private val config: RationalizationConfig = RationalizationConfig(),
 ) {
     private val crawler = SiteCrawler(fetch)
 
-    data class Report(val added: Int, val failedSites: List<String>)
+    data class Report(val added: Int, val failedSites: List<String>, val rejected: Int = 0)
 
     companion object {
         const val LAST_UPDATE = "derniere-mise-a-jour"
@@ -226,6 +231,7 @@ class CatalogUpdater(
     /** [only] : sites à mettre à jour (ceux dont la base est téléchargée) ; null = tous. */
     suspend fun update(maxPerSite: Int = 150, only: Set<String>? = null, onProgress: (String) -> Unit = {}): Report {
         var added = 0
+        var rejected = 0
         val failed = ArrayList<String>()
         for (source in sources.filter { only == null || it.siteId in only }) {
             val name = RecipeSites.byId(source.siteId)?.name ?: source.siteId
@@ -245,7 +251,13 @@ class CatalogUpdater(
                 delay(pause)
                 try {
                     val entry = crawler.read(source, page)
-                    if (entry != null) { store.upsert(listOf(entry)); added++ } else store.markEmpty(source.siteId, page.url, page.lastmod)
+                    val kept = entry?.let { CatalogRationalizer.filterSingle(it, config, seenImages = null) }
+                    if (kept != null) { store.upsert(listOf(kept)); added++ }
+                    else {
+                        // Page sans recette ou fiche écartée par la rationalisation : on ne la relit pas tant que sa date ne change pas.
+                        if (entry != null) rejected++
+                        store.markEmpty(source.siteId, page.url, page.lastmod)
+                    }
                     errors = 0
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
@@ -255,6 +267,6 @@ class CatalogUpdater(
             }
         }
         store.setMeta(LAST_UPDATE, now().toString())
-        return Report(added, failed)
+        return Report(added, failed, rejected)
     }
 }
