@@ -94,7 +94,8 @@ class ModelController(private val llm: LlmEngine, private val settings: Settings
         if (llm.isLoaded() && loadedPath == file.absolutePath) return true
         _status.value = ModelStatus.Loading
         return try {
-            val backend = llm.load(file.absolutePath, settings.current.preferGpu, maxTokensFor(file))
+            val requestedTokens = settings.current.contextTokens.takeIf { it > 0 } ?: maxTokensFor(file)
+            val backend = llm.load(file.absolutePath, settings.current.preferGpu, requestedTokens)
             loadedPath = file.absolutePath
             suspendOwner()
             _status.value = ModelStatus.Ready(backend, file.nameWithoutExtension)

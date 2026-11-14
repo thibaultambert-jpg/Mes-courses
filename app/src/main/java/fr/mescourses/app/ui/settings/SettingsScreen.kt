@@ -216,6 +216,18 @@ fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStor
                 }
                 OutlinedButton(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Importer un fichier .litertlm") }
                 SwitchRow("Utiliser le GPU", "Recommandé : bien plus rapide", s.preferGpu) { v -> vm.update { it.copy(preferGpu = v) } }
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Mémoire de conversation (tokens)", style = MaterialTheme.typography.bodyMedium)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(0 to "Auto", 4096 to "4 096", 6144 to "6 144", 8192 to "8 192").forEach { (tokens, label) ->
+                            InputChip(
+                                selected = s.contextTokens == tokens,
+                                onClick = { vm.update { it.copy(contextTokens = tokens) } },
+                                label = { Text(label) },
+                            )
+                        }
+                    }
+                }
                 Field("Jeton Hugging Face (si le modèle l'exige)", s.hfToken, secret = true) { v -> vm.update { it.copy(hfToken = v) } }
             }
 

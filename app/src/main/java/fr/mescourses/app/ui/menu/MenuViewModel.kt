@@ -939,6 +939,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     fun stop() {
+        c.model.cancel()
         job?.cancel()
         exchanging = false
         _state.update { it.copy(busy = c.chef.validating) }

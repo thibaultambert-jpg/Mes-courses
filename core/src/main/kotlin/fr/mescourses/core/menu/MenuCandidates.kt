@@ -149,7 +149,7 @@ data class Candidate(
                 fromCookbook = fromCookbook,
                 base = base,
                 tags = entry?.nutritionTags?.takeIf { it.isNotEmpty() } ?: NutritionTags.of(
-                    recipe.title, bought,
+                    recipe.title, keys.toList(),
                     course ?: entry?.course ?: Course.of(recipe.tags, recipe.title, names).takeIf { it != Course.AUTRE } ?: Course.PLAT,
                     listOfNotNull(recipe.prepMinutes, recipe.cookMinutes).takeIf { it.isNotEmpty() }?.sum(),
                 ),

@@ -73,20 +73,23 @@ data class Chosen(
     companion object {
         fun of(c: Candidate) = Chosen(c.keys, c.kind, c.protein, c.fromCookbook, c.form, c.siteName, c.tags)
 
-        fun of(d: MenuDish) = Chosen(
-            keys = d.mainIngredients.map(IngredientOverlap::key).filter { it.isNotEmpty() }.toSet(),
-            kind = DishKinds.of(d.title, d.mainIngredients),
-            protein = PlateBalance.protein(listOf(d.title) + d.mainIngredients),
-            fromCookbook = d.recipeId != null,
-            form = DishForms.of(d.title),
-            site = d.sourceUrl?.let { fr.mescourses.core.recipes.RecipeSites.forUrl(it)?.name },
-            tags = NutritionTags.of(
-                d.title,
-                d.mainIngredients,
-                d.course ?: Course.of(emptyList(), d.title, d.mainIngredients).takeIf { it != Course.AUTRE } ?: Course.PLAT,
-                d.totalMinutes,
-            ),
-        )
+        fun of(d: MenuDish): Chosen {
+            val keys = d.mainIngredients.map(IngredientOverlap::key).filter { it.isNotEmpty() }.toSet()
+            return Chosen(
+                keys = keys,
+                kind = DishKinds.of(d.title, d.mainIngredients),
+                protein = PlateBalance.protein(listOf(d.title) + d.mainIngredients),
+                fromCookbook = d.recipeId != null,
+                form = DishForms.of(d.title),
+                site = d.sourceUrl?.let { fr.mescourses.core.recipes.RecipeSites.forUrl(it)?.name },
+                tags = NutritionTags.of(
+                    d.title,
+                    keys.toList(),
+                    d.course ?: Course.of(emptyList(), d.title, d.mainIngredients).takeIf { it != Course.AUTRE } ?: Course.PLAT,
+                    d.totalMinutes,
+                ),
+            )
+        }
     }
 }
 

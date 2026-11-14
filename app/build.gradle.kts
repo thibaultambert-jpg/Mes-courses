@@ -50,6 +50,10 @@ android {
 
     buildFeatures { compose = true }
 
+    androidResources {
+        noCompress += listOf("gz", "litertlm")
+    }
+
     packaging {
         resources {
             excludes += setOf(

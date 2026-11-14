@@ -463,6 +463,7 @@ class ShoppingChatViewModel(private val c: AppContainer) : ViewModel() {
     }.getOrNull()
 
     fun stop() {
+        c.model.cancel()
         job?.cancel()
         busy.value = false
         c.model.setChatForeground(false)
