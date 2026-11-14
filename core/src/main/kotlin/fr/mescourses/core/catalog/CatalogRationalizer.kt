@@ -74,7 +74,7 @@ object CatalogRationalizer {
 
     data class Result(val kept: List<CatalogEntry>, val report: Report)
 
-    /** Tri (siteId, url), dédoublonnage par id (dernier gagne), filterSingle (images uniques sur tout le passage), titres (hook), rapport. */
+    /** Tri (siteId, url), dédoublonnage par id (dernier gagne), filterSingle (images uniques sur tout le passage), titres ([titleDedupe], par défaut [TitleDeduplicator.dedupe]), rapport. */
     fun process(
         entries: List<CatalogEntry>,
         config: RationalizationConfig = RationalizationConfig(),
@@ -94,7 +94,8 @@ object CatalogRationalizer {
             if (reason == null) passed += e.recompute()
             else rejected.getOrPut(e.siteId) { sortedMapOf() }.merge(reason, 1, Int::plus)
         }
-        val kept = if (config.dedupeTitles && titleDedupe != null) titleDedupe(passed) else passed
+        val dedupe = titleDedupe ?: { l -> TitleDeduplicator.dedupe(l) }
+        val kept = if (config.dedupeTitles) dedupe(passed) else passed
         val keptBySite = kept.groupingBy { it.siteId }.eachCount()
         val passedBySite = passed.groupingBy { it.siteId }.eachCount()
         val sites = read.mapValues { (site, n) ->
