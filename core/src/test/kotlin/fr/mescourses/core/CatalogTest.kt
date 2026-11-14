@@ -178,7 +178,7 @@ class CatalogTest {
         val fetched = mutableListOf<String>()
         val store = InMemoryCatalog(listOf(leek))
         var clock = 10L * fr.mescourses.core.catalog.CatalogUpdater.DAY_MS
-        val updater = fr.mescourses.core.catalog.CatalogUpdater(store, { url -> fetched += url; site[url] ?: error("404") }, listOf(source)) { clock }
+        val updater = fr.mescourses.core.catalog.CatalogUpdater(store, { url -> fetched += url; site[url] ?: error("404") }, listOf(source), now = { clock }, config = fr.mescourses.core.catalog.RationalizationConfig(defaultMinRating = 0.0))
         assertTrue(updater.due())
         val report = updater.update()
         // La fiche connue et la page plus ancienne que le catalogue ne sont pas relues.
@@ -200,7 +200,7 @@ class CatalogTest {
     @Test fun mise_a_jour_ignore_les_sites_non_telecharges() = kotlinx.coroutines.test.runTest {
         val source = fr.mescourses.core.catalog.CatalogSource("cuisineaz", listOf("https://x.fr/s.xml"), null, Regex("""cuisineaz\.com/recettes/[^/]+-\d+\.aspx$"""))
         val fetched = mutableListOf<String>()
-        val updater = fr.mescourses.core.catalog.CatalogUpdater(InMemoryCatalog(emptyList()), { url -> fetched += url; "<urlset></urlset>" }, listOf(source)) { 0L }
+        val updater = fr.mescourses.core.catalog.CatalogUpdater(InMemoryCatalog(emptyList()), { url -> fetched += url; "<urlset></urlset>" }, listOf(source), now = { 0L })
         // Base de ce site non téléchargée : aucune requête vers le site.
         updater.update(only = setOf("marmiton"))
         assertTrue(fetched.isEmpty())
