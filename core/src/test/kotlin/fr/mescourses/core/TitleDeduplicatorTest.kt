@@ -117,14 +117,14 @@ class TitleDeduplicatorTest {
         assertEquals(TitleDeduplicator.dedupe(list).map { it.url }.toSet(), TitleDeduplicator.dedupe(list.reversed()).map { it.url }.toSet())
     }
 
-    @Test fun process_deduplique_par_defaut() {
+    @Test fun process_deduplique_sur_demande() {
         fun r(n: Int, title: String, site: String) = e(n, title, site, rating = 4.8, count = 20 + n).copy(totalMinutes = 30, imageUrl = "https://img/$n.jpg", course = Course.PLAT)
         val list = listOf(r(1, "Blanquette de veau", "marmiton"), r(2, "Blanquette de veau", "750g"), r(3, "Boeuf bourguignon", "marmiton"))
-        val res = CatalogRationalizer.process(list)
+        val res = CatalogRationalizer.process(list, RationalizationConfig(dedupeTitles = true))
         assertEquals(listOf("Blanquette de veau", "Boeuf bourguignon"), res.kept.map { it.title })
         assertEquals("750g", res.kept.first().siteId) // plus d'avis
         assertEquals(1, res.report.sites["marmiton"]!!.duplicates)
-        assertEquals(3, CatalogRationalizer.process(list, RationalizationConfig(dedupeTitles = false)).kept.size)
+        assertEquals(3, CatalogRationalizer.process(list).kept.size) // désactivée par défaut
     }
 
     @Test fun deux_cent_mille_titres_synthetiques_sous_deux_minutes() {

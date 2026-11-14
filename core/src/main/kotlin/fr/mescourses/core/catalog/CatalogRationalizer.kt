@@ -15,7 +15,8 @@ data class RationalizationConfig(
     val requireTime: Boolean = true,
     val minIngredients: Int = 3,
     /** Utilisé par la déduplication par titre (lot 2.1b). */
-    val dedupeTitles: Boolean = true,
+    /** Déduplication par titre : désactivée par défaut (mesurée sur la base consolidée : 36 414 retraits au seuil 0,75, avec des faux positifs). */
+    val dedupeTitles: Boolean = false,
 ) {
     companion object {
         private val parser = Json { ignoreUnknownKeys = true }

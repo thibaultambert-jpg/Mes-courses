@@ -66,7 +66,7 @@ class CatalogRationalizerTest {
 
     @Test fun rapport_par_site_et_markdown() {
         val list = listOf(e(1), e(2, total = null), e(3, site = "hellofresh", rating = 4.1), e(4, site = "hellofresh", rating = 3.0), e(5, ingredients = 1))
-        val r = CatalogRationalizer.process(list, titleDedupe = { l -> l.filter { !it.url.endsWith("r-3.html") } })
+        val r = CatalogRationalizer.process(list, RationalizationConfig(dedupeTitles = true), titleDedupe = { l -> l.filter { !it.url.endsWith("r-3.html") } })
         assertEquals(2, r.report.sites["marmiton"]!!.rejected.values.sum())
         assertEquals(Reason.RATING, r.report.sites["hellofresh"]!!.rejected.keys.single())
         assertEquals(1, r.report.sites["hellofresh"]!!.duplicates)
