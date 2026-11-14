@@ -1,5 +1,7 @@
 package fr.mescourses.app.data
 
+import android.util.Base64
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -20,6 +22,7 @@ import fr.mescourses.core.catalog.CatalogQuery
 import fr.mescourses.core.catalog.CatalogStore
 import fr.mescourses.core.recipes.RecipeRating
 import fr.mescourses.core.catalog.Course
+import fr.mescourses.core.catalog.NutritionTag
 import fr.mescourses.core.catalog.minutes
 import fr.mescourses.core.menu.DishKind
 
@@ -60,6 +63,10 @@ data class CatalogRecipeEntity(
     val good: Boolean,
     /** Texte de recherche (titre et ingrédients, sans accents, au singulier). */
     val search: String,
+    /** Repères nutritionnels : noms de [NutritionTag] séparés par des virgules. */
+    val nutritionTags: String = "",
+    /** Vecteur sémantique INT8 de 256 octets (BLOB) ; null si la fiche n'en a pas encore. */
+    @ColumnInfo(typeAffinity = ColumnInfo.BLOB) val embedding: ByteArray? = null,
 ) {
     fun toEntry() = CatalogEntry(
         url = url, siteId = siteId, title = title, imageUrl = imageUrl,
@@ -72,6 +79,9 @@ data class CatalogRecipeEntity(
         produce = produce.split(',').filter { it.isNotBlank() },
         balanced = balanced,
         keys = keys.split(',').filter { it.isNotBlank() },
+        nutritionTags = nutritionTags.split(',').mapNotNull { n -> runCatching { NutritionTag.valueOf(n.trim()) }.getOrNull() }.toSet(),
+        // Le BLOB n'est pas ré-encodé en Base64 : l'entrée reconstituée n'a pas de vecteur (il reste en base).
+        embedding = null,
     )
 
     companion object {
@@ -87,7 +97,17 @@ data class CatalogRecipeEntity(
             keys = e.keys.joinToString(","),
             good = CatalogPolicy.wellRated(e),
             search = e.searchText,
+            nutritionTags = e.nutritionTags.joinToString(",") { it.name },
+            embedding = decodeEmbedding(e.embedding),
         )
+
+        /** Décode le Base64 d'un vecteur ; null s'il est absent, invalide ou n'a pas 256 octets. */
+        // Helper local : Int8Vectors.decode n'existe pas encore dans core.
+        private fun decodeEmbedding(s: String?): ByteArray? {
+            if (s.isNullOrBlank()) return null
+            val bytes = try { Base64.decode(s, Base64.DEFAULT) } catch (_: IllegalArgumentException) { return null }
+            return if (bytes.size == 256) bytes else null
+        }
     }
 }
 
@@ -105,6 +125,8 @@ data class CatalogMetaEntity(@PrimaryKey val key: String, val value: String)
 
 data class SiteCount(val siteId: String, val n: Int)
 data class UrlLastmod(val url: String, val lastmod: String?)
+data class IdVector(val id: Long, val embedding: ByteArray)
+data class IdTitleKeys(val id: Long, val title: String, val keys: String)
 
 @Dao
 interface CatalogDao {
@@ -160,11 +182,34 @@ interface CatalogDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun setMeta(meta: CatalogMetaEntity)
+
+    /** Identifiant et vecteur de toutes les fiches qui en ont un. */
+    @Query("SELECT id, embedding FROM catalog_recipe WHERE embedding IS NOT NULL")
+    fun vectors(): List<IdVector>
+
+    /** Requête brute dont la première colonne est l'identifiant des fiches. */
+    @RawQuery
+    fun ids(query: SupportSQLiteQuery): List<Long>
+
+    /** SQLite limite le nombre de paramètres liés (999 sur les anciennes versions) : l'appelant envoie des lots de 900 au plus. */
+    @Query("SELECT * FROM catalog_recipe WHERE id IN (:ids)")
+    fun byIds(ids: List<Long>): List<CatalogRecipeEntity>
+
+    @Query("UPDATE catalog_recipe SET embedding = :bytes WHERE id = :id")
+    fun setEmbedding(id: Long, bytes: ByteArray)
+
+    @Query("SELECT id, title, keys FROM catalog_recipe WHERE embedding IS NULL LIMIT :limit")
+    fun withoutEmbedding(limit: Int): List<IdTitleKeys>
+
+    @Query("SELECT COUNT(*) FROM catalog_recipe WHERE embedding IS NOT NULL")
+    fun countWithEmbedding(): Int
 }
 
 @Database(
     entities = [CatalogRecipeEntity::class, CatalogFtsEntity::class, CatalogEmptyEntity::class, CatalogMetaEntity::class],
-    version = 1,
+    // Version 2 : colonnes embedding et nutritionTags. Migration destructive (fallbackToDestructiveMigration) :
+    // la base locale est reconstruite et re-téléchargée.
+    version = 2,
     exportSchema = false,
 )
 abstract class CatalogDatabase : RoomDatabase() {
@@ -182,6 +227,9 @@ class RoomCatalogStore(private val dao: CatalogDao) : CatalogStore {
     override suspend fun meta(key: String) = dao.meta(key)
     override suspend fun setMeta(key: String, value: String) = dao.setMeta(CatalogMetaEntity(key, value))
     suspend fun deleteMeta(key: String) = dao.deleteMeta(key)
+
+    /** Nombre de fiches qui ont un vecteur sémantique. */
+    fun countWithEmbedding(): Int = dao.countWithEmbedding()
 
     /** Supprime la base d'un site. */
     suspend fun deleteSite(siteId: String) {
