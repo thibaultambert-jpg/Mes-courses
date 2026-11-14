@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import fr.mescourses.app.data.CatalogStatus
+import fr.mescourses.app.data.CatalogSync
 import fr.mescourses.app.ui.common.ScreenScaffold
 import fr.mescourses.app.ui.common.appContainer
 import fr.mescourses.app.ui.components.SectionCard
@@ -79,6 +80,12 @@ fun CatalogScreen(firstRun: Boolean, onDone: () -> Unit) {
                 }
             }
             sites.forEach { id -> SiteRow(id, st, busy, onInstall = { sync.install(listOf(id)) }, onRemove = { sync.remove(id) }) }
+            EmbedderRow(
+                st = st,
+                onInstall = { sync.installEmbedder() },
+                onCancel = { sync.cancelEmbedder() },
+                onRemove = { sync.removeEmbedder(c.embedder) },
+            )
 
             st.working?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -132,6 +139,61 @@ private fun SiteRow(id: String, st: CatalogStatus, busy: Boolean, onInstall: () 
             Text(
                 "Ses %,d recettes seront retirées du téléphone : Découvrir et le menu ne les trouveront plus. ".format(Locale.FRANCE, st.bySite[id] ?: 0) +
                     "Tes favoris et ton historique ne changent pas. Tu pourras la télécharger de nouveau.",
+            )
+        },
+        confirmButton = { TextButton(onClick = { confirmRemove = false; onRemove() }) { Text("Supprimer") } },
+        dismissButton = { TextButton(onClick = { confirmRemove = false }) { Text("Annuler") } },
+    )
+}
+
+@Composable
+private fun EmbedderRow(st: CatalogStatus, onInstall: () -> Unit, onCancel: () -> Unit, onRemove: () -> Unit) {
+    val sizeBytes = st.embedderRemote?.bytes?.takeIf { it > 0 } ?: CatalogSync.DEFAULT_EMBEDDER_BYTES
+    val sizeLabel = mb(sizeBytes)
+    var confirmRemove by remember { mutableStateOf(false) }
+    SectionCard(contentPadding = 12.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text("Recherche par le sens — $sizeLabel", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    when {
+                        st.embedderDownloading && st.embedderTotal > 0 ->
+                            "Téléchargement… ${mb(st.embedderDownloaded)} / ${mb(st.embedderTotal)}"
+                        st.embedderDownloading ->
+                            "Téléchargement… ${mb(st.embedderDownloaded)}"
+                        st.embedderInstalled ->
+                            "Installée sur le téléphone · comprend les envies"
+                        else ->
+                            "Non téléchargée · comprend les envies (ex. « réconfortant », « léger »)"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            when {
+                st.embedderDownloading -> TextButton(onClick = onCancel) { Text("Annuler") }
+                st.embedderInstalled -> TextButton(onClick = { confirmRemove = true }) { Text("Supprimer") }
+                else -> Button(onClick = onInstall) { Text("Télécharger") }
+            }
+        }
+        if (st.embedderDownloading) {
+            if (st.embedderTotal > 0) {
+                val progress = (st.embedderDownloaded.toFloat() / st.embedderTotal.toFloat()).coerceIn(0f, 1f)
+                LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+            } else {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+        }
+        st.embedderError?.let { err ->
+            Text(err, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+    }
+    if (confirmRemove) AlertDialog(
+        onDismissRequest = { confirmRemove = false },
+        title = { Text("Supprimer la recherche par le sens ?") },
+        text = {
+            Text(
+                "Le modèle ($sizeLabel) sera supprimé du téléphone. La recherche par mots-clés reste disponible et tu pourras le télécharger de nouveau.",
             )
         },
         confirmButton = { TextButton(onClick = { confirmRemove = false; onRemove() }) { Text("Supprimer") } },

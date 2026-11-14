@@ -3,6 +3,8 @@ package fr.mescourses.app.data
 import android.content.Context
 import android.net.ConnectivityManager
 import android.util.Log
+import fr.mescourses.app.llm.LiteRtTextEmbedder
+import fr.mescourses.app.llm.ModelManager
 import fr.mescourses.core.catalog.CatalogEntry
 import fr.mescourses.core.catalog.CatalogSources
 import fr.mescourses.core.catalog.CatalogUpdater
@@ -17,10 +19,13 @@ import io.ktor.utils.io.jvm.javaio.toInputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -31,6 +36,19 @@ import java.util.zip.GZIPInputStream
 
 /** Base d'un site telle que la release « catalogue » la publie. */
 data class RemoteSite(val url: String, val bytes: Long)
+
+/** Métadonnées de l'embedder publiées par `embedder.json` dans la release « catalogue ». */
+@Serializable
+data class EmbedderRemote(
+    val model: String = CatalogSync.DEFAULT_EMBEDDER_MODEL,
+    val file: String = CatalogSync.DEFAULT_EMBEDDER_FILE,
+    val dim: Int = 256,
+    val textVersion: Int = 1,
+    val scale: Float = 0.25f,
+    val url: String = CatalogSync.DEFAULT_EMBEDDER_URL,
+    val bytes: Long = CatalogSync.DEFAULT_EMBEDDER_BYTES,
+    val sha256: String = "",
+)
 
 /** État du catalogue affiché dans les Réglages et dans l'écran de choix des bases. */
 data class CatalogStatus(
@@ -53,6 +71,15 @@ data class CatalogStatus(
     val remote: Map<String, RemoteSite> = emptyMap(),
     /** Site en cours de téléchargement. */
     val installing: String? = null,
+    /** Métadonnées du modèle d'embeddings publiées par la release (ou repli par défaut). */
+    val embedderRemote: EmbedderRemote? = null,
+    /** Le fichier du modèle d'embeddings est présent et non vide dans `files/embedder/`. */
+    val embedderInstalled: Boolean = false,
+    /** Téléchargement du modèle d'embeddings en cours. */
+    val embedderDownloading: Boolean = false,
+    val embedderDownloaded: Long = 0L,
+    val embedderTotal: Long = 0L,
+    val embedderError: String? = null,
 ) {
     /** Une base installée dont une version plus récente est publiée. */
     fun outdated(siteId: String): Boolean {
@@ -78,6 +105,8 @@ class CatalogSync(
     val firstRun = MutableStateFlow<Boolean?>(null)
 
     private val lock = Mutex()
+    private val embedderLock = Mutex()
+    private var embedderJob: Job? = null
     private val json = Json { ignoreUnknownKeys = true }
     private val updater = CatalogUpdater(store, ::fetch)
 
@@ -121,7 +150,7 @@ class CatalogSync(
                 for (id in siteIds) {
                     if (CatalogSources.byId(id) == null) continue
                     val name = siteName(id)
-                    status.value = status.value.copy(installing = id, working = "$name : téléchargement…")
+                    status.update { it.copy(installing = id, working = "$name : téléchargement…") }
                     try {
                         results += "$name : %,d".format(java.util.Locale.FRANCE, installOne(id))
                     } catch (e: CancellationException) {
@@ -156,10 +185,92 @@ class CatalogSync(
         scope.launch(Dispatchers.IO) { update() }
     }
 
+    /** Télécharge le modèle d'embeddings (reprise possible via `.part`, vérifié par SHA-256). */
+    fun installEmbedder(onProgress: (downloaded: Long, total: Long) -> Unit = { _, _ -> }) {
+        if (embedderJob?.isActive == true) return
+        embedderJob = scope.launch(Dispatchers.IO) {
+            embedderLock.withLock {
+                status.update {
+                    it.copy(
+                        embedderDownloading = true,
+                        embedderDownloaded = 0L,
+                        embedderTotal = it.embedderRemote?.bytes?.takeIf { b -> b > 0 } ?: DEFAULT_EMBEDDER_BYTES,
+                        embedderError = null,
+                    )
+                }
+                try {
+                    if (status.value.embedderRemote == null) loadRemote()
+                    val remote = status.value.embedderRemote ?: EmbedderRemote()
+                    val target = embedderFile()
+                    ModelManager.downloadResumable(
+                        url = remote.url.ifBlank { DEFAULT_EMBEDDER_URL },
+                        target = target,
+                        expectedSha256 = remote.sha256,
+                    ) { downloaded, total ->
+                        val effectiveTotal = if (total > 0) total else remote.bytes.takeIf { it > 0 } ?: DEFAULT_EMBEDDER_BYTES
+                        status.update { it.copy(embedderDownloaded = downloaded, embedderTotal = effectiveTotal) }
+                        onProgress(downloaded, effectiveTotal)
+                    }
+                    status.update {
+                        it.copy(
+                            embedderInstalled = isEmbedderInstalled(),
+                            embedderDownloading = false,
+                            embedderDownloaded = target.length(),
+                            embedderTotal = target.length(),
+                            embedderError = null,
+                        )
+                    }
+                } catch (e: CancellationException) {
+                    status.update { it.copy(embedderDownloading = false) }
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "Téléchargement de l'embedder", e)
+                    status.update {
+                        it.copy(
+                            embedderInstalled = isEmbedderInstalled(),
+                            embedderDownloading = false,
+                            embedderError = e.message ?: e.toString(),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /** Interrompt le téléchargement de l'embedder (conserve le `.part` pour reprendre plus tard). */
+    fun cancelEmbedder() {
+        embedderJob?.cancel()
+        embedderJob = null
+        status.update { it.copy(embedderDownloading = false) }
+    }
+
+    /** Supprime le modèle d'embeddings (ferme d'abord le moteur s'il est chargé) et met à jour le statut. */
+    fun removeEmbedder(embedder: LiteRtTextEmbedder? = null) {
+        embedderJob?.cancel()
+        embedderJob = null
+        scope.launch(Dispatchers.IO) {
+            embedderLock.withLock {
+                embedder?.release()
+                val target = embedderFile()
+                target.delete()
+                File(target.parentFile, target.name + ".part").delete()
+                status.update {
+                    it.copy(
+                        embedderInstalled = isEmbedderInstalled(),
+                        embedderDownloading = false,
+                        embedderDownloaded = 0L,
+                        embedderTotal = 0L,
+                        embedderError = null,
+                    )
+                }
+            }
+        }
+    }
+
     private suspend fun update() = exclusive("Recherche des nouveautés…") {
         val installed = status.value.installed
         if (installed.isEmpty()) return@exclusive "Aucune base téléchargée"
-        val report = updater.update(only = installed) { message -> status.value = status.value.copy(working = message) }
+        val report = updater.update(only = installed) { message -> status.update { it.copy(working = message) } }
         buildString {
             append(if (report.added == 0) "Aucune nouvelle recette" else "${report.added} nouvelle${if (report.added > 1) "s" else ""} recette${if (report.added > 1) "s" else ""}")
             if (report.failedSites.isNotEmpty()) append(" · sans réponse : ${report.failedSites.joinToString(", ")}")
@@ -170,7 +281,7 @@ class CatalogSync(
     private suspend fun exclusive(label: String, work: suspend () -> String?) {
         if (!lock.tryLock()) return
         try {
-            status.value = status.value.copy(working = label)
+            status.update { it.copy(working = label) }
             val result = try {
                 work()
             } catch (e: CancellationException) {
@@ -188,35 +299,45 @@ class CatalogSync(
     private suspend fun refresh(result: String?) {
         val bySite = store.countBySite()
         val installed = bySite.filterValues { it > 0 }.keys
-        status.value = status.value.copy(
-            count = store.count(),
-            bySite = bySite,
-            lastUpdate = store.meta(CatalogUpdater.LAST_UPDATE)?.toLongOrNull(),
-            working = null,
-            installing = null,
-            lastResult = result ?: status.value.lastResult,
-            loaded = true,
-            installed = installed,
-            versions = installed.mapNotNull { id -> storedVersion(id)?.let { id to it } }.toMap(),
-        )
+        status.update {
+            it.copy(
+                count = store.count(),
+                bySite = bySite,
+                lastUpdate = store.meta(CatalogUpdater.LAST_UPDATE)?.toLongOrNull(),
+                working = null,
+                installing = null,
+                lastResult = result ?: it.lastResult,
+                loaded = true,
+                installed = installed,
+                versions = installed.mapNotNull { id -> storedVersion(id)?.let { v -> id to v } }.toMap(),
+                embedderInstalled = isEmbedderInstalled(),
+            )
+        }
     }
 
     /** Version d'une base installée ; les bases chargées par une ancienne version de l'appli ont l'ancienne clé. */
     private suspend fun storedVersion(siteId: String): String? =
         store.meta(versionKey(siteId)) ?: store.meta("fichier:$siteId.jsonl.gz") ?: store.meta("fichier:$siteId.jsonl")
 
-    /** Release « catalogue » : liste des bases (adresse, taille) et version publiée. */
+    /** Release « catalogue » : liste des bases (adresse, taille), version publiée et métadonnées de l'embedder. */
     private suspend fun loadRemote() {
         try {
             val response = http.get("https://api.github.com/repos/$REPO/releases/tags/$TAG_NAME") { header("Accept", "application/vnd.github+json") }
             check(response.status.isSuccess()) { "GitHub a répondu ${response.status.value}" }
             val release = json.decodeFromString(Release.serializer(), response.body<String>())
-            val sites = release.assets.filter { it.name.endsWith(".jsonl.gz") }
+            val sites = release.assets
+                .filter { it.name.endsWith(".jsonl.gz") && !it.name.endsWith(".source.jsonl.gz") }
                 .associate { it.name.removeSuffix(".jsonl.gz") to RemoteSite(it.browser_download_url, it.size) }
             val version = release.assets.firstOrNull { it.name == "version.txt" }?.let {
                 http.get(it.browser_download_url).takeIf { r -> r.status.isSuccess() }?.body<String>()?.trim()
             }
-            status.value = status.value.copy(remote = sites, remoteVersion = version)
+            val embedderRemote = release.assets.firstOrNull { it.name == "embedder.json" }?.let { asset ->
+                runCatching {
+                    val r = http.get(asset.browser_download_url)
+                    if (r.status.isSuccess()) json.decodeFromString(EmbedderRemote.serializer(), r.body<String>()) else null
+                }.getOrNull()
+            } ?: status.value.embedderRemote ?: EmbedderRemote()
+            status.update { it.copy(remote = sites, remoteVersion = version, embedderRemote = embedderRemote) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -234,7 +355,7 @@ class CatalogSync(
             var downloaded = false
             if (remote != null) {
                 try {
-                    download(remote, file) { done -> status.value = status.value.copy(working = "${siteName(siteId)} : téléchargement… (${done / 1_000_000} Mo)") }
+                    download(remote, file) { done -> status.update { it.copy(working = "${siteName(siteId)} : téléchargement… (${done / 1_000_000} Mo)") } }
                     downloaded = true
                 } catch (e: CancellationException) {
                     throw e
@@ -291,7 +412,7 @@ class CatalogSync(
                         .filter { it.siteId == siteId }
                     store.upsert(entries)
                     added += entries.size
-                    status.value = status.value.copy(working = "${siteName(siteId)} : enregistrement… (%,d recettes)".format(java.util.Locale.FRANCE, added))
+                    status.update { it.copy(working = "${siteName(siteId)} : enregistrement… (%,d recettes)".format(java.util.Locale.FRANCE, added)) }
                 }
             }
         }
@@ -324,15 +445,25 @@ class CatalogSync(
         return String(plain, Charsets.UTF_8)
     }
 
+    private fun embedderFile(): File = File(File(context.filesDir, EMBEDDER_DIR), DEFAULT_EMBEDDER_FILE)
+
+    private fun isEmbedderInstalled(): Boolean = embedderFile().let { it.isFile && it.length() > 0L }
+
     private fun metered(): Boolean = runCatching {
         context.getSystemService(ConnectivityManager::class.java).isActiveNetworkMetered
     }.getOrDefault(false)
 
-    private companion object {
-        const val TAG = "CatalogSync"
-        const val DIR = "catalog"
-        const val REPO = "thibaultambert-jpg/Mes-courses"
-        const val TAG_NAME = "catalogue"
-        const val SETUP_DONE = "choix-des-bases-vu"
+    companion object {
+        private const val TAG = "CatalogSync"
+        private const val DIR = "catalog"
+        private const val REPO = "thibaultambert-jpg/Mes-courses"
+        private const val TAG_NAME = "catalogue"
+        private const val SETUP_DONE = "choix-des-bases-vu"
+        const val EMBEDDER_DIR = "embedder"
+        const val DEFAULT_EMBEDDER_MODEL = "embeddinggemma-2-740m@256"
+        const val DEFAULT_EMBEDDER_FILE = "embeddinggemma-2-740m.litertlm"
+        const val DEFAULT_EMBEDDER_URL =
+            "https://huggingface.co/litert-community/embeddinggemma-2-740m-litert-lm/resolve/main/embeddinggemma-2-740m.litertlm"
+        const val DEFAULT_EMBEDDER_BYTES = 485_000_000L
     }
 }
