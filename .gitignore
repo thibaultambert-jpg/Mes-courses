@@ -12,3 +12,4 @@ captures/
 *.litertlm
 app/src/main/assets/catalog/
 **/.kotlin/
+__pycache__/

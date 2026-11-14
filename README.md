@@ -85,6 +85,10 @@ les sites » de Découvrir garde la recherche en ligne en complément.
 - **Recherche par le sens** : le workflow `embedder-publish.yml` publie `embedder.json` (URL, taille, empreinte,
   dimension) dans la release « catalogue » ; l'appli télécharge le modèle d'embedding (~485 Mo) directement depuis
   Hugging Face.
+- **Vectorisation** : `python3 -I tools/catalog/embed.py --in <dossier> --model <.litertlm> [--previous <dossier>]`
+  remplit `embedding` (256 dimensions, INT8 Base64) dans chaque `<site>.jsonl`, en reprenant les vecteurs du catalogue
+  précédent quand le texte n'a pas changé ; `--dry-run` compte ce qui reste à calculer sans modèle
+  (`pip install -r tools/catalog/requirements-embed.txt` pour le mode réel ; tests : `embed_test.py`).
 - **Contrôle** : ouvrir `tools/catalog/viewer.html` dans un navigateur et y déposer `catalogue-complet.gz` (toutes les bases en un
   seul fichier, ajouté à la release « catalogue » à chaque publication), ou les fichiers par site (ou l'archive .zip
   téléchargée depuis GitHub) : recherche, tous les filtres de la base (durées, notes, saison, ingrédients, dates…), fiches à contrôler, tableau par site ;
