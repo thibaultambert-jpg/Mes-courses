@@ -121,6 +121,7 @@ fun CookbookScreen(
     onOpenSettings: () -> Unit,
     onOpenPreview: (String) -> Unit,
     onBrowse: (String) -> Unit,
+    onOpenCatalog: () -> Unit,
 ) {
     val vm = containerViewModel { CookbookViewModel(it) }
     val discover by vm.discover.collectAsStateWithLifecycle()
@@ -204,7 +205,7 @@ fun CookbookScreen(
                 }
             }
             if (discover) {
-                DiscoverContent(snackbar = snackbar, onOpenPreview = onOpenPreview, onBrowse = onBrowse)
+                DiscoverContent(snackbar = snackbar, onOpenPreview = onOpenPreview, onBrowse = onBrowse, onOpenCatalog = onOpenCatalog)
             } else {
             OutlinedTextField(
                 value = query,
@@ -362,7 +363,7 @@ fun RecipeDetailScreen(recipeId: Long, onBack: () -> Unit, onEdit: () -> Unit, o
                     r.prepMinutes?.let { StatChip("🔪 $it min") }
                     r.cookMinutes?.let { StatChip("🔥 $it min") }
                     if (r.timesCooked > 0) StatChip("🍽 cuisiné ${r.timesCooked}×")
-                    StatChip("Recette pour ${r.servings}")
+                    fr.mescourses.app.ui.components.ServingsChip("Recette pour ${r.servings}", r.servings, portions)
                 }
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     RecipeStatus.entries.forEachIndexed { i, s ->
@@ -385,8 +386,8 @@ fun RecipeDetailScreen(recipeId: Long, onBack: () -> Unit, onEdit: () -> Unit, o
                 }
                 SectionCard {
                     Text("Pour combien ?", style = MaterialTheme.typography.titleSmall)
-                    PillStepper("🧑", "Adultes", portions.adults, { vm.portions.value = portions.copy(adults = it.coerceAtLeast(0)) })
-                    PillStepper("🧒", "Enfants", portions.children, { vm.portions.value = portions.copy(children = it.coerceAtLeast(0)) })
+                    PillStepper("🧑", "Adultes", portions.adults, { vm.setPortions(portions.copy(adults = it.coerceAtLeast(0))) })
+                    PillStepper("🧒", "Enfants", portions.children, { vm.setPortions(portions.copy(children = it.coerceAtLeast(0))) })
                 }
                 SectionHeader("Ingrédients", emoji = "🧺")
                 ShoppingListMerger.scale(r, portions.equivalent(vm.childFactor())).forEachIndexed { i, ing ->

@@ -84,8 +84,16 @@ class CookbookViewModel(private val c: AppContainer) : ViewModel() {
 
 class RecipeDetailViewModel(private val c: AppContainer, private val id: Long) : ViewModel() {
     val recipe: StateFlow<Recipe?> = c.recipes.observe(id).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
-    val portions = MutableStateFlow(c.defaultPortions())
+    /** Reprend les personnes de la carte (menu, semaine) d'où l'on vient ; sinon celles des Réglages. */
+    private val fromCard: Portions? = c.takePortionHint(id, null)
+    val portions = MutableStateFlow(fromCard ?: c.defaultPortions())
     val messages = MutableStateFlow<String?>(null)
+
+    /** Change les personnes ; si l'on vient d'une carte, elle suit. */
+    fun setPortions(p: Portions) {
+        portions.value = p
+        if (fromCard != null) viewModelScope.launch { c.syncPortions(id, null, p) }
+    }
 
     fun childFactor() = c.settings.current.childFactor
 
@@ -128,7 +136,20 @@ class RecipeDetailViewModel(private val c: AppContainer, private val id: Long) :
 
     /** Ajoute la recette au menu en cours de préparation (onglet Menu). */
     fun addToMenu(r: Recipe) = viewModelScope.launch {
-        c.draft.set(c.draft.get() + MenuDish(r.title, r.description.orEmpty(), portions.value, r.id))
+        // Fiche complète (ingrédients, site, image, durée) : comme un plat proposé par les sites.
+        val minutes = listOfNotNull(r.prepMinutes, r.cookMinutes).takeIf { it.isNotEmpty() }?.sum()
+        c.draft.set(
+            c.draft.get() + MenuDish(
+                title = r.title,
+                description = r.description.orEmpty(),
+                portions = portions.value,
+                recipeId = r.id,
+                mainIngredients = r.ingredients.map { it.name }.take(8),
+                sourceUrl = r.sourceUrl,
+                imageUrl = r.imageUrl,
+                totalMinutes = minutes,
+            ),
+        )
         messages.value = "« ${r.title} » ajouté au menu en préparation"
     }
 

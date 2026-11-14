@@ -129,7 +129,7 @@ class SettingsViewModel(val c: AppContainer) : ViewModel() {
 }
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStore: (Retailer) -> Unit, onDebug: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStore: (Retailer) -> Unit, onDebug: () -> Unit, onOpenCatalog: () -> Unit) {
     val vm = containerViewModel { SettingsViewModel(it) }
     // État de connexion juste dès l'ouverture, sans attendre une comparaison des prix.
     DisposableEffect(Unit) {
@@ -223,7 +223,9 @@ fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStor
                 SectionHeader("Mon foyer", emoji = "👨‍👩‍👧")
                 PillStepper("🧑", "Adultes par repas", s.householdSize, { n -> vm.update { it.copy(householdSize = n.coerceIn(0, 20)) } })
                 PillStepper("🧒", "Enfants par repas", s.children, { n -> vm.update { it.copy(children = n.coerceIn(0, 20)) } })
-                PillStepper("🍽", "Repas par menu", s.meals, { n -> vm.update { it.copy(meals = n.coerceIn(1, 21)) } }, min = 1, max = 21)
+                PillStepper("🥗", "Entrées par menu", s.starters, { n -> vm.update { it.copy(starters = n.coerceIn(0, 21)) } }, min = 0, max = 21)
+                PillStepper("🍽", "Plats par menu", s.meals, { n -> vm.update { it.copy(meals = n.coerceIn(1, 21)) } }, min = 1, max = 21)
+                PillStepper("🍰", "Desserts par menu", s.desserts, { n -> vm.update { it.copy(desserts = n.coerceIn(0, 21)) } }, min = 0, max = 21)
                 Text("Portion d'un enfant : ${(s.childFactor * 100).toInt()} % d'une portion adulte", style = MaterialTheme.typography.bodyMedium)
                 Slider(
                     value = s.childFactor.toFloat(),
@@ -290,7 +292,7 @@ fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStor
                         RetailerDot(r, 32.dp)
                         Column(Modifier.weight(1f).padding(start = 10.dp)) {
                             Text(r.label, style = MaterialTheme.typography.bodyLarge)
-                            Text(s.storeName(r).ifBlank { "Aucun drive choisi" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(s.storeName(r).ifBlank { r.noStoreText() }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         StatChip(session.label, emphasized = session != SessionState.CONNECTE)
                     }
@@ -301,7 +303,7 @@ fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStor
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         // « Drive à choisir » : on est connecté, il manque seulement le drive.
                         if (session != SessionState.CONNECTE && session != SessionState.DRIVE_REQUIS) Button(onClick = { onLogin(r) }) { Text("Se connecter") }
-                        TextButton(onClick = { onChooseStore(r) }) { Text(if (s.storeName(r).isBlank()) "Choisir le drive" else "Changer de drive") }
+                        TextButton(onClick = { onChooseStore(r) }) { Text(r.chooseStoreText(s.storeName(r).isNotBlank())) }
                     }
                 }
                 HorizontalDivider()
@@ -317,10 +319,12 @@ fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStor
             }
             val catalog by vm.c.catalogSync.status.collectAsStateWithLifecycle()
             SectionCard {
-                SectionHeader("Catalogue de recettes", emoji = "📚")
+                SectionHeader("Bases de recettes", emoji = "📚")
                 Text(
-                    if (catalog.count == 0) "Vide pour l'instant : Découvrir et le menu cherchent sur les sites."
-                    else "%,d recettes enregistrées sur le téléphone. Découvrir et le menu y cherchent sans réseau.".format(java.util.Locale.FRANCE, catalog.count),
+                    if (catalog.count == 0) "Aucune base téléchargée : Découvrir et le menu cherchent sur les sites."
+                    else "%,d recettes sur le téléphone (%d base%s). Découvrir et le menu y cherchent sans réseau.".format(
+                        java.util.Locale.FRANCE, catalog.count, catalog.installed.size, if (catalog.installed.size > 1) "s" else "",
+                    ),
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 if (catalog.bySite.isNotEmpty()) Text(
@@ -340,9 +344,32 @@ fun SettingsScreen(onBack: () -> Unit, onLogin: (Retailer) -> Unit, onChooseStor
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (catalog.working != null) LinearProgressIndicator(Modifier.fillMaxWidth())
-                OutlinedButton(onClick = { vm.c.catalogSync.updateNow() }, enabled = catalog.working == null) { Text("Chercher les nouveautés maintenant") }
+                Button(onClick = onOpenCatalog) { Text("Choisir les bases à télécharger") }
+                OutlinedButton(onClick = { vm.c.catalogSync.updateNow() }, enabled = catalog.working == null && catalog.installed.isNotEmpty()) { Text("Chercher les nouveautés maintenant") }
                 Text(
-                    "Les nouveautés sont cherchées toutes seules, une fois par jour à l'ouverture de l'appli (hors données mobiles).",
+                    "Les nouveautés des bases téléchargées sont cherchées toutes seules, une fois par jour à l'ouverture de l'appli (hors données mobiles).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            val update by vm.c.appUpdater.status.collectAsStateWithLifecycle()
+            SectionCard {
+                SectionHeader("Mise à jour de l'appli", emoji = "⬆️")
+                Text(
+                    if (update.updateAvailable) "Nouvelle version disponible (build ${update.available}, installée : ${update.installed})."
+                    else "Version installée : build ${update.installed}.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                (update.working ?: update.message)?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (update.working != null) LinearProgressIndicator(Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (update.updateAvailable) Button(onClick = { vm.c.appUpdater.install() }, enabled = update.working == null) { Text("Mettre à jour") }
+                    OutlinedButton(onClick = { vm.c.appUpdater.checkNow() }, enabled = update.working == null) { Text("Chercher une mise à jour") }
+                }
+                Text(
+                    "Les données (livre de recettes, réglages, modèle) sont conservées. Android demande une confirmation avant d'installer.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

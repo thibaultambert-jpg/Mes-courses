@@ -249,9 +249,12 @@ class CartViewModel(private val c: AppContainer) : ViewModel() {
 
     /** Demande au drive les articles du panier qu'il ne pourra pas servir, et cherche des remplaçants. */
     fun checkUnavailable() = viewModelScope.launch {
-        val eans = runCatching { c.backend().unavailableInCart() }.getOrDefault(emptyList())
-        if (eans.isEmpty()) { _state.update { it.copy(toReplace = emptyList()) }; return@launch }
         val cart = _state.value.cart ?: runCatching { c.backend().cart() }.getOrNull()
+        // Panier vidé (sur le site ou ailleurs) : la simulation du drive peut garder d'anciens articles, on les ignore.
+        val inCartEans = cart?.lines.orEmpty().filter { it.quantity > 0 }.map { it.ean }.toSet()
+        val eans = if (inCartEans.isEmpty()) emptyList()
+        else runCatching { c.backend().unavailableInCart() }.getOrDefault(emptyList()).filter { it in inCartEans }
+        if (eans.isEmpty()) { _state.update { it.copy(toReplace = emptyList()) }; return@launch }
         val replacements = eans.map { ean ->
             val inCart = cart?.lines?.firstOrNull { it.ean == ean }
             val sent = _state.value.lines.firstOrNull { it.product?.ean == ean }
@@ -310,29 +313,43 @@ class ShoppingChatViewModel(private val c: AppContainer) : ViewModel() {
             try {
                 val id = owner
                 if (!c.model.owns(id)) c.model.startConversation(id, c.shoppingSystemPrompt(), c.shoppingTools())
-                c.model.use {
-                    c.model.send(t).collect { ev ->
-                        when (ev) {
-                            is ChatEvent.Token -> lines.update { l ->
-                                val last = l.lastOrNull()
-                                if (last != null && !last.fromUser && !last.tool) l.dropLast(1) + last.copy(text = last.text + ev.text)
-                                else l + ShoppingChatLine(false, ev.text)
-                            }
-                            is ChatEvent.ToolCall -> lines.update { it + ShoppingChatLine(false, "🔎 ${label(ev.name)}…", tool = true) }
-                            is ChatEvent.ToolResult -> lines.update { l ->
-                                val i = l.indexOfLast { it.tool }
-                                if (i < 0) l else l.toMutableList().also { m ->
-                                    m[i] = ShoppingChatLine(false, (if (ev.ok) "✅ " else "⚠️ ") + label(ev.name), tool = true, ok = ev.ok)
-                                }
-                            }
-                        }
-                    }
+                try {
+                    chat(t)
+                } catch (e: Exception) {
+                    // Mémoire de l'assistant pleine : conversation neuve, un seul nouvel essai.
+                    if (e is kotlinx.coroutines.CancellationException || !fr.mescourses.app.llm.ModelController.isContextFull(e)) throw e
+                    lines.update { it + ShoppingChatLine(false, "↻ Mémoire de l'assistant pleine : nouvelle conversation.", tool = true, ok = true) }
+                    c.model.startConversation(id, c.shoppingSystemPrompt(), c.shoppingTools())
+                    val last = lines.value.lastOrNull { !it.fromUser && !it.tool }?.text?.trim()?.takeLast(600)
+                    chat(last?.let { "Rappel de ta réponse précédente : « $it »\n$t" } ?: t)
                 }
             } catch (e: Exception) {
                 c.session().onError(e)
                 lines.update { it + ShoppingChatLine(false, "⚠️ ${e.message}", tool = true, ok = false) }
             } finally {
                 busy.value = false
+            }
+        }
+    }
+
+    /** Envoie un message à l'assistant et affiche sa réponse et ses recherches au fil de l'eau. */
+    private suspend fun chat(t: String) {
+        c.model.use {
+            c.model.send(t).collect { ev ->
+                when (ev) {
+                    is ChatEvent.Token -> lines.update { l ->
+                        val last = l.lastOrNull()
+                        if (last != null && !last.fromUser && !last.tool) l.dropLast(1) + last.copy(text = last.text + ev.text)
+                        else l + ShoppingChatLine(false, ev.text)
+                    }
+                    is ChatEvent.ToolCall -> lines.update { it + ShoppingChatLine(false, "🔎 ${label(ev.name)}…", tool = true) }
+                    is ChatEvent.ToolResult -> lines.update { l ->
+                        val i = l.indexOfLast { it.tool }
+                        if (i < 0) l else l.toMutableList().also { m ->
+                            m[i] = ShoppingChatLine(false, (if (ev.ok) "✅ " else "⚠️ ") + label(ev.name), tool = true, ok = ev.ok)
+                        }
+                    }
+                }
             }
         }
     }

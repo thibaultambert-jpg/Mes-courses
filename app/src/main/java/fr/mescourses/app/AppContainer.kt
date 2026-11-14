@@ -15,6 +15,7 @@ import fr.mescourses.app.data.MIGRATION_1_2
 import fr.mescourses.app.data.MIGRATION_2_3
 import fr.mescourses.app.data.MIGRATION_3_4
 import fr.mescourses.app.data.MIGRATION_4_5
+import fr.mescourses.app.data.MIGRATION_5_6
 import fr.mescourses.app.data.RoomMealPlanRepository
 import fr.mescourses.app.data.RoomMenuDraftRepository
 import fr.mescourses.app.data.RoomMenuHistoryRepository
@@ -68,6 +69,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import java.time.LocalDate
@@ -86,7 +88,7 @@ class AppContainer(context: Context) {
     val undoBar = fr.mescourses.app.ui.common.UndoBar(appScope)
 
     private val db = Room.databaseBuilder(context, AppDatabase::class.java, "mes-courses.db")
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
         .build()
     val recipes = RoomRecipeRepository(db.recipeDao())
     val plan = RoomMealPlanRepository(db.mealDao())
@@ -118,6 +120,8 @@ class AppContainer(context: Context) {
         Room.databaseBuilder(context, CatalogDatabase::class.java, "catalogue.db").fallbackToDestructiveMigration(true).build().dao(),
     )
     val catalogSync = CatalogSync(context.applicationContext, catalog, appScope, http).also { it.start() }
+    /** Mise à jour de l'appli elle-même (release « appli » du dépôt). */
+    val appUpdater = fr.mescourses.app.data.AppUpdater(context.applicationContext, appScope, http).also { it.start() }
 
     // --- LLM local ---
     private val llm: LlmEngine = LiteRtLmEngine(context)
@@ -257,6 +261,38 @@ class AppContainer(context: Context) {
     val pendingQuote = MutableStateFlow<PendingQuote?>(null)
 
     fun defaultPortions(): Portions = settings.current.let { Portions(it.householdSize, it.children) }
+
+    /**
+     * Personnes choisies sur une carte (menu ou semaine) au moment d'ouvrir la recette : l'écran détail les reprend, et
+     * ce qu'on y change revient sur la carte. Clé : « id:N » (recette du livre) ou « url:… » (fiche d'un site).
+     */
+    private val portionHints = java.util.concurrent.ConcurrentHashMap<String, Portions>()
+
+    private fun hintKey(recipeId: Long?, url: String?): String? =
+        recipeId?.takeIf { it != 0L }?.let { "id:$it" } ?: url?.let { "url:" + fr.mescourses.core.recipes.RecipeSites.normalize(it) }
+
+    fun hintPortions(recipeId: Long?, url: String?, portions: Portions) {
+        hintKey(recipeId, null)?.let { portionHints[it] = portions }
+        hintKey(null, url)?.let { portionHints[it] = portions }
+    }
+
+    /** Personnes de la carte d'où l'on vient (une seule fois) ; null = ouverte ailleurs, on prend les Réglages. */
+    fun takePortionHint(recipeId: Long?, url: String?): Portions? =
+        hintKey(recipeId, url)?.let { portionHints.remove(it) }.also { hintKey(recipeId, null)?.let { k -> portionHints.remove(k) }; hintKey(null, url)?.let { k -> portionHints.remove(k) } }
+
+    /** Reporte sur les cartes du menu en cours et de la semaine le nombre de personnes choisi dans l'écran détail. */
+    suspend fun syncPortions(recipeId: Long?, url: String?, portions: Portions) {
+        val key = url?.let { fr.mescourses.core.recipes.RecipeSites.normalize(it) }
+        val dishes = draft.get()
+        if (dishes.any { d -> (recipeId != null && recipeId != 0L && d.recipeId == recipeId) || (key != null && d.sourceUrl?.let(fr.mescourses.core.recipes.RecipeSites::normalize) == key) }) {
+            draft.set(dishes.map { d ->
+                if ((recipeId != null && recipeId != 0L && d.recipeId == recipeId) || (key != null && d.sourceUrl?.let(fr.mescourses.core.recipes.RecipeSites::normalize) == key)) d.copy(portions = portions) else d
+            })
+        }
+        if (recipeId != null && recipeId != 0L) {
+            plan.observeAll().first().filter { it.recipeId == recipeId && !it.cooked && it.portions != portions }.forEach { plan.update(it.copy(portions = portions)) }
+        }
+    }
 
     /** Recettes trouvées sur les sites pour le menu en cours ; vide = le chef invente les plats (hors ligne). */
     val candidates = CandidatePool()

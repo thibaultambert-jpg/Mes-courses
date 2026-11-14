@@ -19,8 +19,24 @@ object RecipeJsonLdExtractor {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    fun extract(html: String, sourceUrl: String? = null): Recipe? =
-        extractFromJsonLd(Jsoup.parse(html).select("script[type=application/ld+json]").map { it.data() }, sourceUrl)
+    fun extract(html: String, sourceUrl: String? = null): Recipe? = extractFromJsonLd(jsonLdBlocks(html), sourceUrl)
+
+    /**
+     * Fiche `Recipe` de Next.js (Picnic) : pas de balise JSON-LD, la fiche est dans le flux
+     * `self.__next_f.push([1,"{\"@context\":…"])`, en chaîne JavaScript échappée.
+     */
+    private val flightRecipe = Regex("""\{\\"@context\\":\\"https://schema\.org\\",\\"@type\\":\\"Recipe\\"(?:[^"\\]++|\\.)*+""")
+
+    /** Contenu des balises JSON-LD de la page, puis des fiches Recipe du flux Next.js. */
+    private fun jsonLdBlocks(html: String): List<String> {
+        val scripts = Jsoup.parse(html).select("script[type=application/ld+json]").map { it.data() }
+        val flight = flightRecipe.findAll(html).mapNotNull { m ->
+            val literal = m.value
+            // La fin de la chaîne JavaScript est le guillemet non échappé ; on la décode comme une chaîne JSON.
+            runCatching { (json.parseToJsonElement("\"" + literal + "\"") as? JsonPrimitive)?.contentOrNull }.getOrNull()
+        }.toList()
+        return scripts + flight
+    }
 
     /** Même chose à partir du contenu des balises JSON-LD (lues par le navigateur intégré). */
     fun extractFromJsonLd(blocks: List<String>, sourceUrl: String? = null): Recipe? {
@@ -42,7 +58,7 @@ object RecipeJsonLdExtractor {
     )
 
     fun extractDetails(html: String, sourceUrl: String? = null): Details? {
-        for (block in Jsoup.parse(html).select("script[type=application/ld+json]").map { it.data() }) {
+        for (block in jsonLdBlocks(html)) {
             val element = runCatching { json.parseToJsonElement(block.trim()) }.getOrNull() ?: continue
             val node = findRecipe(element) ?: continue
             val rating = node["aggregateRating"] as? JsonObject
@@ -78,7 +94,8 @@ object RecipeJsonLdExtractor {
 
     private fun toRecipe(obj: JsonObject, sourceUrl: String?): Recipe {
         val title = obj.string("name")?.let(::clean) ?: "Recette sans titre"
-        val ingredientLines = strings(obj["recipeIngredient"] ?: obj["ingredients"]).map(::clean)
+        // Picnic écrit « BLANK » à la place d'une quantité absente (« BLANK noix de coco »).
+        val ingredientLines = strings(obj["recipeIngredient"] ?: obj["ingredients"]).map(::clean).map { it.replace(Regex("^BLANK\\s+"), "") }
         val steps = instructions(obj["recipeInstructions"]).map(::clean).filter { it.isNotBlank() }
         val prep = obj.string("prepTime")?.let(::parseIsoDurationMinutes)
         val cook = obj.string("cookTime")?.let(::parseIsoDurationMinutes)

@@ -43,6 +43,8 @@ data class PlannedMealEntity(
     val adults: Int,
     val children: Int,
     val cooked: Boolean,
+    /** Nom de [fr.mescourses.core.catalog.Course] (ENTREE, DESSERT) ; null = plat principal. */
+    val course: String? = null,
 )
 
 @Entity(tableName = "menu_draft")
@@ -61,6 +63,8 @@ data class MenuDraftEntity(
     val totalMinutes: Int? = null,
     /** Recette inventée par le chef à la demande. */
     @androidx.room.ColumnInfo(defaultValue = "0") val invented: Boolean = false,
+    /** Nom de [fr.mescourses.core.catalog.Course] (ENTREE, DESSERT) ; null = plat principal. */
+    val course: String? = null,
 )
 
 /** Plats des menus validés : jamais effacés avec le menu de la semaine, ils servent à varier les suivants. */
@@ -213,7 +217,7 @@ interface MenuDraftDao {
         RecipeEntity::class, PlannedMealEntity::class, ShoppingItemEntity::class, MenuDraftEntity::class,
         IngredientProductEntity::class, MenuHistoryEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -291,5 +295,13 @@ val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
                 id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, date TEXT NOT NULL, title TEXT NOT NULL,
                 sourceUrl TEXT, kind TEXT NOT NULL, mainIngredients TEXT NOT NULL)""",
         )
+    }
+}
+
+/** v5 → v6 : entrée / plat / dessert gardés dans le brouillon et dans le menu de la semaine. */
+val MIGRATION_5_6 = object : androidx.room.migration.Migration(5, 6) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE menu_draft ADD COLUMN course TEXT")
+        db.execSQL("ALTER TABLE planned_meals ADD COLUMN course TEXT")
     }
 }

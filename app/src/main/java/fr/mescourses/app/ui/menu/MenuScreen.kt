@@ -38,10 +38,13 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import fr.mescourses.core.menu.Candidate
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -57,6 +60,8 @@ import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
@@ -85,13 +90,16 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import fr.mescourses.app.ui.common.appContainer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
@@ -116,6 +124,7 @@ import fr.mescourses.app.ui.components.SectionHeader
 import fr.mescourses.app.ui.components.StatChip
 import fr.mescourses.app.ui.components.StepIndicator
 import fr.mescourses.app.ui.components.balanceHint
+import fr.mescourses.core.catalog.Course
 import fr.mescourses.core.menu.CookingTime
 import fr.mescourses.core.menu.DishKind
 import fr.mescourses.core.menu.IngredientOverlap
@@ -174,7 +183,11 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit, onOpenS
                     ) {
                         Icon(Icons.Filled.AutoAwesome, null)
                         Spacer(Modifier.size(8.dp))
-                        Text("Composer mon menu de ${state.meals} plats", style = MaterialTheme.typography.titleSmall)
+                        Text("Composer mon menu de " + listOfNotNull(
+                            state.starters.takeIf { it > 0 }?.let { "$it entrée${if (it > 1) "s" else ""}" },
+                            "${state.meals} plat${if (state.meals > 1) "s" else ""}",
+                            state.desserts.takeIf { it > 0 }?.let { "$it dessert${if (it > 1) "s" else ""}" },
+                        ).joinToString(", "), style = MaterialTheme.typography.titleSmall)
                     }
                 }
             }
@@ -221,7 +234,7 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit, onOpenS
                         dishes = dishes, favorites = favorites, overlap = overlap, insights = insights, preview = preview,
                         state = state, ready = ready,
                         onPortions = vm::changePortions, onAnother = vm::anotherRecipe, onInvent = { inventFor = it ?: -1 },
-                        onOpen = onOpenPreview, onRemove = vm::removeDish, onAdd = vm::openPicker,
+                        onOpen = onOpenPreview, onOpenRecipe = onOpenRecipe, onRemove = vm::removeDish, onAdd = vm::openPicker,
                         onImprove = vm::improveSharing, onClear = vm::clearDraft,
                     )
                     MenuStep.SEMAINE -> WeekStep(
@@ -253,7 +266,7 @@ fun MenuScreen(onOpenSettings: () -> Unit, onOpenRecipe: (Long) -> Unit, onOpenS
 
     state.picker?.let { recipes ->
         AddDishSheet(
-            recipes = recipes, busy = state.pickerBusy,
+            recipes = recipes, busy = state.pickerBusy, course = state.pickerCourse, onCourse = vm::setPickerCourse,
             onSearch = vm::searchPicker, onPick = { vm.addCandidate(it) }, onOpen = onOpenPreview, onDismiss = vm::closePicker,
         )
     }
@@ -313,7 +326,9 @@ private fun SettingsStep(vm: MenuViewModel, state: MenuUiState, onOpenSettings: 
         item {
             SectionCard {
                 SectionHeader("Pour qui ?", emoji = "🍽")
-                PillStepper("🍽", "Repas", state.meals, vm::setMeals, enabled = enabled, min = 1, max = 21)
+                PillStepper("🥗", "Entrées", state.starters, vm::setStarters, enabled = enabled, min = 0, max = 21)
+                PillStepper("🍽", "Plats", state.meals, vm::setMeals, enabled = enabled, min = 1, max = 21)
+                PillStepper("🍰", "Desserts", state.desserts, vm::setDesserts, enabled = enabled, min = 0, max = 21)
                 PillStepper("🧑", "Adultes par repas", state.adults, vm::setAdults, enabled = enabled, max = 20)
                 PillStepper("🧒", "Enfants par repas", state.children, vm::setChildren, enabled = enabled, max = 20)
             }
@@ -485,6 +500,7 @@ private fun ProposalStep(
     /** Recette inventée par le chef : à la place du plat donné, ou en plus (null). */
     onInvent: (Int?) -> Unit,
     onOpen: (String) -> Unit,
+    onOpenRecipe: (Long) -> Unit,
     onRemove: (Int) -> Unit,
     onAdd: () -> Unit,
     onImprove: () -> Unit,
@@ -492,6 +508,7 @@ private fun ProposalStep(
 ) {
     val sharedNames = remember(overlap) { overlap.shared.map { ShoppingListMerger.key(it.name) }.toSet() }
     val listState = rememberLazyListState()
+    val expanded = rememberGroupStates("menu")
     Column(Modifier.fillMaxSize()) {
     // Toujours visible en haut, même quand on fait défiler les plats.
     ChefStatus(
@@ -509,30 +526,43 @@ private fun ProposalStep(
     ) {
         if (dishes.isEmpty() && state.busy) return@LazyColumn
         item {
-            val balanced = dishes.count { PlateBalance.missing(dishBalanceTexts(it)).isEmpty() }
+            val mains = dishes.filter { it.isMain }
+            val balanced = mains.count { PlateBalance.missing(dishBalanceTexts(it)).isEmpty() }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                StatChip("🍽 ${dishes.size} plats", emphasized = true)
+                StatChip("🍽 ${mains.size} plats", emphasized = true)
+                if (dishes.size > mains.size) StatChip("🥗 ${dishes.count { it.course == fr.mescourses.core.catalog.Course.ENTREE }} entrées · 🍰 ${dishes.count { it.course == fr.mescourses.core.catalog.Course.DESSERT }} desserts")
                 StatChip("🛒 ${preview?.items ?: insights.articles} articles")
                 StatChip("🍂 ${insights.seasonal.size} de saison")
                 StatChip("♻ ${overlap.shared.size} partagés")
-                StatChip("⚖ $balanced/${dishes.size} équilibrés")
+                StatChip("⚖ $balanced/${mains.size} équilibrés")
             }
         }
-        itemsIndexed(dishes, key = { i, d -> "$i-${d.title}" }) { i, dish ->
-            DishCard(
-                number = i + 1,
-                dish = dish,
-                favorite = dish.recipeId != null && dish.recipeId in favorites,
-                sharedNames = sharedNames,
-                enabled = !state.busy,
-                canAskLlm = ready,
-                onPortions = { a, c -> onPortions(i, a, c) },
-                onAnother = { onAnother(i) },
-                onInvent = { onInvent(i) },
-                onOpen = onOpen,
-                onRemove = { onRemove(i) },
-                modifier = Modifier.animateItem(),
-            )
+        // Entrées, plats et desserts dans trois cartouches pliables ; les numéros restent ceux du menu.
+        val groups = dishes.withIndex().groupBy { groupOf(it.value.course) }
+        MealGroup.entries.forEach { group ->
+            val entries = groups[group].orEmpty()
+            if (entries.isEmpty()) return@forEach
+            courseSection(
+                group = group, count = entries.size, expanded = expanded[group],
+                onToggle = { expanded.toggle(group) },
+                list = entries, key = { (i, d) -> "$i-${d.title}" },
+            ) { (i, dish) ->
+                DishCard(
+                    number = i + 1,
+                    dish = dish,
+                    favorite = dish.recipeId != null && dish.recipeId in favorites,
+                    sharedNames = sharedNames,
+                    enabled = !state.busy,
+                    canAskLlm = ready,
+                    onPortions = { a, c -> onPortions(i, a, c) },
+                    onAnother = { onAnother(i) },
+                    onInvent = { onInvent(i) },
+                    onOpen = onOpen,
+                    onOpenRecipe = onOpenRecipe,
+                    onRemove = { onRemove(i) },
+                    modifier = Modifier.animateItem(),
+                )
+            }
         }
         item {
             Button(onClick = onAdd, enabled = !state.busy, modifier = Modifier.fillMaxWidth()) {
@@ -557,6 +587,54 @@ private fun ProposalStep(
 }
 
 private fun dishBalanceTexts(d: MenuDish) = listOf(d.title, d.description) + d.mainIngredients
+
+/** Les trois parties d'un menu, dans l'ordre du repas. */
+private enum class MealGroup(val label: String, val emoji: String) {
+    ENTREES("Entrées", "🥗"), PLATS("Plats", "🍽"), DESSERTS("Desserts", "🍰"),
+}
+
+private fun groupOf(course: Course?) = when (course) {
+    null -> MealGroup.PLATS
+    Course.DESSERT -> MealGroup.DESSERTS
+    else -> MealGroup.ENTREES
+}
+
+/** Parties dépliées (par défaut toutes), gardées à la rotation de l'écran. */
+private class GroupStates(private val open: Map<MealGroup, MutableState<Boolean>>) {
+    operator fun get(group: MealGroup) = open.getValue(group).value
+    fun toggle(group: MealGroup) { open.getValue(group).let { it.value = !it.value } }
+}
+
+@Composable
+private fun rememberGroupStates(scope: String) =
+    GroupStates(MealGroup.entries.associateWith { g -> rememberSaveable(key = "$scope-${g.name}") { mutableStateOf(true) } })
+
+/** Cartouche pliable : un en-tête (titre, nombre, flèche) puis, quand elle est dépliée, ses cartes. */
+private fun <T> LazyListScope.courseSection(
+    group: MealGroup,
+    count: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    list: List<T>,
+    key: (T) -> Any,
+    content: @Composable LazyItemScope.(T) -> Unit,
+) {
+    item(key = "header-${group.name}") {
+        Card(
+            onClick = onToggle,
+            shape = MaterialTheme.shapes.large,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+            modifier = Modifier.fillMaxWidth().animateItem(),
+        ) {
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("${group.emoji} ${group.label}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Text("$count", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, if (expanded) "Replier" else "Déplier")
+            }
+        }
+    }
+    if (expanded) items(list, key = key) { content(it) }
+}
 
 @Composable
 private fun ThinkingCard(lastText: String?, modifier: Modifier = Modifier, progress: String? = null) = ChefCard(
@@ -586,13 +664,23 @@ private fun DishCard(
     onAnother: () -> Unit,
     onInvent: () -> Unit,
     onOpen: (String) -> Unit,
+    onOpenRecipe: (Long) -> Unit,
     onRemove: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val openable = dish.sourceUrl != null || dish.recipeId != null
+    val container = appContainer()
+    // Les personnes de la carte suivent dans l'écran détail de la recette.
+    val open = {
+        container.hintPortions(dish.recipeId, dish.sourceUrl, dish.portions)
+        dish.sourceUrl?.let(onOpen) ?: dish.recipeId?.let(onOpenRecipe); Unit
+    }
     val present = PlateBalance.components(dishBalanceTexts(dish))
+    val main = dish.isMain
     val season = remember(dish) { Seasonality.report(listOf(dish.title) + dish.mainIngredients, java.time.LocalDate.now().month) }
     // D'où vient le plat : un site (avec sa durée), le livre, ou le chef.
     val origin = listOfNotNull(
+        dish.course?.let { if (it == fr.mescourses.core.catalog.Course.DESSERT) "🍰 Dessert" else "🥗 Entrée" },
         dish.sourceUrl?.let { RecipeSites.forUrl(it)?.name ?: "Site de recettes" },
         if (dish.sourceUrl == null && dish.recipeId != null) "Mon livre" else null,
         if (dish.sourceUrl == null && dish.recipeId == null) "✨ Recette du chef" else null,
@@ -609,7 +697,7 @@ private fun DishCard(
             DishArt(
                 dish.title, dish.mainIngredients, imageUrl = dish.imageUrl,
                 modifier = Modifier.fillMaxWidth().height(if (dish.imageUrl != null) 132.dp else 96.dp)
-                    .clickable(enabled = dish.sourceUrl != null) { dish.sourceUrl?.let(onOpen) },
+                    .clickable(enabled = openable) { open() },
                 emojiSize = 48,
             )
             Text(
@@ -630,7 +718,7 @@ private fun DishCard(
             Row(verticalAlignment = Alignment.Top) {
                 Column(
                     Modifier.weight(1f).clip(MaterialTheme.shapes.small)
-                        .clickable(enabled = dish.sourceUrl != null) { dish.sourceUrl?.let(onOpen) },
+                        .clickable(enabled = openable) { open() },
                 ) {
                     Text(dish.title, style = MaterialTheme.typography.titleMedium)
                     if (origin.isNotEmpty()) {
@@ -665,7 +753,7 @@ private fun DishCard(
                 MiniStepper("🧑", dish.portions.adults, { onPortions(it - dish.portions.adults, 0) }, enabled, "Adultes")
                 MiniStepper("🧒", dish.portions.children, { onPortions(0, it - dish.portions.children) }, enabled, "Enfants")
                 Spacer(Modifier.weight(1f))
-                BalanceDots(present)
+                if (main) BalanceDots(present)
             }
             if (season.seasonal.isNotEmpty()) {
                 Text("🍂 De saison : ${season.seasonal.joinToString(", ")}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
@@ -673,7 +761,7 @@ private fun DishCard(
             if (season.outOfSeason.isNotEmpty()) {
                 Text("⚠ Hors saison : ${season.outOfSeason.joinToString(", ")}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
             }
-            balanceHint(present)?.let {
+            balanceHint(present)?.takeIf { main }?.let {
                 Text("⚠ $it", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
             }
         }
@@ -830,6 +918,7 @@ private fun WeekStep(
     }
     val cooked = week.count { it.cooked }
     val progress by animateFloatAsState(cooked.toFloat() / week.size, label = "week")
+    val expanded = rememberGroupStates("week")
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxSize()) {
         item {
             SectionCard {
@@ -862,39 +951,50 @@ private fun WeekStep(
                 if (!chefInstalled) Text("Installe l'assistant dans les Réglages pour l'utiliser.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
         }
-        weekItems(week, images, onToggle, onOpenRecipe)
+        val groups = week.groupBy { groupOf(it.course) }
+        MealGroup.entries.forEach { group ->
+            val meals = groups[group].orEmpty()
+            if (meals.isEmpty()) return@forEach
+            courseSection(
+                group = group, count = meals.size, expanded = expanded[group],
+                onToggle = { expanded.toggle(group) },
+                list = meals, key = { it.id },
+            ) { meal -> WeekMealCard(meal, images[meal.recipeId], onToggle, onOpenRecipe) }
+        }
         item { TextButton(onClick = onClear, modifier = Modifier.fillMaxWidth()) { Text("Effacer le menu de la semaine") } }
     }
 }
 
-private fun LazyListScope.weekItems(week: List<PlannedMeal>, images: Map<Long, String>, onToggle: (PlannedMeal) -> Unit, onOpenRecipe: (Long) -> Unit) {
-    items(week, key = { it.id }) { meal ->
-        val image = images[meal.recipeId]
-        Card(
-            onClick = { onOpenRecipe(meal.recipeId) },
-            shape = MaterialTheme.shapes.large,
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
-            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-            modifier = Modifier.fillMaxWidth().animateItem(),
-        ) {
-            // Photo de la recette en grand (ou illustration quand le site n'en donne pas).
-            DishArt(
-                meal.recipeTitle, imageUrl = image,
-                modifier = Modifier.fillMaxWidth().height(if (image != null) 150.dp else 96.dp),
-                emojiSize = 48,
-            )
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp)) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        meal.recipeTitle,
-                        style = MaterialTheme.typography.titleSmall,
-                        textDecoration = if (meal.cooked) TextDecoration.LineThrough else null,
-                        color = if (meal.cooked) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(meal.portions.label(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Checkbox(checked = meal.cooked, onCheckedChange = { onToggle(meal) })
+@Composable
+private fun LazyItemScope.WeekMealCard(meal: PlannedMeal, image: String?, onToggle: (PlannedMeal) -> Unit, onOpenRecipe: (Long) -> Unit) {
+    val container = appContainer()
+    Card(
+        onClick = { container.hintPortions(meal.recipeId, null, meal.portions); onOpenRecipe(meal.recipeId) },
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = if (meal.cooked) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.surfaceContainerLowest,
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        // Plat déjà cuisiné : la carte est grisée.
+        modifier = Modifier.fillMaxWidth().animateItem().alpha(if (meal.cooked) 0.5f else 1f),
+    ) {
+        // Photo de la recette en grand (ou illustration quand le site n'en donne pas).
+        DishArt(
+            meal.recipeTitle, imageUrl = image,
+            modifier = Modifier.fillMaxWidth().height(if (image != null) 150.dp else 96.dp),
+            emojiSize = 48,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    meal.recipeTitle,
+                    style = MaterialTheme.typography.titleSmall,
+                    textDecoration = if (meal.cooked) TextDecoration.LineThrough else null,
+                    color = if (meal.cooked) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                )
+                Text(meal.portions.label(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            Checkbox(checked = meal.cooked, onCheckedChange = { onToggle(meal) })
         }
     }
 }
@@ -921,8 +1021,9 @@ private fun ChatSheet(
     LaunchedEffect(chat.size, chat.lastOrNull()?.text?.length) {
         if (chat.isNotEmpty()) listState.animateScrollToItem(chat.lastIndex)
     }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 16.dp)) {
+    // Le clavier est géré ici seulement (pas aussi par la feuille), et la liste rétrécit pour laisser voir le champ.
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, contentWindowInsets = { WindowInsets(0) }) {
+        Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(horizontal = 16.dp)) {
             Text("Ajuster le menu", style = MaterialTheme.typography.titleLarge)
             Text(
                 "Une demande à la fois : invités sur un plat, ajouter, retirer ou remplacer un plat…",
@@ -981,6 +1082,8 @@ private fun ChatSheet(
 private fun AddDishSheet(
     recipes: List<Candidate>,
     busy: Boolean,
+    course: Course?,
+    onCourse: (Course?) -> Unit,
     onSearch: (String) -> Unit,
     onPick: (Candidate) -> Unit,
     onOpen: (String) -> Unit,
@@ -988,11 +1091,16 @@ private fun AddDishSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var query by remember { mutableStateOf("") }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 16.dp)) {
-            Text("Ajouter un plat", style = MaterialTheme.typography.titleLarge)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, contentWindowInsets = { WindowInsets(0) }) {
+        Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(horizontal = 16.dp)) {
+            Text("Ajouter au menu", style = MaterialTheme.typography.titleLarge)
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf<Pair<Course?, String>>(null to "Plat", Course.ENTREE to "Entrée", Course.DESSERT to "Dessert").forEach { (c, label) ->
+                    FilterChip(selected = course == c, onClick = { onCourse(c) }, label = { Text(label) })
+                }
+            }
             Text(
-                "Recettes disponibles pour ce menu. Touche une recette pour l'ajouter, ou cherche autre chose.",
+                "Touche une recette pour l'ajouter, ou cherche autre chose.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

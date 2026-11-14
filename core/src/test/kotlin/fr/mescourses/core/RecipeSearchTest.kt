@@ -51,6 +51,10 @@ class RecipeSearchTest {
         assertNull(RecipeSites.forUrl("https://exemple.fr/recette"))
         assertTrue(RecipeSites.byId("750g")!!.isRecipeUrl("https://www.750g.com/risotto-aux-champignons-r12345.htm"))
         assertTrue(!marmiton.isRecipeUrl("https://www.marmiton.org/recettes/selection_risottos.aspx"))
+        val addict = RecipeSites.byId("cuisineaddict")!!
+        assertEquals("cuisineaddict", RecipeSites.forUrl("https://www.cuisineaddict.com/recette-chakchouka.htm")?.id)
+        assertTrue(addict.isRecipeUrl("https://www.cuisineaddict.com/recette-chakchouka.htm?page=2"))
+        assertTrue(!addict.isRecipeUrl("https://www.cuisineaddict.com/recettes-plats.htm"))
         assertEquals(4, RecipeSites.searchable.size)
     }
 
@@ -100,11 +104,12 @@ class RecipeSearchTest {
         assertTrue(RecipeSites.all.all { it.browseUrl != null }, RecipeSites.all.filter { it.browseUrl == null }.joinToString { it.id })
         assertEquals("https://picnic.app/fr/recettes/", RecipeSites.byId("picnic")!!.browsePage)
         assertEquals("https://jow.fr/blog/categories/idees-recettes", RecipeSites.byId("jow")!!.browsePage)
-        // Elle : catégorie ≠ recette.
-        val elleCat = "https://www.elle.fr/Elle-a-Table/Recettes-de-cuisine/Plats"
-        val elleRecipe = "https://www.elle.fr/Elle-a-Table/Recettes-de-cuisine/Gratin-dauphinois-2971574"
-        assertTrue(RecipeSites.forUrl(elleCat)?.isRecipeUrl(elleCat) == false)
-        assertTrue(RecipeSites.forUrl(elleRecipe)?.isRecipeUrl(elleRecipe) == true)
+        // Picnic : la liste ≠ une fiche (/fr/recettes/<identifiant>/<nom>).
+        val picnicList = "https://picnic.app/fr/recettes/"
+        val picnicRecipe = "https://picnic.app/fr/recettes/67f5341b94bb9a40e1a07be1/pia-colada"
+        assertTrue(RecipeSites.forUrl(picnicList)?.isRecipeUrl(picnicList) == false)
+        assertTrue(RecipeSites.forUrl(picnicRecipe)?.isRecipeUrl(picnicRecipe) == true)
+        assertTrue(RecipeSites.byId("elle") == null)
         val jow = "https://jow.fr/recipes/poulet-tikka-masala-5f8a1b2c3d"
         assertTrue(RecipeSites.forUrl(jow)?.isRecipeUrl(jow) == true)
     }

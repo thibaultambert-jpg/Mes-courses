@@ -39,6 +39,9 @@ data class MenuWishes(
     val novelty: Novelty = Novelty.EQUILIBRE,
     /** Envies en texte libre, séparées par des virgules. */
     val wishes: String = "",
+    /** Entrées et desserts en plus des plats ([meals]) : 0 = aucun. */
+    val starters: Int = 0,
+    val desserts: Int = 0,
 ) {
     fun quota(kind: DishKind): Int = when (kind) {
         DishKind.VEGE -> vegetarian
@@ -53,7 +56,10 @@ data class MenuWishes(
         val m = meals.coerceIn(1, 21)
         val v = vegetarian.coerceIn(0, m)
         val f = fish.coerceIn(0, m - v)
-        return copy(meals = m, vegetarian = v, fish = f, meat = meat.coerceIn(0, m - v - f))
+        return copy(
+            meals = m, vegetarian = v, fish = f, meat = meat.coerceIn(0, m - v - f),
+            starters = starters.coerceIn(0, 21), desserts = desserts.coerceIn(0, 21),
+        )
     }
 
     /** « 2 végé, 1 poisson » ; vide si la composition est libre. */

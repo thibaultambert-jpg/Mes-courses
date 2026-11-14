@@ -25,6 +25,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -421,14 +424,14 @@ private fun AccountCard(retailer: Retailer, session: SessionState, storeName: St
         Row(verticalAlignment = Alignment.CenterVertically) {
             RetailerDot(retailer)
             Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                Text("${retailer.label} Drive", style = MaterialTheme.typography.titleMedium)
-                Text(storeName.ifBlank { "Aucun drive choisi" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(retailer.accountTitle, style = MaterialTheme.typography.titleMedium)
+                Text(storeName.ifBlank { retailer.noStoreText() }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             StatChip(session.label, emphasized = session != SessionState.CONNECTE)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (session == SessionState.CONNEXION_REQUISE || session == SessionState.INCONNU || session == SessionState.NON_VERIFIE) Button(onClick = onLogin) { Text("Se connecter") }
-            OutlinedButton(onClick = onChooseStore) { Text(if (storeName.isBlank()) "Choisir mon drive" else "Changer de drive") }
+            OutlinedButton(onClick = onChooseStore) { Text(retailer.chooseStoreText(storeName.isNotBlank())) }
         }
     }
 }
@@ -437,14 +440,16 @@ private fun AccountCard(retailer: Retailer, session: SessionState, storeName: St
 private fun CartSummary(retailer: Retailer, cart: fr.mescourses.core.carrefour.Cart, slots: List<fr.mescourses.core.carrefour.TimeSlot>?, onOpenWebCart: () -> Unit) {
     SectionCard {
         Text("Mon panier ${retailer.label}", style = MaterialTheme.typography.titleMedium)
-        if (cart.lines.isEmpty()) Text("Panier vide.", style = MaterialTheme.typography.bodyMedium)
-        cart.lines.take(30).forEach { l ->
+        // Les lignes à 0 (articles retirés du panier) ne sont pas affichées.
+        val shown = cart.lines.filter { it.quantity > 0 }
+        if (shown.isEmpty()) Text("Panier vide.", style = MaterialTheme.typography.bodyMedium)
+        shown.take(30).forEach { l ->
             Row {
                 Text("${l.quantity} × ${l.name}", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 l.subtotal?.let { Text(euros(it), style = MaterialTheme.typography.bodyMedium) }
             }
         }
-        cart.total?.let { Text("Total : ${euros(it)}", style = MaterialTheme.typography.titleSmall) }
+        if (shown.isNotEmpty()) cart.total?.let { Text("Total : ${euros(it)}", style = MaterialTheme.typography.titleSmall) }
         if (!slots.isNullOrEmpty()) {
             Text("Prochains créneaux (à réserver sur le site)", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
             slots.forEach { s ->
@@ -470,8 +475,9 @@ private fun ShoppingChatSheet(onDismiss: () -> Unit) {
     val listState = rememberLazyListState()
     LaunchedEffect(lines.size, lines.lastOrNull()?.text?.length) { if (lines.isNotEmpty()) listState.animateScrollToItem(lines.lastIndex) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 16.dp)) {
+    // Le clavier est géré ici seulement (pas aussi par la feuille), et la liste rétrécit pour laisser voir le champ.
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), contentWindowInsets = { WindowInsets(0) }) {
+        Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(horizontal = 16.dp)) {
             Text("Courses avec l'assistant", style = MaterialTheme.typography.titleLarge)
             Text(
                 if (model.available) "Demande en français ; tu confirmes chaque ajout." else "Installe l'assistant dans les Réglages pour utiliser ce mode.",
@@ -482,7 +488,7 @@ private fun ShoppingChatSheet(onDismiss: () -> Unit) {
                 model == ModelStatus.Loading -> ModelLoadingCard(Modifier.padding(top = 8.dp))
                 busy -> ChefCard("Le chef réfléchit…", "Il cherche les produits au drive.", Modifier.padding(top = 8.dp))
             }
-            LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().height(320.dp).padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f, fill = false).heightIn(max = 320.dp).padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(lines) { l ->
                     if (l.tool) {
                         Text(l.text, style = MaterialTheme.typography.labelMedium, color = if (l.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
@@ -644,8 +650,8 @@ private fun ChoiceSheet(
     val shownRelevant = if (showAll) relevant else minOf(relevant, 8)
     val searching = line.status == LineStatus.A_CHERCHER
     val canWiden = fr.mescourses.core.cart.CartPlanner.widen(line.query ?: query) != null
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        LazyColumn(Modifier.fillMaxWidth()) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), contentWindowInsets = { WindowInsets(0) }) {
+        LazyColumn(Modifier.fillMaxWidth().imePadding().navigationBarsPadding()) {
             item {
                 Column(Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
                     Text("Choisir pour « ${ShoppingListMerger.format(line.item)} »", style = MaterialTheme.typography.titleMedium)

@@ -46,6 +46,31 @@
   details ul { margin: 4px 0 0; padding-left: 18px; }
   button { font: inherit; padding: 9px 16px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: var(--bg); cursor: pointer; margin: 14px auto; display: block; }
   .hidden { display: none; }
+  .tabs { display: flex; gap: 6px; margin: 16px 0 0; border-bottom: 1px solid var(--line); }
+  .tabs button { margin: 0; border-radius: 8px 8px 0 0; background: transparent; color: var(--text); border-color: var(--line); border-bottom: none; }
+  .tabs button.on { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  fieldset { border: 1px solid var(--line); border-radius: 10px; margin: 12px 0; padding: 4px 12px 10px; background: var(--card); }
+  fieldset > legend { font-size: 12px; color: var(--muted); padding: 0 6px; }
+  fieldset .filters { margin: 6px 0 0; }
+  .range { display: flex; gap: 6px; }
+  input[type=number], input[type=date], input[type=text] { font: inherit; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--text); width: 100%; min-width: 0; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+  .bar button, button.small { margin: 0; padding: 6px 12px; display: inline-block; font-size: 13px; }
+  button.ghost { background: transparent; color: var(--text); border-color: var(--line); }
+  .ing td, .ing th { white-space: normal; text-align: left; vertical-align: top; }
+  .ing td.n { text-align: right; white-space: nowrap; }
+  .ing select, .ing input[type=text] { padding: 4px 6px; font-size: 12px; }
+  .ing tr.done { opacity: .55; }
+  a.key { color: var(--accent); cursor: pointer; text-decoration: none; border-bottom: 1px dotted; }
+  .line { display: flex; gap: 6px; align-items: baseline; }
+  .line .tag { flex: none; }
+  .chip { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; padding: 2px 8px; margin: 2px 2px 2px 0; border-radius: 99px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--text); cursor: pointer; white-space: nowrap; }
+  .mergebar.hidden { display: none; }
+  .chip.weak { border-style: dashed; background: transparent; }
+  .chip.done { cursor: default; border-color: var(--line); }
+  .mergebar { margin-top: 6px; padding: 6px; border-radius: 8px; background: var(--accent-soft); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
+  .pager { display: flex; gap: 8px; align-items: center; justify-content: center; }
+  .pager button { margin: 8px 0; }
 </style>
 </head>
 <body>
@@ -62,37 +87,114 @@
   </label>
 
   <div id="app" class="hidden">
-    <div class="filters">
-      <label class="wide">Recherche (titre et ingrédients, tous les mots)
-        <input id="q" type="search" placeholder="poireau lardons, curry de légumes…"></label>
-      <label>Site<select id="site"></select></label>
-      <label>Type de plat<select id="course"></select></label>
-      <label>Composition<select id="kind">
-        <option value="">Toutes</option><option value="VEGE">Végétarien</option><option value="POISSON">Poisson</option><option value="VIANDE">Viande</option></select></label>
-      <label>De saison en<select id="month"></select></label>
-      <label>Note<select id="rating">
-        <option value="">Toutes</option><option value="good">Bien notées (≥ 4, 3 avis et plus)</option>
-        <option value="3">≥ 3</option><option value="4">≥ 4</option><option value="4.5">≥ 4,5</option><option value="none">Sans note</option></select></label>
-      <label>Temps total<select id="time">
-        <option value="">Tous</option><option value="30">≤ 30 min</option><option value="60">≤ 1 h</option><option value="none">Sans temps</option></select></label>
-      <label>À contrôler<select id="check">
-        <option value="">—</option><option value="noimg">Sans image</option><option value="autre">Type « Autre »</option>
-        <option value="nomonth">Jamais de saison</option><option value="few">Moins de 4 ingrédients</option>
-        <option value="nokeys">Aucun ingrédient reconnu</option><option value="dup">Titre en double sur le même site</option></select></label>
-      <label>Tri<select id="sort">
-        <option value="">Ordre du fichier</option><option value="rating">Meilleures notes</option><option value="votes">Plus d'avis</option>
-        <option value="time">Plus rapides</option><option value="title">Titre</option><option value="recent">Modifiées récemment</option></select></label>
-      <label class="check"><input id="meal" type="checkbox"> Repas du menu seulement</label>
-      <label class="check"><input id="balanced" type="checkbox"> Assiette complète</label>
-      <label class="check"><input id="images" type="checkbox" checked> Afficher les images</label>
+    <div class="tabs">
+      <button id="tab-recipes" class="on">Recettes</button>
+      <button id="tab-ingredients">Ingrédients &amp; mapping</button>
     </div>
 
-    <div class="scroll"><table id="stats"></table></div>
-    <div id="count"></div>
-    <div id="list" class="list"></div>
-    <button id="more" class="hidden">Afficher plus</button>
+    <!-- ====== Vue recettes ====== -->
+    <div id="view-recipes">
+      <fieldset><legend>Recherche et origine</legend><div class="filters">
+        <label class="wide">Recherche (titre et ingrédients, tous les mots)
+          <input id="q" type="search" placeholder="poireau lardons, curry de légumes…"></label>
+        <label>Site<select id="site"></select></label>
+        <label>Catégorie du site (texte brut)<input id="category" type="search" list="dl-category" placeholder="Plat principal…"></label>
+        <label>Type de plat<select id="course"></select></label>
+        <label>Composition<select id="kind">
+          <option value="">Toutes</option><option value="VEGE">Végétarien</option><option value="POISSON">Poisson</option><option value="VIANDE">Viande</option></select></label>
+        <label>Repas du menu (plat, soupe, salade)<select id="meal"><option value="">Indifférent</option><option value="1">Oui</option><option value="0">Non</option></select></label>
+        <label>Assiette complète<select id="balanced"><option value="">Indifférent</option><option value="1">Oui</option><option value="0">Non</option></select></label>
+      </div></fieldset>
+
+      <fieldset><legend>Saison</legend><div class="filters">
+        <label>De saison en<select id="month"></select></label>
+        <label>Nombre de mois de saison<div class="range"><input id="monthsMin" type="number" min="0" max="12" placeholder="min"><input id="monthsMax" type="number" min="0" max="12" placeholder="max"></div></label>
+        <label>Contient le produit de saison<input id="produce" type="search" list="dl-produce" placeholder="poireau, courge…"></label>
+      </div></fieldset>
+
+      <fieldset><legend>Notes, durées, portions</legend><div class="filters">
+        <label>Note<select id="rating">
+          <option value="">Toutes</option><option value="good">Bien notées (≥ 4, 3 avis et plus)</option>
+          <option value="3">≥ 3</option><option value="4">≥ 4</option><option value="4.5">≥ 4,5</option><option value="none">Sans note</option></select></label>
+        <label>Nombre d'avis (min / max)<div class="range"><input id="votesMin" type="number" min="0" placeholder="min"><input id="votesMax" type="number" min="0" placeholder="max"></div></label>
+        <label>Temps total (min / max, minutes)<div class="range"><input id="timeMin" type="number" min="0" placeholder="min"><input id="timeMax" type="number" min="0" placeholder="max"></div></label>
+        <label>Préparation (min / max)<div class="range"><input id="prepMin" type="number" min="0" placeholder="min"><input id="prepMax" type="number" min="0" placeholder="max"></div></label>
+        <label>Cuisson (min / max)<div class="range"><input id="cookMin" type="number" min="0" placeholder="min"><input id="cookMax" type="number" min="0" placeholder="max"></div></label>
+        <label>Temps connu<select id="time">
+          <option value="">Indifférent</option><option value="30">≤ 30 min</option><option value="60">≤ 1 h</option><option value="none">Sans temps</option></select></label>
+        <label>Portions (min / max)<div class="range"><input id="servMin" type="number" min="0" placeholder="min"><input id="servMax" type="number" min="0" placeholder="max"></div></label>
+      </div></fieldset>
+
+      <fieldset><legend>Ingrédients</legend><div class="filters">
+        <label>Nombre de lignes d'ingrédients (min / max)<div class="range"><input id="ingMin" type="number" min="0" placeholder="min"><input id="ingMax" type="number" min="0" placeholder="max"></div></label>
+        <label>Nombre d'ingrédients reconnus (min / max)<div class="range"><input id="keysMin" type="number" min="0" placeholder="min"><input id="keysMax" type="number" min="0" placeholder="max"></div></label>
+        <label>Lignes non reconnues (min / max)<div class="range"><input id="unmMin" type="number" min="0" placeholder="min"><input id="unmMax" type="number" min="0" placeholder="max"></div></label>
+        <label>Contient l'ingrédient reconnu<input id="withKey" type="search" list="dl-keys" placeholder="poulet, courgette…"></label>
+        <label>Ne contient pas l'ingrédient reconnu<input id="withoutKey" type="search" list="dl-keys" placeholder="lait de coco…"></label>
+      </div></fieldset>
+
+      <fieldset><legend>Données et contrôle</legend><div class="filters">
+        <label>Modifiée entre (lastmod)<div class="range"><input id="lastFrom" type="date"><input id="lastTo" type="date"></div></label>
+        <label>Image<select id="image"><option value="">Indifférent</option><option value="1">Avec image</option><option value="0">Sans image</option></select></label>
+        <label>À contrôler<select id="check">
+          <option value="">—</option><option value="noimg">Sans image</option><option value="autre">Type « Autre »</option>
+          <option value="nocat">Sans catégorie du site</option>
+          <option value="nomonth">Jamais de saison</option><option value="few">Moins de 4 ingrédients</option>
+          <option value="nokeys">Aucun ingrédient reconnu</option><option value="unm">Au moins une ligne non reconnue</option>
+          <option value="dup">Titre en double sur le même site</option></select></label>
+        <label>Tri<select id="sort">
+          <option value="">Ordre du fichier</option><option value="rating">Meilleures notes</option><option value="votes">Plus d'avis</option>
+          <option value="time">Plus rapides</option><option value="title">Titre</option><option value="recent">Modifiées récemment</option>
+          <option value="ing">Plus d'ingrédients</option><option value="unm">Plus de lignes non reconnues</option></select></label>
+        <label class="check"><input id="images" type="checkbox" checked> Afficher les images</label>
+      </div>
+      <div class="bar"><button id="reset" class="ghost small" type="button">Réinitialiser les filtres</button></div></fieldset>
+
+      <div class="scroll"><table id="stats"></table></div>
+      <div id="count"></div>
+      <div id="list" class="list"></div>
+      <button id="more" class="hidden">Afficher plus</button>
+    </div>
+
+    <!-- ====== Vue ingrédients ====== -->
+    <div id="view-ingredients" class="hidden">
+      <p class="muted"><b>Principe :</b> chaque ligne d'ingrédient écrite par un site (« 400 g de morceaux de poulet ») reçoit une <b>clé</b> (« poulet »).
+        Une seule clé par produit : la clé sert à l'application à regrouper la liste de courses, à reconnaître ce qui est dans ton placard et à chercher le produit.
+        Le texte d'origine de la recette n'est jamais modifié.</p>
+      <ul class="muted" style="margin:4px 0 10px">
+        <li><b>Ingrédients reconnus</b> : contrôle les clés. Coche les <b>clés proches</b> qui sont le même produit, puis « Regrouper » : elles ne forment plus qu'une clé.</li>
+        <li><b>Lignes sans clé</b> : donne-leur une clé (proposée automatiquement, à corriger si besoin).</li>
+        <li>Le <b>rayon</b> et le <b>terme de recherche drive</b> sont calculés comme dans l'application (« Auto ») ; modifie-les seulement si nécessaire.</li>
+      </ul>
+      <div class="bar">
+        <button class="small" data-mode="keys" id="mode-keys">Ingrédients reconnus</button>
+        <button class="small ghost" data-mode="lines" id="mode-lines">Lignes sans clé</button>
+        <span class="muted" id="ing-status"></span>
+      </div>
+      <fieldset><legend>Filtres</legend><div class="filters">
+        <label class="wide">Recherche<input id="iq" type="search" placeholder="crème, poulet…"></label>
+        <label>Site<select id="isite"></select></label>
+        <label>Présent dans au moins N recettes<input id="imin" type="number" min="1" value="1"></label>
+        <label>Décision<select id="idec"><option value="">Toutes</option><option value="none">Non traitées</option><option value="any">Traitées</option>
+          <option value="ok">Validées</option><option value="split">À découper</option><option value="ignore">Ignorées</option></select></label>
+        <label id="lbl-rayon">Rayon<select id="irayon"></select></label>
+        <label id="lbl-near">Particularité<select id="ispecial"><option value="">—</option><option value="near">A des clés proches (à regrouper ?)</option><option value="multi">Plusieurs écritures différentes</option><option value="short">Clé d'un seul mot court (≤ 3 lettres)</option></select></label>
+        <label>Tri<select id="isort"><option value="n">Plus fréquents</option><option value="a">Alphabétique</option><option value="v">Plus d'écritures</option></select></label>
+      </div></fieldset>
+      <div class="bar">
+        <button class="small" id="exp-json">Exporter (JSON)</button>
+        <button class="small ghost" id="exp-csv">Exporter (CSV)</button>
+        <label class="small ghost" style="display:inline-flex;cursor:pointer;border:1px solid var(--line);border-radius:8px;padding:6px 12px;flex-direction:row">Importer…<input id="imp" type="file" accept=".json" style="display:none"></label>
+        <button class="small ghost" id="clear-dec">Tout effacer</button>
+        <span class="muted" id="dec-count"></span>
+      </div>
+      <div id="icount"></div>
+      <div class="scroll"><table id="itable" class="ing"></table></div>
+      <div class="pager"><button class="small ghost" id="iprev">Précédent</button><span id="ipage"></span><button class="small ghost" id="inext">Suivant</button></div>
+    </div>
   </div>
 </main>
+<datalist id="dl-category"></datalist><datalist id="dl-produce"></datalist><datalist id="dl-keys"></datalist>
 
 <script>
 const COURSES = { PLAT: 'Plat', SOUPE: 'Soupe', SALADE: 'Salade', ENTREE: 'Entrée', ACCOMPAGNEMENT: 'Accompagnement', DESSERT: 'Dessert', APERITIF: 'Apéritif', BOISSON: 'Boisson', AUTRE: 'Autre' };
@@ -102,7 +204,7 @@ const MEALS = new Set(['PLAT', 'SOUPE', 'SALADE']);
 const PAGE = 60;
 
 const $ = id => document.getElementById(id);
-const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/œ/g, 'oe').replace(/æ/g, 'ae');
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const nb = n => n.toLocaleString('fr-FR');
 
@@ -181,6 +283,39 @@ async function load(files) {
   if (all.length) { $('app').classList.remove('hidden'); prepare(); apply(); }
 }
 
+/* ---------- Rapprochement ligne → ingrédient reconnu (approché) ---------- */
+
+// Même règle que ShoppingListMerger.key côté Kotlin : minuscules, sans accents, mots au singulier.
+function singular(w) {
+  if (w.length <= 3) return w;
+  if (w.endsWith('eaux')) return w.slice(0, -1);
+  if (w.endsWith('aux') && w.length > 4) return w.slice(0, -3) + 'al';
+  if (w.endsWith('s') && !w.endsWith('ss')) return w.slice(0, -1);
+  if (w.endsWith('x') && !w.endsWith('ix')) return w.slice(0, -1);
+  return w;
+}
+const wordsOf = s => norm(s).replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean).map(singular);
+// Retire la quantité et l'unité en tête (« 200 g de farine » → « farine ») pour regrouper les variantes d'écriture.
+const QTY = /^[\s\d.,\/½¼¾⅓⅔⅛\-–à]+(?:(?:kg|g|gr|mg|l|dl|cl|ml|c\.?\s?à\s?(?:soupe|café|s|c)\.?|cuill?[eè]res?(?:\s+à\s+(?:soupe|café))?|pinc[ée]es?|gousses?|tranches?|bo[iî]tes?|sachets?|brins?|feuilles?|pots?|bottes?|verres?|filets?|poign[ée]es?|paquets?|barquettes?|bouteilles?|unit[ée]s?|pi[eè]ces?)\b\.?)?\s*(?:de |d['’]|du |des )?/i;
+const variantOf = raw => { const v = raw.replace(QTY, '').trim().toLowerCase(); return v || raw.trim().toLowerCase(); };
+
+const keyWords = new Map(); // clé -> mots (cache)
+const wordsOfKey = k => { let w = keyWords.get(k); if (!w) keyWords.set(k, w = k.split(' ')); return w; };
+
+/** Pour chaque ligne de la recette : la clé reconnue (la plus longue dont tous les mots sont dans la ligne) ou null. */
+function matchLines(e) {
+  if (e._lines) return e._lines;
+  const keys = e.keys.slice().sort((a, b) => b.length - a.length);
+  e._lines = e.ingredients.map(raw => {
+    const w = new Set(wordsOf(raw));
+    const key = keys.find(k => wordsOfKey(k).every(x => w.has(x))) ?? null;
+    return { raw, variant: variantOf(raw), key };
+  });
+  e._unm = e._lines.filter(l => !l.key).length;
+  return e._lines;
+}
+const unmapped = e => { matchLines(e); return e._unm; };
+
 /* ---------- Filtres ---------- */
 
 function options(select, first, entries) {
@@ -188,16 +323,24 @@ function options(select, first, entries) {
   select.innerHTML = `<option value="">${first}</option>` + entries.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join('');
   select.value = keep;
 }
+const fill = (id, values) => { $(id).innerHTML = values.map(v => `<option value="${esc(v)}">`).join(''); };
 
 function prepare() {
   const sites = [...new Set(all.map(e => e.siteId))].sort();
   options($('site'), 'Tous', sites.map(s => [s, s]));
+  options($('isite'), 'Tous', sites.map(s => [s, s]));
   options($('course'), 'Tous', Object.entries(COURSES));
   options($('month'), 'Toute l\'année', MONTHS.map((m, i) => [i + 1, m]));
+  options($('irayon'), 'Tous', AISLES.map(r => [r, r]));
+  fill('dl-category', [...new Set(all.map(e => e.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr')));
+  fill('dl-produce', [...new Set(all.flatMap(e => e.produce))].sort());
+  const allKeys = new Set(); all.forEach(e => e.keys.forEach(k => allKeys.add(k)));
+  fill('dl-keys', [...allKeys].sort());
   // Titres en double sur un même site.
   const titles = new Map();
   all.forEach(e => { const k = e.siteId + '|' + norm(e.title); titles.set(k, (titles.get(k) ?? 0) + 1); });
-  all.forEach(e => { e.dup = titles.get(e.siteId + '|' + norm(e.title)) > 1; });
+  all.forEach(e => { e.dup = titles.get(e.siteId + '|' + norm(e.title)) > 1; e._lines = null; });
+  ing = null; // l'analyse des ingrédients sera refaite à l'ouverture de l'onglet
   stats(sites);
 }
 
@@ -209,26 +352,50 @@ function stats(sites) {
     const t = list.length, c = f => list.filter(f).length;
     return `<tr><td>${esc(name)}</td><td>${nb(t)}</td><td>${nb(c(e => MEALS.has(e.course)))}</td><td>${nb(c(e => e.course === 'DESSERT'))}</td>` +
       `<td>${pct(c(e => e.course === 'AUTRE'), t)}</td><td>${pct(c(e => e.rating != null), t)}</td><td>${nb(c(good))}</td>` +
-      `<td>${pct(c(e => e.imageUrl), t)}</td><td>${pct(c(e => e.minutes), t)}</td><td>${pct(c(e => e.months.length), t)}</td></tr>`;
+      `<td>${pct(c(e => e.imageUrl), t)}</td><td>${pct(c(e => e.minutes), t)}</td><td>${pct(c(e => e.months.length), t)}</td>` +
+      `<td>${pct(c(e => e.category), t)}</td><td>${pct(c(e => e.keys.length), t)}</td></tr>`;
   };
-  $('stats').innerHTML = '<tr><th>Site</th><th>Recettes</th><th>Repas</th><th>Desserts</th><th>Type « Autre »</th><th>Notées</th><th>Bien notées</th><th>Avec image</th><th>Avec temps</th><th>Avec saison</th></tr>' +
+  $('stats').innerHTML = '<tr><th>Site</th><th>Recettes</th><th>Repas</th><th>Desserts</th><th>Type « Autre »</th><th>Notées</th><th>Bien notées</th><th>Avec image</th><th>Avec temps</th><th>Avec saison</th><th>Avec catégorie</th><th>Avec ingrédient reconnu</th></tr>' +
     sites.map(s => row(s, all.filter(e => e.siteId === s))).join('') + (sites.length > 1 ? row('Total', all) : '');
 }
+
+const num = id => { const v = $(id).value; return v === '' ? null : +v; };
+const inRange = (v, min, max) => (min == null || (v != null && v >= min)) && (max == null || (v != null && v <= max));
+const tri = (v, flag) => v === '' || (v === '1') === !!flag;
 
 function apply() {
   const words = norm($('q').value).split(/\s+/).filter(Boolean);
   const site = $('site').value, course = $('course').value, kind = $('kind').value;
   const month = +$('month').value, rating = $('rating').value, time = $('time').value, check = $('check').value;
-  const meal = $('meal').checked, balanced = $('balanced').checked;
+  const meal = $('meal').value, balanced = $('balanced').value, image = $('image').value;
+  const cat = norm($('category').value.trim()), produce = norm($('produce').value.trim());
+  const withKey = norm($('withKey').value.trim()), withoutKey = norm($('withoutKey').value.trim());
+  const lastFrom = $('lastFrom').value, lastTo = $('lastTo').value;
+  const r = {
+    months: [num('monthsMin'), num('monthsMax')], votes: [num('votesMin'), num('votesMax')], total: [num('timeMin'), num('timeMax')],
+    prep: [num('prepMin'), num('prepMax')], cook: [num('cookMin'), num('cookMax')], serv: [num('servMin'), num('servMax')],
+    ing: [num('ingMin'), num('ingMax')], keys: [num('keysMin'), num('keysMax')], unm: [num('unmMin'), num('unmMax')],
+  };
+  const needUnm = r.unm[0] != null || r.unm[1] != null || check === 'unm' || $('sort').value === 'unm';
 
   shown = all.filter(e =>
     (!site || e.siteId === site) && (!course || e.course === course) && (!kind || e.kind === kind) &&
     (!month || e.months.includes(month)) &&
-    (!meal || MEALS.has(e.course)) && (!balanced || e.balanced) &&
+    tri(meal, MEALS.has(e.course)) && tri(balanced, e.balanced) && tri(image, e.imageUrl) &&
+    (!cat || norm(e.category ?? '').includes(cat)) &&
+    (!produce || e.produce.some(p => norm(p).includes(produce))) &&
+    (!withKey || e.keys.some(k => { const r = resolve(k); return r === withKey || r.includes(withKey) || k.includes(withKey); })) &&
+    (!withoutKey || !e.keys.some(k => { const r = resolve(k); return r === withoutKey || r.includes(withoutKey) || k.includes(withoutKey); })) &&
+    inRange(e.months.length, ...r.months) && inRange(e.ratingCount ?? 0, ...r.votes) && inRange(e.minutes, ...r.total) &&
+    inRange(e.prepMinutes, ...r.prep) && inRange(e.cookMinutes, ...r.cook) && inRange(e.servings, ...r.serv) &&
+    inRange(e.ingredients.length, ...r.ing) && inRange(e.keys.length, ...r.keys) &&
+    (!needUnm || inRange(unmapped(e), ...r.unm)) &&
+    (!lastFrom || (e.lastmod ?? '') >= lastFrom) && (!lastTo || (e.lastmod ?? '').slice(0, 10) <= lastTo) &&
     (!rating || (rating === 'good' ? good(e) : rating === 'none' ? e.rating == null : (e.rating ?? 0) >= +rating)) &&
     (!time || (time === 'none' ? !e.minutes : e.minutes && e.minutes <= +time)) &&
     (!check || (check === 'noimg' ? !e.imageUrl : check === 'autre' ? e.course === 'AUTRE' : check === 'nomonth' ? !e.months.length :
-      check === 'few' ? e.ingredients.length < 4 : check === 'nokeys' ? !e.keys.length : e.dup)) &&
+      check === 'nocat' ? !e.category : check === 'few' ? e.ingredients.length < 4 : check === 'nokeys' ? !e.keys.length :
+      check === 'unm' ? unmapped(e) > 0 : e.dup)) &&
     words.every(w => e.text.includes(w)));
 
   const by = {
@@ -237,6 +404,8 @@ function apply() {
     time: (a, b) => (a.minutes ?? 1e9) - (b.minutes ?? 1e9),
     title: (a, b) => a.title.localeCompare(b.title, 'fr'),
     recent: (a, b) => (b.lastmod ?? '').localeCompare(a.lastmod ?? ''),
+    ing: (a, b) => b.ingredients.length - a.ingredients.length,
+    unm: (a, b) => unmapped(b) - unmapped(a),
   }[$('sort').value];
   if (by) shown.sort(by);
   limit = PAGE;
@@ -248,19 +417,20 @@ function card(e) {
     `<span class="tag${e.course === 'AUTRE' ? ' warn' : ''}">${COURSES[e.course] ?? e.course}</span>`,
     `<span class="tag">${KINDS[e.kind] ?? e.kind}</span>`,
     e.balanced ? '<span class="tag">Assiette complète</span>' : '',
-    e.minutes ? `<span class="tag plain">${e.minutes} min</span>` : '<span class="tag warn">sans temps</span>',
+    e.minutes ? `<span class="tag plain">${e.minutes} min${e.prepMinutes != null || e.cookMinutes != null ? ` (prép. ${e.prepMinutes ?? '?'} · cuis. ${e.cookMinutes ?? '?'})` : ''}</span>` : '<span class="tag warn">sans temps</span>',
     e.rating != null ? `<span class="tag plain">★ ${String(e.rating).replace('.', ',')}${e.ratingCount ? ' (' + nb(e.ratingCount) + ')' : ''}</span>` : '<span class="tag warn">sans note</span>',
     `<span class="tag plain">${e.servings ?? 4} pers.</span>`,
   ].join('');
   const season = e.months.length === 12 ? 'toute l\'année' : e.months.length ? e.months.map(m => MONTHS[m - 1].slice(0, 4)).join(', ') : 'jamais (un produit est toujours hors saison)';
   const img = $('images').checked && e.imageUrl
     ? `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(e.imageUrl)}" alt="">` : '<div class="noimg"></div>';
+  const lines = matchLines(e).map(l => `<li><div class="line">${lineKey(l) ? `<span class="tag">${esc(lineKey(l))}</span>` : '<span class="tag warn">sans clé</span>'}<span>${esc(l.raw)}</span></div></li>`).join('');
   return `<div class="card">${img}<div class="body">
     <a href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">${esc(e.title)}</a>
     <div class="muted" style="font-size:12px">${esc(e.siteId)}${e.category ? ' · ' + esc(e.category) : ''}${e.lastmod ? ' · ' + esc(e.lastmod.slice(0, 10)) : ''}</div>
     <div class="tags">${tags}</div>
-    <details><summary>${e.ingredients.length} ingrédients · saison : ${esc(season)}</summary>
-      <ul>${e.ingredients.map(i => `<li>${esc(i)}</li>`).join('')}</ul>
+    <details><summary>${e.ingredients.length} lignes · ${e.keys.length} reconnus${e._unm ? ` · <b>${e._unm} sans clé</b>` : ''} · saison : ${esc(season)}</summary>
+      <ul>${lines}</ul>
       <div>Reconnus pour les courses : ${esc(e.keys.join(', ') || 'aucun')}</div>
       ${e.produce.length ? `<div>Produits de saison : ${esc(e.produce.join(', '))}</div>` : ''}
     </details></div></div>`;
@@ -272,14 +442,393 @@ function render() {
   $('more').classList.toggle('hidden', shown.length <= limit);
 }
 
+/* ---------- Vue ingrédients & mapping ---------- */
+
+/* Les trois fonctions suivantes reprennent la logique actuelle de l'application (FoodName.clean, CartPlanner.searchQuery, Aisle.of)
+   pour proposer le rayon et le terme de recherche « Auto ». */
+
+const keyOf = s => wordsOf(s).join(' ');
+const keyS = s => s.toLowerCase().normalize('NFD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+
+const F_LEADING = /^(?:quelques|quelque|un peu de|un peu d['’]|un|une|des|du|de la|de l['’]|de|d['’]|la|le|les|l['’]|morceaux?|brins?|branches?|tiges?|tranches?|gousses?|t[eê]tes?|feuilles?|bottes?|bouquets?|pinc[ée]es?|zestes?|jus|filets?|blancs?|pav[ée]s?|dés|cubes?|lamelles?|rondelles?|bo[iî]tes?|pots?|sachets?|poign[ée]es?|bols?|verres?|noisettes?|noix|cuill[eè]res?|cuiller[ée]es?|c\.? ?[àa] ?(?:soupe|caf[ée]|s|c)\.?|unit[ée]s?|pi[eè]ces?|petits?|petites?|gros|grosses?|beaux?|belles?)\s+/i;
+const F_QUAL = /(?<!\p{L})(?:fra[iî]ch(?:e|es)?|frais|bio|biologiques?|h[aâ]ch[ée]e?s?|[ée]minc[ée]e?s?|cisel[ée]e?s?|pel[ée]e?s?|[ée]pluch[ée]e?s?|[ée]goutt[ée]e?s?|finement|grossi[eè]rement|coup[ée]e?s?|en (?:d[ée]s|morceaux|rondelles|lamelles|cubes|tranches|julienne|quartiers|bâtonnets|batonnets|fines? tranches)|du moulin|de saison|[àa] temp[ée]rature ambiante|au go[uû]t|selon (?:le|votre) go[uû]t|facultatif)(?!\p{L})/giu;
+const F_PREP = /(?<!\p{L})(?:bien\s+)?(?:[ée]miett[ée]e?s?|r[âa]p[ée]e?s?|fondus?|mix[ée]e?s?|[ée]cras[ée]e?s?|concass[ée]e?s?|effil[ée]e?s?|torr[ée]fi[ée]e?s?|grill[ée]e?s?|d[ée]noyaut[ée]e?s?|[ée]p[ée]pin[ée]e?s?|[ée]gren[ée]e?s?|ramollie?s?|battue?s?|tamis[ée]e?s?|ti[èe]des?|froide?s?|chaude?s?|m[ûu]re?s?|moyens?|moyennes?|enti[èe]re?s?|tranch[ée]e?s?|par[ée]e?s?|d[ée]soss[ée]e?s?|d[ée]cortiqu[ée]e?s?|[ée]queut[ée]e?s?|lav[ée]e?s?|d[ée]congel[ée]e?s?|r[ée]hydrat[ée]e?s?|cuite?s? al dente|taill[ée]e?s?|pr[ée]cuite?s?|de taille moyenne|sans (?:peau|ar[êe]tes?|os|noyaux?|p[ée]pins?)|avec (?:la )?peau|non trait[ée]e?s?|[àa] (?:la|le) (?:d[ée]coration|d[ée]co)|environ|bien|tr[èe]s)(?!\p{L})/giu;
+const F_PRODUCTS = ['fromage rape', 'gruyere rape', 'emmental rape', 'comte rape', 'parmesan rape', 'mozzarella rapee', 'chocolat fondu', 'fromage fondu', 'puree',
+  'noix de coco rapee', 'amandes effilees', 'amande effilee', 'jambon cuit', 'pois casses', 'tomates concassees', 'tomate concassee', 'chair a saucisse'];
+
+function cleanFood(name) {
+  let s = name.replace(/\s*\([^)]*\)/g, ' ').split(',')[0].trim();
+  s = s.split(/\s+(?:pour|ou|\+|afin)\s+|\s*\+\s*|\s*\/\s*/i)[0].trim();
+  let prev;
+  do { prev = s; s = s.replace(F_LEADING, '').trim(); } while (s !== prev && s);
+  s = s.replace(F_QUAL, ' ');
+  if (!F_PRODUCTS.some(p => keyS(s).startsWith(p))) s = s.replace(F_PREP, ' ');
+  s = s.replace(/\s+(?:et|ou|de|d['’])\s*$/, '').replace(/\s+/g, ' ').trim().replace(/^[ ,.;-]+|[ ,.;-]+$/g, '');
+  return s || name.trim();
+}
+
+const isEgg = s => keyOf(s).split(' ').includes('oeuf');
+function searchQuery(name) {
+  let q = cleanFood(name).replace(/(?<!\p{L})(?:frais|fraîche|fraiches|fraîches|bio|émincé|émincée|haché|hachée|en dés|râpé|râpée)(?!\p{L})/giu, ' ').replace(/\s+/g, ' ').trim() || name;
+  return isEgg(q) ? 'oeufs x12' : q;
+}
+// Clé d'ingrédient : même règle que IngredientOverlap.key.
+const ingredientKey = name => keyOf(name).replace(/\b(bio|frais|fraiche|fraiches|gros|grosse|petit|petite|epaisse|liquide|entier|entiere)\b/g, ' ').replace(/\s+/g, ' ').trim();
+
+const AISLES = ['Fruits & légumes', 'Boulangerie', 'Boucherie', 'Poissonnerie', 'Crèmerie & œufs', 'Épicerie', 'Boissons', 'Hygiène & maison', 'Autres'];
+const AISLE_WORDS = [
+  ['Hygiène & maison', 'lessive|papier toilette|essuie tout|savon|shampo|dentifrice|eponge|liquide vaisselle|sac poubelle|couche|mouchoir|gel douche|deodorant'],
+  ['Boissons', 'jus|eau gazeuse|eau minerale|biere|vin|sirop|soda|cafe|the'],
+  ['Poissonnerie', 'saumon|cabillaud|colin|merlu|lieu|thon frais|sardine|maquereau|truite|dorade|crevette|moule|poisson|saint jacque'],
+  ['Boucherie', 'poulet|dinde|boeuf|veau|porc|agneau|canard|lapin|jambon|lardon|saucisse|viande|steak|escalope|magret|chorizo|bacon'],
+  ['Crèmerie & œufs', 'lait|creme|beurre|fromage|comte|parmesan|chevre|feta|mozzarella|ricotta|emmental|gruyere|yaourt|skyr|oeuf|mascarpone|reblochon|tofu'],
+  ['Boulangerie', 'pain|baguette|brioche|pate brisee|pate feuilletee|pate a pizza|tortilla|wrap'],
+  ['Fruits & légumes', 'carotte|courgette|poireau|chou|epinard|tomate|brocoli|haricot vert|poivron|aubergine|champignon|salade|laitue|potiron|potimarron|butternut|courge|navet|panais|betterave|fenouil|celeri|endive|blette|radis|concombre|artichaut|asperge|mache|roquette|pomme de terre|patate douce|oignon|echalote|ail|persil|coriandre|basilic|ciboulette|menthe|thym|romarin|gingembre|citron|orange|pomme|poire|banane|kiwi|fraise|framboise|raisin|clementine|avocat|mangue|abricot|peche|prune|cerise|melon|legume|fruit'],
+  ['Épicerie', 'lait de coco|riz|pate|spaghetti|farine|sucre|sel|poivre|huile|vinaigre|lentille|pois chiche|haricot|semoule|couscous|boulgour|quinoa|conserve|bouillon|epice|cumin|curry|paprika|moutarde|miel|chocolat|levure|noix|amande|noisette|olive|sauce|concentre|coulis|flocon|cereale|biscuit|confiture'],
+].map(([label, words]) => [label, words.split('|').map(w => ' ' + keyOf(w) + ' ')]);
+function aisleOf(name) {
+  const k = ' ' + keyOf(name) + ' ';
+  let best = null;
+  for (const [label, kws] of AISLE_WORDS) for (const w of kws) {
+    const pos = k.indexOf(w);
+    if (pos < 0) continue;
+    if (!best || pos < best.pos || (pos === best.pos && w.length > best.len)) best = { pos, len: w.length, label };
+  }
+  return best ? best.label : 'Autres';
+}
+
+const STATUS = [['', '—'], ['ok', 'Validé'], ['split', 'À découper'], ['ignore', 'Ignorer']];
+const LS = 'mes-courses-mapping-v2';
+const STOP = new Set(['de', 'du', 'des', 'la', 'le', 'les', 'au', 'aux', 'et', 'en', 'a', 'd', 'l']);
+let ing = null;            // { keys: Map, lines: Map, counts: Map }
+let mode = 'keys', ipage = 0;
+const IPAGE = 100;
+let dec = { merges: {}, keys: {}, lines: {} };  // regroupements (ancienne clé → clé gardée), réglages par clé, lignes sans clé
+try { const s = JSON.parse(localStorage.getItem(LS) || 'null'); if (s) dec = { merges: s.merges ?? {}, keys: s.keys ?? {}, lines: s.lines ?? {} }; } catch { /* rien d'enregistré */ }
+const nDec = () => Object.keys(dec.merges).length + Object.keys(dec.keys).length + Object.keys(dec.lines).length;
+const saveDec = () => { try { localStorage.setItem(LS, JSON.stringify(dec)); } catch { /* stockage indisponible */ } $('dec-count').textContent = nb(nDec()) + ' décision(s) enregistrée(s)'; };
+function resolve(k) { for (let i = 0; i < 50 && dec.merges[k]; i++) k = dec.merges[k]; return k; }
+const lineKey = l => l.key ? resolve(l.key) : (dec.lines[l.variant]?.key ? resolve(dec.lines[l.variant].key) : null);
+
+let analysing = null;
+const tick = () => new Promise(r => setTimeout(r));
+
+/** Agrège les lignes de toutes les recettes par clé. Fait par morceaux pour que la page reste réactive. */
+function analyse() {
+  if (ing) return Promise.resolve();
+  if (analysing) return analysing;
+  analysing = (async () => {
+    const keys = new Map(), lines = new Map(), counts = new Map();
+    const add = (bag, id, l, e) => {
+      let o = bag.get(id);
+      if (!o) bag.set(id, o = { id, n: 0, sites: new Map(), variants: new Map(), sample: e });
+      o.n++;
+      o.sites.set(e.siteId, (o.sites.get(e.siteId) ?? 0) + 1);
+      o.variants.set(l.variant, (o.variants.get(l.variant) ?? 0) + 1);
+    };
+    let t = performance.now();
+    for (let i = 0; i < all.length; i++) {
+      const e = all[i];
+      for (const l of matchLines(e)) {
+        counts.set(l.variant, (counts.get(l.variant) ?? 0) + 1);
+        const k = lineKey(l);
+        if (k) add(keys, k, l, e); else add(lines, l.variant, l, e);
+      }
+      if (performance.now() - t > 40) {
+        $('ing-status').textContent = `Analyse des ingrédients… ${Math.round(100 * i / all.length)} %`;
+        await tick(); t = performance.now();
+      }
+    }
+    ing = { keys, lines, counts, byWord: new Map(), byFirst: new Map() };
+    keys.forEach(indexKey);
+  })();
+  const done = analysing;
+  done.finally(() => { analysing = null; });
+  return done;
+}
+
+const nearWords = id => wordsOfKey(id).filter(w => !STOP.has(w));
+/** Index « mot → clés » : sert à trouver les clés proches sans comparer toutes les clés entre elles. */
+function indexKey(o) {
+  const w = nearWords(o.id);
+  w.forEach(x => (ing.byWord.get(x) ?? ing.byWord.set(x, []).get(x)).push(o.id));
+  if (w[0]) (ing.byFirst.get(w[0]) ?? ing.byFirst.set(w[0], []).get(w[0])).push(o.id);
+}
+
+/** Clés proches : l'une contient l'autre (« poulet » / « poulet rôti »), ou même premier mot (« crème fraîche » / « crème liquide »).
+ *  Calculé à la demande (lignes affichées) et gardé ; après un regroupement, les clés disparues sont remplacées par la clé gardée. */
+function nearOf(o) {
+  if (o._near) {
+    const seen = new Set([o.id]), out = [];
+    for (const n of o._near) { const k = resolve(n.k); if (!seen.has(k) && ing.keys.has(k)) { seen.add(k); out.push({ k, strong: n.strong }); } }
+    return o._near = out;
+  }
+  const ws = wordsOfKey(o.id), w = nearWords(o.id), strong = new Set(), weak = new Set(), pad = ' ' + o.id + ' ';
+  // Clés contenues dans celle-ci : on teste chaque groupe de mots consécutifs.
+  for (let i = 0; i < ws.length; i++) for (let j = i + 1; j <= ws.length; j++) {
+    const c = ws.slice(i, j).join(' ');
+    if (c !== o.id && ing.keys.has(c)) strong.add(c);
+  }
+  // Clés qui contiennent celle-ci : on part du mot le plus rare, pour ne comparer qu'une courte liste.
+  const rare = w.map(x => ing.byWord.get(x) ?? []).sort((x, y) => x.length - y.length)[0] ?? [];
+  rare.forEach(c => { if (c !== o.id && ing.keys.has(c) && (' ' + c + ' ').includes(pad)) strong.add(c); });
+  (ing.byFirst.get(w[0]) ?? []).forEach(c => { if (c !== o.id && ing.keys.has(c) && !strong.has(c)) weak.add(c); });
+  const byN = (a, b) => ing.keys.get(b).n - ing.keys.get(a).n;
+  return o._near = [...[...strong].sort(byN).map(k => ({ k, strong: true })), ...[...weak].sort(byN).map(k => ({ k, strong: false }))].slice(0, 12);
+}
+
+/** Ajoute les lignes de `from` à `to` (regroupement de deux clés, ou ligne sans clé qui reçoit une clé). */
+function fold(from, to) {
+  to.n += from.n;
+  from.sites.forEach((v, s) => to.sites.set(s, (to.sites.get(s) ?? 0) + v));
+  from.variants.forEach((v, x) => to.variants.set(x, (to.variants.get(x) ?? 0) + v));
+  to._auto = null; to._near = null;
+}
+
+function updateStatus() {
+  const total = [...ing.lines.values()].reduce((a, o) => a + o.n, 0), ok = [...ing.keys.values()].reduce((a, o) => a + o.n, 0);
+  $('ing-status').textContent = `${nb(ing.keys.size)} clés (${nb(ok)} lignes) · ${nb(ing.lines.size)} écritures sans clé (${nb(total)} lignes, ${Math.round(100 * total / Math.max(1, total + ok))} %)`;
+}
+
+async function showIngredients() {
+  if (!ing) $('ing-status').textContent = 'Analyse des ingrédients…';
+  await analyse();
+  updateStatus();
+  $('lbl-near').classList.toggle('hidden', mode !== 'keys');
+  $('lbl-rayon').classList.toggle('hidden', mode !== 'keys');
+  renderIng();
+}
+
+/** Après un changement qui défait un regroupement : recalcul complet, mais par morceaux. */
+function reanalyse() { ing = null; return showIngredients(); }
+
+/** Valeurs « Auto » reprises de l'application : nom nettoyé de l'écriture la plus fréquente, rayon et recherche drive. */
+function autoOf(o) {
+  if (o._auto) return o._auto;
+  const top = [...o.variants].sort((a, b) => b[1] - a[1])[0]?.[0] ?? o.id;
+  const name = cleanFood(top) || o.id;
+  return o._auto = { rayon: aisleOf(name), search: searchQuery(name) };
+}
+
+function filteredIng() {
+  const words = norm($('iq').value).split(/\s+/).filter(Boolean);
+  const site = $('isite').value, min = +$('imin').value || 1, filter = $('idec').value, rayon = $('irayon').value, special = mode === 'keys' ? $('ispecial').value : '';
+  const store = mode === 'keys' ? dec.keys : dec.lines;
+  const list = [...(mode === 'keys' ? ing.keys : ing.lines).values()].filter(o => {
+    const n = site ? (o.sites.get(site) ?? 0) : o.n;
+    if (n < min || (site && !n)) return false;
+    if (words.length && !words.every(w => norm(o.id + ' ' + [...o.variants.keys()].join(' ')).includes(w))) return false;
+    const status = store[o.id]?.status;
+    if (filter === 'none' ? status : filter === 'any' ? !status : filter ? status !== filter : false) return false;
+    if (mode === 'keys') {
+      if (rayon && (dec.keys[o.id]?.rayon || autoOf(o).rayon) !== rayon) return false;
+      if (special === 'near' && !nearOf(o).length) return false;
+      if (special === 'multi' && o.variants.size < 2) return false;
+      if (special === 'short' && !(o.id.length <= 3 && !o.id.includes(' '))) return false;
+    }
+    return true;
+  });
+  const by = { n: (a, b) => b.n - a.n, a: (a, b) => a.id.localeCompare(b.id, 'fr'), v: (a, b) => b.variants.size - a.variants.size || b.n - a.n }[$('isort').value];
+  return list.sort(by);
+}
+
+function renderIng() {
+  const list = filteredIng();
+  const pages = Math.max(1, Math.ceil(list.length / IPAGE));
+  ipage = Math.min(ipage, pages - 1);
+  $('icount').textContent = nb(list.length) + (mode === 'keys' ? ' clés' : ' écritures sans clé');
+  $('ipage').textContent = `Page ${ipage + 1} / ${pages}`;
+  $('iprev').disabled = ipage === 0; $('inext').disabled = ipage >= pages - 1;
+  const head = mode === 'keys'
+    ? '<tr><th>Clé</th><th>Recettes</th><th>Comment les sites l\'écrivent</th><th>Clés proches — coche celles à regrouper</th><th>Rayon</th><th>Terme de recherche drive</th><th>Statut</th></tr>'
+    : '<tr><th>Écriture sans clé (quantité retirée)</th><th>Lignes</th><th>Exemple</th><th>Clé à lui donner</th></tr>';
+  const rows = list.slice(ipage * IPAGE, (ipage + 1) * IPAGE).map(o => mode === 'keys' ? keyRow(o) : lineRow(o));
+  $('itable').innerHTML = head + rows.join('');
+}
+
+function keyRow(o) {
+  const d = dec.keys[o.id] ?? {}, a = autoOf(o);
+  const sites = [...o.sites].sort((x, y) => y[1] - x[1]).map(([s, n]) => `${esc(s)} ${nb(n)}`).join(' · ');
+  const variants = [...o.variants].sort((x, y) => y[1] - x[1]).slice(0, 8).map(([v, n]) => `${esc(v)} <span class="muted">×${nb(n)}</span>`).join('<br>') +
+    (o.variants.size > 8 ? `<br><span class="muted">… ${o.variants.size - 8} autres</span>` : '');
+  const merged = Object.keys(dec.merges).filter(f => resolve(f) === o.id).map(f => `<span class="chip done">${esc(f)} <a class="key" data-unmerge="${esc(f)}" title="Défaire ce regroupement">✕</a></span>`).join(' ');
+  const chips = nearOf(o).map(({ k, strong }) => `<label class="chip${strong ? '' : ' weak'}" title="${strong ? 'contient ou est contenue' : 'même premier mot'}"><input type="checkbox" data-near="${esc(k)}" data-n="${ing.keys.get(k).n}"> ${esc(k)} <span class="muted">${nb(ing.keys.get(k).n)}</span></label>`).join(' ');
+  const near = (chips || '<span class="muted">aucune</span>') +
+    `<div class="mergebar hidden"><span>Garder la clé</span> <select data-keep></select> <button class="small" data-merge type="button">Regrouper</button></div>` +
+    (merged ? `<div style="margin-top:4px">Déjà regroupées ici : ${merged}</div>` : '');
+  return `<tr class="${d.status ? 'done' : ''}" data-id="${esc(o.id)}" data-n="${o.n}">
+    <td><a class="key" data-goto-key="${esc(o.id)}" title="Voir les recettes">${esc(o.id)}</a></td>
+    <td class="n">${nb(o.n)}<div class="muted" style="font-size:11px;white-space:normal">${sites}</div></td>
+    <td>${variants}</td>
+    <td data-near-cell>${near}</td>
+    <td><select data-f="rayon"><option value="">Auto : ${esc(a.rayon)}</option>${AISLES.map(r => `<option${d.rayon === r ? ' selected' : ''}>${esc(r)}</option>`).join('')}</select></td>
+    <td><input type="text" data-f="search" placeholder="${esc(a.search)}" value="${esc(d.search ?? '')}"></td>
+    <td><select data-f="status">${STATUS.map(([v, l]) => `<option value="${v}"${(d.status ?? '') === v ? ' selected' : ''}>${l}</option>`).join('')}</select></td></tr>`;
+}
+
+function lineRow(o) {
+  const d = dec.lines[o.id] ?? {};
+  const proposal = ingredientKey(cleanFood(o.id));
+  const sites = [...o.sites].sort((x, y) => y[1] - x[1]).map(([s, n]) => `${esc(s)} ${nb(n)}`).join(' · ');
+  const control = d.status === 'ignore'
+    ? `<span class="muted">Ignorée (pas un ingrédient)</span> <button class="small ghost" data-undo-line type="button">Annuler</button>`
+    : `<input type="text" data-line-key list="dl-keys" value="${esc(proposal)}" placeholder="clé">
+       <span class="muted" data-line-hint></span>
+       <div style="margin-top:4px"><button class="small" data-assign type="button">Donner cette clé</button> <button class="small ghost" data-ignore-line type="button">Ce n'est pas un ingrédient</button></div>`;
+  return `<tr class="${d.status ? 'done' : ''}" data-line="${esc(o.id)}"><td>${esc(o.id)}</td><td class="n">${nb(o.n)}<div class="muted" style="font-size:11px;white-space:normal">${sites}</div></td>` +
+    `<td><a href="${esc(o.sample.url)}" target="_blank" rel="noopener noreferrer">${esc(o.sample.title)}</a></td><td>${control}</td></tr>`;
+}
+
+/** Cases cochées parmi les clés proches : affiche la barre « Regrouper » avec la clé la plus fréquente pré-sélectionnée. */
+function refreshMerge(cell) {
+  const tr = cell.closest('tr');
+  const picked = [...cell.querySelectorAll('[data-near]:checked')];
+  const bar = cell.querySelector('.mergebar');
+  bar.classList.toggle('hidden', !picked.length);
+  if (!picked.length) return;
+  const group = [{ k: tr.dataset.id, n: +tr.dataset.n }, ...picked.map(c => ({ k: c.dataset.near, n: +c.dataset.n }))];
+  const sel = bar.querySelector('[data-keep]'), keep = sel.value;
+  sel.innerHTML = group.map(g => `<option value="${esc(g.k)}">${esc(g.k)} (${nb(g.n)})</option>`).join('');
+  sel.value = group.some(g => g.k === keep) ? keep : group.reduce((a, b) => b.n > a.n ? b : a).k;
+  bar.querySelector('[data-merge]').textContent = `Regrouper ces ${group.length} clés`;
+}
+
+function mergeKeys(cell) {
+  const tr = cell.closest('tr');
+  const group = [tr.dataset.id, ...[...cell.querySelectorAll('[data-near]:checked')].map(c => c.dataset.near)];
+  const keep = cell.querySelector('[data-keep]').value, target = ing.keys.get(keep);
+  for (const k of group) {
+    if (k === keep) continue;
+    dec.merges[k] = keep;
+    for (const m of Object.keys(dec.merges)) if (dec.merges[m] === k) dec.merges[m] = keep; // aplatit les regroupements déjà faits
+    delete dec.keys[k];                                                                         // la clé gardée garde ses réglages
+    const from = ing.keys.get(k);
+    if (from) { fold(from, target); ing.keys.delete(k); }
+  }
+  saveDec(); updateStatus(); renderIng();
+}
+
+async function exportData() {
+  await analyse();
+  const keyN = k => ing.keys.get(k)?.n ?? 0;
+  return {
+    version: 2, exportedAt: new Date().toISOString(),
+    // Regroupements : toute ligne dont la clé est « from » reçoit la clé « to ».
+    merges: Object.keys(dec.merges).map(from => ({ from, to: resolve(from) })),
+    // Réglages par clé : seulement ce qui diffère du calcul automatique de l'application.
+    keys: Object.entries(dec.keys).filter(([, d]) => d.status || d.rayon || d.search)
+      .map(([key, d]) => ({ key, status: d.status || null, rayon: d.rayon || null, search: d.search || null, recipes: keyN(key) })).sort((a, b) => b.recipes - a.recipes),
+    // Lignes sans clé : clé à leur donner, ou « ignore » (pas un ingrédient).
+    lines: Object.entries(dec.lines).map(([text, d]) => ({ text, key: d.key ? resolve(d.key) : null, status: d.status || null, count: ing.counts.get(text) ?? 0 })).sort((a, b) => b.count - a.count),
+  };
+}
+function download(name, type, content) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content], { type })); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
 /* ---------- Événements ---------- */
 
 let timer;
 const later = () => { clearTimeout(timer); timer = setTimeout(apply, 200); };
-$('q').addEventListener('input', later);
-['site', 'course', 'kind', 'month', 'rating', 'time', 'check', 'sort', 'meal', 'balanced'].forEach(id => $(id).addEventListener('change', apply));
+const laterIng = () => { clearTimeout(timer); timer = setTimeout(() => { ipage = 0; renderIng(); }, 200); };
+const FILTERS = ['q', 'category', 'produce', 'withKey', 'withoutKey', 'monthsMin', 'monthsMax', 'votesMin', 'votesMax', 'timeMin', 'timeMax', 'prepMin', 'prepMax',
+  'cookMin', 'cookMax', 'servMin', 'servMax', 'ingMin', 'ingMax', 'keysMin', 'keysMax', 'unmMin', 'unmMax', 'lastFrom', 'lastTo'];
+FILTERS.forEach(id => $(id).addEventListener('input', later));
+['site', 'course', 'kind', 'month', 'rating', 'time', 'check', 'sort', 'meal', 'balanced', 'image'].forEach(id => $(id).addEventListener('change', apply));
+$('reset').addEventListener('click', () => {
+  FILTERS.forEach(id => { $(id).value = ''; });
+  ['site', 'course', 'kind', 'month', 'rating', 'time', 'check', 'sort', 'meal', 'balanced', 'image'].forEach(id => { $(id).value = ''; });
+  apply();
+});
 $('images').addEventListener('change', render);
 $('more').addEventListener('click', () => { limit += PAGE; render(); });
+
+function tab(name) {
+  $('view-recipes').classList.toggle('hidden', name !== 'recipes');
+  $('view-ingredients').classList.toggle('hidden', name !== 'ingredients');
+  $('tab-recipes').classList.toggle('on', name === 'recipes');
+  $('tab-ingredients').classList.toggle('on', name === 'ingredients');
+  if (name === 'ingredients') { $('ing-status').textContent = 'Analyse des ingrédients…'; setTimeout(showIngredients, 20); saveDec(); }
+}
+$('tab-recipes').addEventListener('click', () => tab('recipes'));
+$('tab-ingredients').addEventListener('click', () => tab('ingredients'));
+document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => {
+  mode = b.dataset.mode; ipage = 0;
+  $('mode-keys').classList.toggle('ghost', mode !== 'keys'); $('mode-lines').classList.toggle('ghost', mode !== 'lines');
+  showIngredients();
+}));
+['iq', 'imin'].forEach(id => $(id).addEventListener('input', laterIng));
+['isite', 'idec', 'irayon', 'ispecial', 'isort'].forEach(id => $(id).addEventListener('change', () => { ipage = 0; renderIng(); }));
+$('iprev').addEventListener('click', () => { ipage--; renderIng(); });
+$('inext').addEventListener('click', () => { ipage++; renderIng(); });
+
+$('itable').addEventListener('change', ev => {
+  const t = ev.target;
+  if (t.matches('[data-near]')) return refreshMerge(t.closest('[data-near-cell]'));
+  const tr = t.closest('tr[data-id]');
+  if (!tr || !t.dataset.f) return;
+  const d = dec.keys[tr.dataset.id] ?? (dec.keys[tr.dataset.id] = {});
+  d[t.dataset.f] = t.value.trim();
+  if (!Object.values(d).some(Boolean)) delete dec.keys[tr.dataset.id];
+  saveDec();
+  if (t.dataset.f === 'status') tr.classList.toggle('done', !!t.value);
+});
+$('itable').addEventListener('input', ev => {
+  const t = ev.target, tr = t.closest('tr[data-line]');
+  if (!tr || !t.matches('[data-line-key]')) return;
+  const k = ingredientKey(t.value);
+  tr.querySelector('[data-line-hint]').textContent = !k ? '' : ing.keys.has(resolve(k)) ? 'clé existante' : 'nouvelle clé';
+});
+$('itable').addEventListener('click', ev => {
+  const t = ev.target;
+  const go = t.closest('[data-goto-key]');
+  if (go) { $('withKey').value = go.dataset.gotoKey; tab('recipes'); apply(); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+  const un = t.closest('[data-unmerge]');
+  if (un) { delete dec.merges[un.dataset.unmerge]; saveDec(); reanalyse(); return; }
+  if (t.closest('[data-merge]')) return mergeKeys(t.closest('[data-near-cell]'));
+  const tr = t.closest('tr[data-line]');
+  if (!tr) return;
+  const line = tr.dataset.line;
+  if (t.closest('[data-assign]')) {
+    const k = ingredientKey(tr.querySelector('[data-line-key]').value);
+    if (!k) return;
+    dec.lines[line] = { key: k };
+    const from = ing.lines.get(line), rk = resolve(k);
+    let target = ing.keys.get(rk);
+    if (!target) { target = { id: rk, n: 0, sites: new Map(), variants: new Map(), sample: from.sample }; ing.keys.set(rk, target); indexKey(target); }
+    fold(from, target); ing.lines.delete(line);
+    saveDec(); updateStatus(); renderIng();
+  } else if (t.closest('[data-ignore-line]')) { dec.lines[line] = { status: 'ignore' }; saveDec(); renderIng(); }
+  else if (t.closest('[data-undo-line]')) { delete dec.lines[line]; saveDec(); renderIng(); }
+});
+// Au clavier : Entrée dans le champ de clé = « Donner cette clé ».
+$('itable').addEventListener('keydown', ev => { if (ev.key === 'Enter' && ev.target.matches('[data-line-key]')) ev.target.closest('tr').querySelector('[data-assign]').click(); });
+
+$('exp-json').addEventListener('click', async () => download('mapping-ingredients.json', 'application/json', JSON.stringify(await exportData(), null, 2)));
+$('exp-csv').addEventListener('click', async () => {
+  const x = await exportData(), q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  const rows = [
+    ...x.merges.map(m => ['regroupement', m.from, m.to, '', '', '', '']),
+    ...x.keys.map(k => ['clé', k.key, '', k.status, k.rayon, k.search, k.recipes]),
+    ...x.lines.map(l => ['ligne', l.text, l.key, l.status, '', '', l.count]),
+  ];
+  download('mapping-ingredients.csv', 'text/csv', '﻿' + ['type', 'texte', 'clé cible', 'statut', 'rayon', 'recherche drive', 'nombre'].join(';') + '\n' + rows.map(r => r.map(q).join(';')).join('\n'));
+});
+$('imp').addEventListener('change', async ev => {
+  try {
+    const data = JSON.parse(await ev.target.files[0].text());
+    if (data.version !== 2) throw new Error('format non reconnu (attendu : export de cette page, version 2)');
+    (data.merges ?? []).forEach(m => { dec.merges[m.from] = m.to; });
+    (data.keys ?? []).forEach(k => { dec.keys[k.key] = { status: k.status ?? '', rayon: k.rayon ?? '', search: k.search ?? '' }; });
+    (data.lines ?? []).forEach(l => { dec.lines[l.text] = { key: l.key ?? undefined, status: l.status ?? undefined }; });
+    saveDec(); reanalyse();
+  } catch (err) { alert('Fichier illisible : ' + err.message); }
+  ev.target.value = '';
+});
+$('clear-dec').addEventListener('click', () => { if (confirm('Effacer tous les regroupements et réglages enregistrés dans ce navigateur ?')) { dec = { merges: {}, keys: {}, lines: {} }; saveDec(); reanalyse(); } });
+
 $('file').addEventListener('change', e => load([...e.target.files]));
 const drop = $('drop');
 ['dragenter', 'dragover'].forEach(n => drop.addEventListener(n, e => { e.preventDefault(); drop.classList.add('over'); }));

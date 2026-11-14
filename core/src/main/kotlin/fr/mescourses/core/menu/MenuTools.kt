@@ -10,6 +10,7 @@ import fr.mescourses.core.agent.toolError
 import fr.mescourses.core.agent.toolOk
 import fr.mescourses.core.model.MenuDish
 import fr.mescourses.core.model.Portions
+import fr.mescourses.core.model.stripAccents
 import fr.mescourses.core.repository.MenuDraftRepository
 import fr.mescourses.core.repository.RecipeRepository
 import kotlinx.serialization.json.JsonElement
@@ -34,6 +35,14 @@ class MenuTools(
     private val maxChanges: Int? = null,
 ) {
     private var changes = 0
+
+    /** « type » demandé au modèle : entrée ou dessert ; tout le reste = plat principal (null). */
+    private fun courseOf(args: JsonObject): fr.mescourses.core.catalog.Course? =
+        when (args.str("type")?.lowercase()?.stripAccents()?.trim()) {
+            "entree", "entrees", "starter" -> fr.mescourses.core.catalog.Course.ENTREE
+            "dessert", "desserts" -> fr.mescourses.core.catalog.Course.DESSERT
+            else -> null
+        }
 
     /** Avec des candidates : le menu se compose par numéros ; sans (hors ligne) : le chef invente, comme avant. */
     /**
@@ -96,12 +105,13 @@ class MenuTools(
     /** Message de l'outil + bilan de mutualisation, pour que le modèle puisse s'améliorer. */
     private suspend fun withOverlap(message: String): JsonElement {
         val dishes = draft.get()
+        val mains = dishes.filter { it.isMain }
         val parts = listOfNotNull(
             message,
             IngredientOverlap.summary(IngredientOverlap.compute(dishes)).ifEmpty { null },
-            PlateBalance.menuSummary(dishes),
+            PlateBalance.menuSummary(mains),
             // Menu bâti sur de vraies recettes : on peut vérifier la saison et la composition demandée.
-            if (pool.size > 0) MenuInsights.of(dishes, today().month).summary(dishes.size, wishes()).ifEmpty { null } else null,
+            if (pool.size > 0) MenuInsights.of(mains, today().month).summary(mains.size, wishes()).ifEmpty { null } else null,
         )
         return toolOk(parts.joinToString(" ") { if (it.endsWith(".")) it else "$it." })
     }
@@ -137,7 +147,8 @@ class MenuTools(
             val sameTitle = picked.any { fr.mescourses.core.shopping.ShoppingListMerger.key(it.recipe.title) == fr.mescourses.core.shopping.ShoppingListMerger.key(c.recipe.title) }
             if (sameForm || sameTitle) refused += c.recipe.title else picked += c
         }
-        draft.set(picked.map { it.toDish(defaultPortions()) })
+        // Les entrées et desserts déjà choisis restent au menu.
+        draft.set(picked.map { it.toDish(defaultPortions()) } + draft.get().filter { !it.isMain })
         val unknown = numbers.distinct().filter { pool.get(it) == null }
         return withOverlap(
             "Menu de ${picked.size} plats enregistré" +
@@ -164,18 +175,21 @@ class MenuTools(
         val (i, dishes) = numbered(args)
         val c = candidate(args) ?: return@tool noCandidate()
         if (alreadyThere(c, dishes, except = i)) return@tool duplicate(c)
-        draft.set(dishes.toMutableList().also { it[i] = c.toDish(dishes[i].portions) })
+        draft.set(dishes.toMutableList().also { it[i] = c.toDish(dishes[i].portions, dishes[i].course) })
         withOverlap("Plat ${i + 1} remplacé par « ${c.recipe.title} »")
     }
 
     val pickDish = tool(
         "add_dish",
-        "Ajoute une recette candidate au menu.",
-        params { integer("candidat", "Numéro de la recette candidate à ajouter") },
+        "Ajoute une recette candidate au menu, comme plat, entrée ou dessert (paramètre « type »).",
+        params {
+            integer("candidat", "Numéro de la recette candidate à ajouter")
+            string("type", "entree, plat ou dessert (plat par défaut)", required = false)
+        },
     ) { args ->
         val c = candidate(args) ?: return@tool noCandidate()
         if (alreadyThere(c, draft.get())) return@tool duplicate(c)
-        val dishes = draft.get() + c.toDish(defaultPortions())
+        val dishes = draft.get() + c.toDish(defaultPortions(), courseOf(args))
         draft.set(dishes)
         withOverlap("« ${c.recipe.title} » ajouté (plat ${dishes.size})")
     }
@@ -201,6 +215,7 @@ class MenuTools(
             string("description", "Courte description", required = false)
             stringArray("ingredients", "Ingrédients principaux, de saison (réutilise ceux des autres plats si possible)", required = false)
             integer("numero", "Numéro du plat à remplacer (à partir de 1)", required = false)
+            string("type", "entree, plat ou dessert (plat par défaut)", required = false)
         },
     ) { args ->
         val title = args.str("titre") ?: return@tool toolError("titre manquant")
@@ -209,7 +224,7 @@ class MenuTools(
         val new = dish(index(), title, args.str("description").orEmpty(), at?.let { dishes[it].portions } ?: defaultPortions(), args.strList("ingredients"))
             ?.let { if (it.recipeId == null) it.copy(invented = true) else it }
             ?: return@tool bannedError(title)
-        draft.set(if (at != null) dishes.toMutableList().also { it[at] = new } else dishes + new)
+        draft.set(if (at != null) dishes.toMutableList().also { it[at] = new.copy(course = dishes[at].course) } else dishes + new.copy(course = courseOf(args)))
         withOverlap(if (at != null) "Plat ${at + 1} remplacé par la recette inventée « ${new.title} »" else "Recette inventée « ${new.title} » ajoutée (plat ${dishes.size + 1})")
     }
 
@@ -258,23 +273,24 @@ class MenuTools(
         val title = args.str("titre") ?: return@tool toolError("titre manquant")
         val new = dish(index(), title, args.str("description").orEmpty(), dishes[i].portions, args.strList("ingredients"))
             ?: return@tool bannedError(title)
-        draft.set(dishes.toMutableList().also { it[i] = new })
+        draft.set(dishes.toMutableList().also { it[i] = new.copy(course = dishes[i].course) })
         withOverlap("Plat ${i + 1} remplacé par « ${new.title} »")
     }
 
     val addDish = tool(
         "add_dish",
-        "Ajoute un plat au menu.",
+        "Ajoute un plat, une entrée ou un dessert au menu (paramètre « type »).",
         params {
             string("titre", "Titre du plat")
             string("description", "Courte description", required = false)
             stringArray("ingredients", "Ingrédients principaux (réutilise ceux des autres plats si possible)", required = false)
+            string("type", "entree, plat ou dessert (plat par défaut)", required = false)
         },
     ) { args ->
         val title = args.str("titre") ?: return@tool toolError("titre manquant")
         val new = dish(index(), title, args.str("description").orEmpty(), defaultPortions(), args.strList("ingredients"))
             ?: return@tool bannedError(title)
-        val dishes = draft.get() + new
+        val dishes = draft.get() + new.copy(course = courseOf(args))
         draft.set(dishes)
         withOverlap("« ${new.title} » ajouté (plat ${dishes.size})")
     }

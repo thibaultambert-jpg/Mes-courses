@@ -98,7 +98,7 @@ class AuchanClient(
     private suspend fun rawCart(): AuchanCart {
         val body = api("GET", { AuchanRoutes.cartMine(it.consentId!!) }).body
         val cart = AuchanParsers.parseCart(body) ?: throw CarrefourException.Http(200, who)
-        cart.store?.let(onStore)
+        AuchanParsers.storeLabel(cart)?.let(onStore)
         return cart
     }
 
@@ -186,7 +186,7 @@ class AuchanClient(
             })
         }.toString()
         val response = api("POST", { AuchanRoutes.cartItems(cartId, it.consentId!!) }, body)
-        return AuchanParsers.parseCart(response.body)?.takeIf { it.id != null }?.also { c -> c.store?.let(onStore) }?.toCart(names(), images()) ?: cart()
+        return AuchanParsers.parseCart(response.body)?.takeIf { it.id != null }?.also { c -> AuchanParsers.storeLabel(c)?.let(onStore) }?.toCart(names(), images()) ?: cart()
     }
 
     /** Les créneaux Auchan ne sont pas encore relevés : ils se choisissent sur le site. */

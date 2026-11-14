@@ -16,8 +16,10 @@ android {
         applicationId = "fr.mescourses.app"
         minSdk = 31
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // La CI passe le numéro de build (-PversionCode) : l'appli s'en sert pour savoir si une mise à jour existe.
+        val build = providers.gradleProperty("versionCode").orNull?.toIntOrNull() ?: 1
+        versionCode = build
+        versionName = "0.3.$build"
         // LiteRT-LM ne fournit que des bibliothèques natives 64 bits ; le Magic 5 Pro est en arm64.
         ndk { abiFilters += listOf("arm64-v8a") }
     }

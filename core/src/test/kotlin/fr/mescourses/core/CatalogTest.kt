@@ -193,4 +193,28 @@ class CatalogTest {
         assertEquals(1, updater.update().added)
         assertEquals("Soupe de courge et carottes", store.byUrl("https://www.cuisineaz.com/recettes/neuf-9.aspx")?.title)
     }
+
+    @Test fun mise_a_jour_ignore_les_sites_non_telecharges() = kotlinx.coroutines.test.runTest {
+        val source = fr.mescourses.core.catalog.CatalogSource("cuisineaz", listOf("https://x.fr/s.xml"), null, Regex("""cuisineaz\.com/recettes/[^/]+-\d+\.aspx$"""))
+        val fetched = mutableListOf<String>()
+        val updater = fr.mescourses.core.catalog.CatalogUpdater(InMemoryCatalog(emptyList()), { url -> fetched += url; "<urlset></urlset>" }, listOf(source)) { 0L }
+        // Base de ce site non téléchargée : aucune requête vers le site.
+        updater.update(only = setOf("marmiton"))
+        assertTrue(fetched.isEmpty())
+        updater.update(only = setOf("cuisineaz"))
+        assertEquals(listOf("https://x.fr/s.xml"), fetched)
+    }
+
+    /** Le sitemap Picnic mêle les langues et date toutes les adresses de sa génération : on ne garde que le français, sans date. */
+    @Test fun picnic_garde_les_fiches_francaises_sans_date() = kotlinx.coroutines.test.runTest {
+        val source = assertNotNull(fr.mescourses.core.catalog.CatalogSources.byId("picnic"))
+        val xml = """<urlset>
+            <url><loc>https://picnic.app/fr/recettes/</loc><lastmod>2026-11-12T19:11:32.424Z</lastmod></url>
+            <url><loc>https://picnic.app/fr/recettes/67f5341b94bb9a40e1a07be1/pia-colada</loc><lastmod>2026-11-12T19:11:32.449Z</lastmod></url>
+            <url><loc>https://picnic.app/nl/recepten/67f5341b94bb9a40e1a07be1/pina-colada</loc><lastmod>2026-11-12T19:11:32.449Z</lastmod></url>
+            <url><loc>https://picnic.app/de/rezepte/67f5341b94bb9a40e1a07be1/pina-colada</loc><lastmod>2026-11-12T19:11:32.449Z</lastmod></url></urlset>"""
+        val pages = fr.mescourses.core.catalog.SiteCrawler { xml }.pages(source)
+        assertEquals(listOf("https://picnic.app/fr/recettes/67f5341b94bb9a40e1a07be1/pia-colada"), pages.map { it.url })
+        assertNull(pages.single().lastmod)
+    }
 }

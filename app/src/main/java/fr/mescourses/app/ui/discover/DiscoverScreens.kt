@@ -17,6 +17,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -133,6 +134,7 @@ fun DiscoverContent(
     snackbar: SnackbarHostState,
     onOpenPreview: (String) -> Unit,
     onBrowse: (String) -> Unit,
+    onOpenCatalog: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val vm = containerViewModel { DiscoverViewModel(it) }
@@ -324,16 +326,17 @@ fun DiscoverContent(
     }
     }
 
-    if (showFilters) FiltersSheet(vm, onDismiss = { showFilters = false })
+    if (showFilters) FiltersSheet(vm, onDismiss = { showFilters = false }, onOpenCatalog = onOpenCatalog)
 }
 
 /** Feuille « Filtres » : groupes de filtres, sites et tri ; « Voir les recettes » lance la recherche. */
 @Composable
-private fun FiltersSheet(vm: DiscoverViewModel, onDismiss: () -> Unit) {
+private fun FiltersSheet(vm: DiscoverViewModel, onDismiss: () -> Unit, onOpenCatalog: () -> Unit) {
     val filters by vm.filters.collectAsStateWithLifecycle()
     val sites by vm.sites.collectAsStateWithLifecycle()
     val sort by vm.sort.collectAsStateWithLifecycle()
     val counts by vm.catalogCounts.collectAsStateWithLifecycle()
+    val catalog by vm.catalogStatus.collectAsStateWithLifecycle()
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
@@ -364,7 +367,19 @@ private fun FiltersSheet(vm: DiscoverViewModel, onDismiss: () -> Unit) {
                 FilterChip(selected = sites.isEmpty(), onClick = { vm.allSites() }, label = { Text("Tous") })
                 vm.allSitesList.forEach { site ->
                     val n = counts[site.id]
-                    FilterChip(
+                    // Base de ce site pas encore téléchargée : puce grisée, non sélectionnable ; un toucher ouvre l'écran de choix.
+                    if (catalog.loaded && vm.hasCatalog(site.id) && site.id !in catalog.installed) {
+                        FilterChip(
+                            selected = false,
+                            onClick = { onDismiss(); onOpenCatalog() },
+                            label = { Text("${site.name} ⬇") },
+                            colors = FilterChipDefaults.filterChipColors(
+                                labelColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                                containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                            ),
+                            modifier = Modifier.alpha(0.7f),
+                        )
+                    } else FilterChip(
                         selected = site.id in sites,
                         onClick = { vm.toggleSite(site.id) },
                         label = { Text(if (n != null && n > 0) "${site.name} · $n" else site.name) },
@@ -372,7 +387,7 @@ private fun FiltersSheet(vm: DiscoverViewModel, onDismiss: () -> Unit) {
                 }
             }
             Text(
-                "Le nombre indique les recettes déjà dans le catalogue du téléphone.",
+                "Le nombre indique les recettes déjà dans le catalogue du téléphone. Un site grisé n'est pas téléchargé : touche-le pour choisir les bases à télécharger.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -539,7 +554,7 @@ fun RecipePreviewScreen(url: String, onBack: () -> Unit, onOpenRecipe: (Long) ->
                 offline = offline,
                 portions = portions,
                 childFactor = vm.childFactor(),
-                onPortions = { vm.portions.value = it },
+                onPortions = { vm.setPortions(it) },
                 modifier = Modifier.padding(padding),
                 onMenu = { vm.addToMenu(s.recipe) },
                 onList = { vm.addToList(s.recipe) },
@@ -566,7 +581,7 @@ private fun PreviewBody(r: Recipe, siteName: String, offline: Boolean, portions:
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 r.prepMinutes?.let { StatChip("🔪 $it min") }
                 r.cookMinutes?.let { StatChip("🔥 $it min") }
-                StatChip("👥 ${r.servings} pers.")
+                fr.mescourses.app.ui.components.ServingsChip("👥 ${r.servings} pers.", r.servings, portions)
                 StatChip("🧺 ${r.ingredients.size} ingrédients")
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
