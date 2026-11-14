@@ -25,4 +25,5 @@ dependencies {
 
 application {
     mainClass.set("fr.mescourses.tools.catalog.MainKt")
+    applicationDefaultJvmArgs = listOf("-Xmx6g")
 }

@@ -1,0 +1,1073 @@
+{
+  "version": 2,
+  "exportedAt": "2026-11-14T00:00:00Z",
+  "merges": [
+    {
+      "from": "d ail",
+      "to": "ail"
+    },
+    {
+      "from": "d oeuf",
+      "to": "oeuf"
+    },
+    {
+      "from": "amande en poudre",
+      "to": "poudre d amande"
+    },
+    {
+      "from": "oignon jaune",
+      "to": "oignon"
+    },
+    {
+      "from": "d orange",
+      "to": "orange"
+    },
+    {
+      "from": "salade en sachet",
+      "to": "salade"
+    },
+    {
+      "from": "boule de mozzarella",
+      "to": "mozzarella"
+    },
+    {
+      "from": "cm gingembre",
+      "to": "gingembre"
+    },
+    {
+      "from": "d un citron",
+      "to": "citron"
+    },
+    {
+      "from": "cm de gingembre",
+      "to": "gingembre"
+    },
+    {
+      "from": "creme legere",
+      "to": "creme allegee"
+    },
+    {
+      "from": "escalope de dinde",
+      "to": "filet de dinde"
+    },
+    {
+      "from": "pomme de terre a chair ferme",
+      "to": "pomme de terre"
+    },
+    {
+      "from": "paquet creme",
+      "to": "creme"
+    },
+    {
+      "from": "paquet chair de tomate",
+      "to": "chair de tomate"
+    },
+    {
+      "from": "d un demi citron",
+      "to": "citron"
+    },
+    {
+      "from": "parmesan fraichement",
+      "to": "parmesan"
+    },
+    {
+      "from": "d 1 citron",
+      "to": "citron"
+    },
+    {
+      "from": "chocolat noir a patisser",
+      "to": "chocolat noir patissier"
+    },
+    {
+      "from": "citron presse",
+      "to": "citron"
+    },
+    {
+      "from": "d un citron vert",
+      "to": "citron vert"
+    },
+    {
+      "from": "mie de pain",
+      "to": "pain de mie"
+    },
+    {
+      "from": "paquet lait de coco",
+      "to": "lait de coco"
+    },
+    {
+      "from": "c vin blanc sec",
+      "to": "vin blanc sec"
+    },
+    {
+      "from": "paquet fromage a la grecque",
+      "to": "fromage a la grecque"
+    },
+    {
+      "from": "goutte de jus de citron",
+      "to": "citron"
+    },
+    {
+      "from": "paquet lardon fume",
+      "to": "lardon fume"
+    },
+    {
+      "from": "chocolat noir 70",
+      "to": "chocolat noir a 70"
+    },
+    {
+      "from": "pomme de terre a chair farineuse",
+      "to": "pomme de terre"
+    },
+    {
+      "from": "a the de vanille",
+      "to": "extrait de vanille"
+    },
+    {
+      "from": "c vin blanc",
+      "to": "vin blanc"
+    },
+    {
+      "from": "pomme de terre a puree",
+      "to": "pomme de terre"
+    },
+    {
+      "from": "goutte d extrait de vanille",
+      "to": "extrait de vanille"
+    },
+    {
+      "from": "parmesan en copeau",
+      "to": "copeau de parmesan"
+    },
+    {
+      "from": "peu de persil",
+      "to": "persil"
+    },
+    {
+      "from": "oeuf legerement",
+      "to": "oeuf"
+    },
+    {
+      "from": "puree de pomme de terre",
+      "to": "puree"
+    },
+    {
+      "from": "oeuf extra",
+      "to": "oeuf"
+    },
+    {
+      "from": "paquet chair a saucisse",
+      "to": "chair a saucisse"
+    },
+    {
+      "from": "chocolat noir a 70 de cacao",
+      "to": "chocolat noir a 70"
+    },
+    {
+      "from": "glace a la vanille",
+      "to": "glace vanille"
+    },
+    {
+      "from": "bou basilic",
+      "to": "basilic"
+    },
+    {
+      "from": "essence de vanille",
+      "to": "extrait de vanille"
+    },
+    {
+      "from": "paquet tomate semi sechee",
+      "to": "tomate sechee"
+    },
+    {
+      "from": "cm de racine de gingembre",
+      "to": "gingembre"
+    },
+    {
+      "from": "bou coriandre",
+      "to": "coriandre"
+    },
+    {
+      "from": "cacao non sucre en poudre",
+      "to": "cacao en poudre non sucre"
+    },
+    {
+      "from": "paquet des de filet de dinde",
+      "to": "filet de dinde"
+    },
+    {
+      "from": "bou persil",
+      "to": "persil"
+    },
+    {
+      "from": "pate feuilletee toute prete",
+      "to": "pate feuilletee prete a derouler"
+    },
+    {
+      "from": "bou ciboulette",
+      "to": "ciboulette"
+    },
+    {
+      "from": "c basilic",
+      "to": "basilic"
+    },
+    {
+      "from": "d 1 citron vert",
+      "to": "citron vert"
+    },
+    {
+      "from": "d un demi citron vert",
+      "to": "citron vert"
+    },
+    {
+      "from": "2 citron vert",
+      "to": "citron vert"
+    },
+    {
+      "from": "racine de gingembre",
+      "to": "gingembre"
+    },
+    {
+      "from": "a the de gingembre",
+      "to": "gingembre"
+    },
+    {
+      "from": "pate feuilletee prete a l emploi",
+      "to": "pate feuilletee prete a derouler"
+    },
+    {
+      "from": "dizaine de feuille de basilic",
+      "to": "basilic"
+    },
+    {
+      "from": "peu de ciboulette",
+      "to": "ciboulette"
+    },
+    {
+      "from": "pouce de gingembre",
+      "to": "gingembre"
+    },
+    {
+      "from": "bou menthe",
+      "to": "menthe"
+    },
+    {
+      "from": "peu de parmesan",
+      "to": "parmesan"
+    },
+    {
+      "from": "fromage parmesan",
+      "to": "parmesan"
+    },
+    {
+      "from": "yaourt nature brasse",
+      "to": "yaourt brasse nature"
+    },
+    {
+      "from": "peu de coriandre",
+      "to": "coriandre"
+    },
+    {
+      "from": "oignon 1",
+      "to": "oignon"
+    },
+    {
+      "from": "peu de vin blanc",
+      "to": "vin blanc"
+    },
+    {
+      "from": "grappe tomate",
+      "to": "tomate grappe"
+    },
+    {
+      "from": "chocolat patissier noir",
+      "to": "chocolat noir patissier"
+    },
+    {
+      "from": "oignon jeune",
+      "to": "jeune oignon"
+    },
+    {
+      "from": "1 citron vert",
+      "to": "citron vert"
+    },
+    {
+      "from": "2 oeuf",
+      "to": "oeuf"
+    },
+    {
+      "from": "1 oignon",
+      "to": "oignon"
+    },
+    {
+      "from": "mie de pain rassi",
+      "to": "pain de mie rassi"
+    },
+    {
+      "from": "dizaine de feuille de menthe",
+      "to": "menthe"
+    },
+    {
+      "from": "eclat d ail",
+      "to": "ail"
+    },
+    {
+      "from": "a soupe de mascarpone",
+      "to": "mascarpone"
+    },
+    {
+      "from": "paquet lardon",
+      "to": "lardon"
+    },
+    {
+      "from": "oeuf 2",
+      "to": "oeuf"
+    },
+    {
+      "from": "de champignon de pari",
+      "to": "champignon de pari"
+    },
+    {
+      "from": "jaune d oeuf extra",
+      "to": "jaune d oeuf"
+    },
+    {
+      "from": "l ciboulette",
+      "to": "ciboulette"
+    },
+    {
+      "from": "oeuf 1",
+      "to": "1 oeuf"
+    },
+    {
+      "from": "noix hachee grossierement",
+      "to": "noix grossierement hachee"
+    },
+    {
+      "from": "raisin blond sec",
+      "to": "raisin sec blond"
+    },
+    {
+      "from": "lardon fume allumette",
+      "to": "lardon allumette fume"
+    },
+    {
+      "from": "thon en boite au naturel",
+      "to": "thon au naturel en boite"
+    },
+    {
+      "from": "salade de jeune pousse",
+      "to": "jeune pousse de salade"
+    },
+    {
+      "from": "champignon de pari en conserve",
+      "to": "champignon de pari en boite"
+    },
+    {
+      "from": "citron 1",
+      "to": "1 citron"
+    },
+    {
+      "from": "mesclun de salade",
+      "to": "salade de mesclun"
+    },
+    {
+      "from": "semoule fine de ble",
+      "to": "semoule de ble fine"
+    },
+    {
+      "from": "yaourt nature veloute",
+      "to": "yaourt veloute nature"
+    },
+    {
+      "from": "chevre buche",
+      "to": "buche chevre"
+    },
+    {
+      "from": "semoule fine de ble dur",
+      "to": "semoule de ble dur fine"
+    },
+    {
+      "from": "cacao en poudre amer",
+      "to": "cacao amer en poudre"
+    },
+    {
+      "from": "2 cm de gingembre",
+      "to": "gingembre de 2 cm"
+    },
+    {
+      "from": "tortilla chip",
+      "to": "chip tortilla"
+    },
+    {
+      "from": "creme de 20 cl",
+      "to": "20 cl de creme"
+    },
+    {
+      "from": "noisette hachee grossierement",
+      "to": "noisette grossierement hachee"
+    },
+    {
+      "from": "vin de bourgogne rouge",
+      "to": "vin rouge de bourgogne"
+    },
+    {
+      "from": "epinard surgele en branche",
+      "to": "epinard en branche surgele"
+    },
+    {
+      "from": "creme semi legere",
+      "to": "creme legere semi"
+    },
+    {
+      "from": "chocolat patissier au lait",
+      "to": "chocolat au lait patissier"
+    },
+    {
+      "from": "biscuit digestive",
+      "to": "digestive biscuit"
+    },
+    {
+      "from": "fine escalope de veau",
+      "to": "escalope de veau fine"
+    },
+    {
+      "from": "fromage nature a tartiner",
+      "to": "fromage a tartiner nature"
+    },
+    {
+      "from": "jaune d oeuf 1",
+      "to": "1 jaune d oeuf"
+    },
+    {
+      "from": "epinard surgele a la creme",
+      "to": "epinard a la creme surgele"
+    },
+    {
+      "from": "noisette concassee grossierement",
+      "to": "noisette grossierement concassee"
+    },
+    {
+      "from": "yaourt a la grecque nature",
+      "to": "yaourt nature a la grecque"
+    },
+    {
+      "from": "melange fruit de mer",
+      "to": "fruit de mer melange"
+    },
+    {
+      "from": "oignon 2",
+      "to": "2 oignon"
+    },
+    {
+      "from": "boule celeri",
+      "to": "celeri boule"
+    },
+    {
+      "from": "2 g de gelatine",
+      "to": "gelatine de 2 g"
+    },
+    {
+      "from": "rond riz",
+      "to": "riz rond"
+    },
+    {
+      "from": "fromage carre",
+      "to": "carre fromage"
+    },
+    {
+      "from": "foie gra cru de canard",
+      "to": "foie gra de canard cru"
+    },
+    {
+      "from": "oignon nouveau rouge",
+      "to": "oignon rouge nouveau"
+    },
+    {
+      "from": "oeuf 3",
+      "to": "3 oeuf"
+    },
+    {
+      "from": "tomate cerise grappe",
+      "to": "grappe tomate cerise"
+    },
+    {
+      "from": "concentre tomate",
+      "to": "tomate concentre"
+    },
+    {
+      "from": "mini smartie",
+      "to": "smartie mini"
+    },
+    {
+      "from": "poitrine de lard fume",
+      "to": "lard de poitrine fume"
+    },
+    {
+      "from": "gro oignon",
+      "to": "oignon gro"
+    },
+    {
+      "from": "escalope de poulet fine",
+      "to": "escalope fine de poulet"
+    },
+    {
+      "from": "mie de pain trempee dan du lait",
+      "to": "pain de mie trempee dan du lait"
+    },
+    {
+      "from": "amande poudre",
+      "to": "poudre amande"
+    },
+    {
+      "from": "tomate de",
+      "to": "de tomate"
+    },
+    {
+      "from": "riz a long grain",
+      "to": "riz a grain long"
+    },
+    {
+      "from": "champignon brun de pari",
+      "to": "champignon de pari brun"
+    },
+    {
+      "from": "d ani etoile",
+      "to": "etoile d ani"
+    },
+    {
+      "from": "poivron rouge pointu",
+      "to": "poivron pointu rouge"
+    },
+    {
+      "from": "fromage de chevre buche",
+      "to": "buche fromage de chevre"
+    },
+    {
+      "from": "carotte jeune",
+      "to": "jeune carotte"
+    },
+    {
+      "from": "herbe fine",
+      "to": "fine herbe"
+    },
+    {
+      "from": "poivron de differente couleur",
+      "to": "poivron de couleur differente"
+    },
+    {
+      "from": "escalope fine de dinde",
+      "to": "escalope de dinde fine"
+    },
+    {
+      "from": "fine escalope de dinde",
+      "to": "escalope de dinde fine"
+    },
+    {
+      "from": "courgette de",
+      "to": "de courgette"
+    },
+    {
+      "from": "thon en conserve au naturel",
+      "to": "thon au naturel en conserve"
+    },
+    {
+      "from": "chocolat de couverture blanc",
+      "to": "chocolat blanc de couverture"
+    },
+    {
+      "from": "lard fume maigre",
+      "to": "lard maigre fume"
+    },
+    {
+      "from": "d huile d olive vierge extra",
+      "to": "d huile d olive extra vierge"
+    },
+    {
+      "from": "chocolat de couverture noir",
+      "to": "chocolat noir de couverture"
+    },
+    {
+      "from": "chocolat patissier blanc",
+      "to": "chocolat blanc patissier"
+    },
+    {
+      "from": "extrait de vanille pur",
+      "to": "extrait pur de vanille"
+    },
+    {
+      "from": "carotte 1",
+      "to": "1 carotte"
+    },
+    {
+      "from": "creme a cuisson 15",
+      "to": "creme 15 a cuisson"
+    },
+    {
+      "from": "gousse d ail",
+      "to": "ail"
+    },
+    {
+      "from": "paquet riz",
+      "to": "riz"
+    },
+    {
+      "from": "paquet pomme de terre",
+      "to": "pomme de terre"
+    },
+    {
+      "from": "paquet champignon",
+      "to": "champignon"
+    }
+  ],
+  "keys": [
+    {
+      "key": "champignon de pari",
+      "status": "ok",
+      "rayon": "FRUITS_LEGUMES",
+      "search": "champignons de Paris"
+    },
+    {
+      "key": "lait de coco",
+      "status": "ok",
+      "rayon": "EPICERIE",
+      "search": "lait de coco"
+    },
+    {
+      "key": "creme de coco",
+      "status": "ok",
+      "rayon": "EPICERIE",
+      "search": "crème de coco"
+    },
+    {
+      "key": "pate feuilletee",
+      "status": "ok",
+      "rayon": "CREMERIE",
+      "search": "pâte feuilletée"
+    },
+    {
+      "key": "pate brisee",
+      "status": "ok",
+      "rayon": "CREMERIE",
+      "search": "pâte brisée"
+    },
+    {
+      "key": "poudre d amande",
+      "status": "ok",
+      "rayon": "EPICERIE",
+      "search": "poudre d'amandes"
+    },
+    {
+      "key": "vin blanc sec",
+      "status": "ok",
+      "rayon": "BOISSONS",
+      "search": "vin blanc sec cuisine"
+    }
+  ],
+  "lines": [
+    {
+      "text": "2",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "0",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "l",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "25 ml",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "200 g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "300 g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "225 g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "4 verre",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "500",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "75",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "t",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "5",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "20 cl",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "8",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "70",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "80g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "7",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "60 g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "6",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "280 g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "500 g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "quart",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "b",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "250g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "125 g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "demi",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "10",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "a",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "750 g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "une",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "c",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "d",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "120g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "1",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "p",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "150 g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "100 g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "450",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "280",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "quatre",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "3",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "250 g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "580 ml",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "9",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "540 ml",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "60 ml",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "400g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "1 kg",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "8 g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "4",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "400 g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "20 g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "2 ml",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "1 verre",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "250 ml",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "15 cl",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "2 dl",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "480g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "398 ml",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "demie",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "e",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "12",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "150 ml",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "6 verre",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "60",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "300",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "250",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "20",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "800g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "40",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "f",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "100",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "30",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "1 l",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "1608",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "1 boite",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "un",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "15",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "800 g",
+      "key": null,
+      "status": "ignore"
+    },
+    {
+      "text": "25g",
+      "key": null,
+      "status": "ignore"
+    }
+  ]
+}

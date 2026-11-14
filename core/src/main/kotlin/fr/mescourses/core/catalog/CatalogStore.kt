@@ -29,6 +29,11 @@ data class CatalogQuery(
      * dépend de ce nombre (le menu varie d'une semaine à l'autre).
      */
     val seed: Int? = null,
+    /**
+     * Vecteur sémantique de la saisie (INT8, voir [TextEmbedder.embedQuery]) pour la recherche hybride ; null :
+     * recherche par mots seulement.
+     */
+    val vector: ByteArray? = null,
 ) {
     fun matches(e: CatalogEntry): Boolean {
         val tokens = e.searchText.split(' ')

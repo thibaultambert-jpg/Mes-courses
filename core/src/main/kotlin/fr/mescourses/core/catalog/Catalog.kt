@@ -93,6 +93,13 @@ data class CatalogEntry(
     val balanced: Boolean = false,
     /** Clés des ingrédients à acheter (hors placard), comme dans le menu. */
     val keys: List<String> = emptyList(),
+    /** Repères nutritionnels (léger, riche en fibres…) ; vide tant qu'ils ne sont pas calculés. */
+    val nutritionTags: Set<NutritionTag> = emptySet(),
+    /**
+     * Vecteur sémantique de la fiche (256 dimensions, INT8) encodé en Base64, rempli par la CI ; null si absent.
+     * Conservé tel quel par [recompute].
+     */
+    val embedding: String? = null,
 ) {
     val id: String get() = RecipeSites.normalize(url)
 
@@ -109,26 +116,69 @@ data class CatalogEntry(
     companion object {
         fun of(details: RecipeJsonLdExtractor.Details, siteId: String, url: String, lastmod: String? = null): CatalogEntry {
             val r = details.recipe
-            val names = r.ingredients.map { it.name }
-            val texts = listOf(r.title) + names
-            // Saison : les fruits et légumes de la recette doivent tous se trouver ce mois-là.
-            val months = Month.entries.filter { m -> Seasonality.report(texts, m).outOfSeason.isEmpty() }.map { it.value }
-            val produce = Month.entries.flatMap { Seasonality.report(texts, it).seasonal }.distinct()
+            val c = computed(r.title, r.ingredients.map { it.name }, r.ingredients.map { it.raw }, details.categories)
             return CatalogEntry(
                 url = url, siteId = siteId, title = r.title, imageUrl = r.imageUrl,
                 ingredients = r.ingredients.map { it.raw },
                 servings = r.servings, prepMinutes = r.prepMinutes, cookMinutes = r.cookMinutes, totalMinutes = details.totalMinutes,
                 rating = details.rating?.let { Math.round(it * 10) / 10.0 }, ratingCount = details.ratingCount,
                 category = details.categories.firstOrNull(), lastmod = lastmod,
-                course = Course.of(details.categories, r.title, names),
-                kind = DishKinds.of(r.title, names),
-                months = months, produce = produce,
-                balanced = PlateBalance.missing(texts).isEmpty(),
-                keys = names.map { FoodName.clean(it) }.filter { it.isNotBlank() && !Pantry.isStaple(it) }
-                    .map(IngredientOverlap::key).filter { it.isNotEmpty() }.distinct(),
+                course = c.course, kind = c.kind, months = c.months, produce = c.produce, balanced = c.balanced,
+                keys = c.keys, nutritionTags = c.nutritionTags,
             )
         }
     }
+}
+
+/**
+ * Recalcule les champs calculés (type, viande/poisson/végé, saison, équilibre, clés, repères nutritionnels) depuis
+ * le titre, les lignes d'ingrédients et la catégorie de la fiche ; garde tout le reste, y compris [CatalogEntry.embedding].
+ * Sert après un changement des règles de calcul (mapping des ingrédients…), sans relire les sites.
+ *
+ * Donne le même résultat que [CatalogEntry.of] pour une fiche à une seule catégorie. Si le site en donnait plusieurs,
+ * seule la première est gardée dans [CatalogEntry.category] : le type de plat ([Course]) peut alors différer quand
+ * une catégorie suivante le décidait.
+ */
+fun CatalogEntry.recompute(): CatalogEntry {
+    val c = computed(title, IngredientParser.parseAll(ingredients).map { it.name }, ingredients, listOfNotNull(category))
+    return copy(
+        course = c.course, kind = c.kind, months = c.months, produce = c.produce, balanced = c.balanced,
+        keys = c.keys, nutritionTags = c.nutritionTags,
+    )
+}
+
+/**
+ * Clés des ingrédients à acheter (hors placard) d'une recette : point d'édition unique du calcul des clés.
+ * [raws] (lignes telles qu'écrites) est réservé au mapping des ingrédients et n'est pas encore utilisé.
+ */
+fun keysOf(names: List<String>, raws: List<String>): List<String> =
+    names.map { FoodName.clean(it) }.filter { it.isNotBlank() && !Pantry.isStaple(it) }
+        .map(IngredientOverlap::key).filter { it.isNotEmpty() }.distinct()
+
+/** Champs calculés d'une fiche du catalogue. */
+private class Computed(
+    val course: Course,
+    val kind: DishKind,
+    val months: List<Int>,
+    val produce: List<String>,
+    val balanced: Boolean,
+    val keys: List<String>,
+    val nutritionTags: Set<NutritionTag>,
+)
+
+private fun computed(title: String, names: List<String>, raws: List<String>, categories: List<String>): Computed {
+    val texts = listOf(title) + names
+    // Saison : les fruits et légumes de la recette doivent tous se trouver ce mois-là.
+    val months = Month.entries.filter { m -> Seasonality.report(texts, m).outOfSeason.isEmpty() }.map { it.value }
+    val produce = Month.entries.flatMap { Seasonality.report(texts, it).seasonal }.distinct()
+    return Computed(
+        course = Course.of(categories, title, names),
+        kind = DishKinds.of(title, names),
+        months = months, produce = produce,
+        balanced = PlateBalance.missing(texts).isEmpty(),
+        keys = keysOf(names, raws),
+        nutritionTags = emptySet(),
+    )
 }
 
 /**

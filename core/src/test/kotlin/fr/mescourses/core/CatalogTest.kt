@@ -4,6 +4,7 @@ import fr.mescourses.core.catalog.CatalogEntry
 import fr.mescourses.core.catalog.CatalogPolicy
 import fr.mescourses.core.catalog.Course
 import fr.mescourses.core.catalog.Sitemap
+import fr.mescourses.core.catalog.recompute
 import fr.mescourses.core.catalog.toHit
 import fr.mescourses.core.menu.DishKind
 import fr.mescourses.core.recipes.RecipeJsonLdExtractor
@@ -16,6 +17,8 @@ import kotlin.test.assertTrue
 
 /** Catalogue local de recettes : lecture des sitemaps et des fiches, tri de ce qu'on garde. */
 class CatalogTest {
+
+    private val lenientJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
 
     private fun page(title: String, category: String?, rating: String?, vararg ingredients: String) = """<html><head>
         <script type="application/ld+json">{"@context":"https://schema.org","@type":"Recipe","name":"$title",
@@ -216,5 +219,23 @@ class CatalogTest {
         val pages = fr.mescourses.core.catalog.SiteCrawler { xml }.pages(source)
         assertEquals(listOf("https://picnic.app/fr/recettes/67f5341b94bb9a40e1a07be1/pia-colada"), pages.map { it.url })
         assertNull(pages.single().lastmod)
+    }
+
+    @Test fun recompute_redonne_les_memes_champs_calcules() {
+        val e = entry("Gratin de poireaux au jambon", "Plat principal", "4.26", "4 poireaux", "4 tranches de jambon", "50 cl de lait", "500 g de pommes de terre", "1 pincée de sel")
+        val blank = e.copy(course = Course.AUTRE, kind = DishKind.VEGE, months = emptyList(), produce = emptyList(), balanced = false, keys = emptyList(), embedding = "AAEC")
+        val r = blank.recompute()
+        assertEquals(e.copy(embedding = "AAEC"), r)
+        assertEquals("AAEC", r.embedding)
+    }
+
+    @Test fun fiche_ancienne_sans_embedding_se_lit() {
+        val old = """{"url":"https://www.cuisineaz.com/recettes/x-1.aspx","siteId":"cuisineaz","title":"Velouté de potimarron",
+            "ingredients":["1 potimarron","1 oignon"],"course":"SOUPE","kind":"VEGE","keys":["potimarron","oignon"]}"""
+        val e = lenientJson.decodeFromString(CatalogEntry.serializer(), old)
+        assertNull(e.embedding)
+        assertTrue(e.nutritionTags.isEmpty())
+        assertEquals(Course.SOUPE, e.course)
+        assertEquals(listOf("potimarron", "oignon"), e.keys)
     }
 }
