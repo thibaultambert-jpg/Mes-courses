@@ -134,28 +134,33 @@ object CatalogRanking {
         val siteIds = query.sites.ifEmpty { store.countBySite().keys }
         if (siteIds.isEmpty()) return emptyList()
         val perSite = maxOf(MIN_PER_SITE, query.limit / siteIds.size)
-        // Tirage avec des mots cherchés : on lit plus large, pour ne pas manquer les recettes qui les ont dans leur titre.
-        val read = if (seed != null && query.words.isNotEmpty()) perSite * 3 else perSite
+        // Tirage avec des mots cherchés, ou recherche par vecteur : on lit plus large, pour ne pas manquer les recettes
+        // qui ont les mots dans leur titre.
+        val read = if ((seed != null && query.words.isNotEmpty()) || query.vector != null) perSite * 3 else perSite
         val lists = siteIds.sorted().map { id -> store.search(query.copy(sites = setOf(id), limit = read, seed = seed)) }
-        return rank(lists, query.words, seed?.let { kotlin.random.Random(it) }, perSite).take(query.limit)
+        val random = seed?.let { kotlin.random.Random(it) }
+        return rank(lists, query.words, random, perSite, keepOrder = random != null || query.vector != null).take(query.limit)
     }
 
     /**
      * Alterne les listes (une par site) rang par rang ; à rang égal, la mieux notée d'abord.
      * Avec [random], l'ordre reçu de chaque site est gardé (c'est déjà un tirage) et, à rang égal, le hasard décide.
+     * [keepOrder] (vrai avec [random] ou une recherche par vecteur) : l'ordre reçu de chaque site est gardé (tirage ou
+     * proximité sémantique) ; seules les recettes qui ont tous les mots dans leur titre remontent en tête.
      */
     fun rank(
         lists: List<List<CatalogEntry>>,
         words: List<String> = emptyList(),
         random: kotlin.random.Random? = null,
         perSite: Int = Int.MAX_VALUE,
+        keepOrder: Boolean = random != null,
     ): List<CatalogEntry> {
         class Ranked(val entry: CatalogEntry, val inTitle: Boolean, val score: Double) { var rank = 0 }
         return lists.flatMap { list ->
             list.map {
                 val score = random?.nextDouble() ?: RecipeRating.score(it.rating, it.ratingCount)
                 Ranked(it, words.isNotEmpty() && inTitle(it.title, words), score)
-            }.let { if (random == null) it.sortedWith(compareByDescending<Ranked> { r -> r.inTitle }.thenByDescending { r -> r.score }) else it.sortedByDescending { r -> r.inTitle } }
+            }.let { if (!keepOrder) it.sortedWith(compareByDescending<Ranked> { r -> r.inTitle }.thenByDescending { r -> r.score }) else it.sortedByDescending { r -> r.inTitle } }
                 .take(perSite)
                 .onEachIndexed { i, r -> r.rank = i }
         }.sortedWith(compareByDescending<Ranked> { it.inTitle }.thenBy { it.rank }.thenByDescending { it.score })

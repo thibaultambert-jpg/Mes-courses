@@ -74,14 +74,24 @@ class InMemoryCatalog(entries: List<fr.mescourses.core.catalog.CatalogEntry> = e
 
     override suspend fun count() = entries.size
     override suspend fun countBySite() = entries.values.groupingBy { it.siteId }.eachCount()
-    override suspend fun search(query: fr.mescourses.core.catalog.CatalogQuery) = entries.values.filter(query::matches)
-        .sortedWith(
-            if (query.seed == null) compareByDescending<fr.mescourses.core.catalog.CatalogEntry> {
-                fr.mescourses.core.recipes.RecipeRating.score(it.rating, it.ratingCount)
-            }.thenByDescending { it.ratingCount ?: 0 }
-            else compareByDescending<fr.mescourses.core.catalog.CatalogEntry> { fr.mescourses.core.catalog.CatalogPolicy.wellRated(it) }
-                .thenByDescending { e -> (e.url.hashCode() * query.seed) % 1000 },
-        ).take(query.limit)
+    override suspend fun search(query: fr.mescourses.core.catalog.CatalogQuery): List<fr.mescourses.core.catalog.CatalogEntry> {
+        val vector = query.vector
+        // Recherche par vecteur : force brute sur les fiches qui ont un vecteur lisible, après les filtres.
+        if (vector != null) return entries.values.filter(query::matches)
+            .mapNotNull { e ->
+                e.embedding?.let(fr.mescourses.core.catalog.Int8Vectors::decode)
+                    ?.let { e to fr.mescourses.core.catalog.Int8Vectors.dot(it, 0, vector) }
+            }
+            .sortedByDescending { it.second }.take(query.limit).map { it.first }
+        return entries.values.filter(query::matches)
+            .sortedWith(
+                if (query.seed == null) compareByDescending<fr.mescourses.core.catalog.CatalogEntry> {
+                    fr.mescourses.core.recipes.RecipeRating.score(it.rating, it.ratingCount)
+                }.thenByDescending { it.ratingCount ?: 0 }
+                else compareByDescending<fr.mescourses.core.catalog.CatalogEntry> { fr.mescourses.core.catalog.CatalogPolicy.wellRated(it) }
+                    .thenByDescending { e -> (e.url.hashCode() * query.seed) % 1000 },
+            ).take(query.limit)
+    }
     override suspend fun byUrl(url: String) = entries[url]
     override suspend fun upsert(entries: List<fr.mescourses.core.catalog.CatalogEntry>) { entries.forEach { this.entries[it.url] = it } }
     override suspend fun known(siteId: String): Map<String, String?> =
