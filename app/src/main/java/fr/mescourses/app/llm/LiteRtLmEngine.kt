@@ -8,10 +8,15 @@ import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.OpenApiTool
+import com.google.ai.edge.litertlm.ResponseFormat
 import com.google.ai.edge.litertlm.SamplerConfig
+import com.google.ai.edge.litertlm.ThinkingConfig
 import com.google.ai.edge.litertlm.tool
 import fr.mescourses.core.agent.AgentTool
+import fr.mescourses.core.llm.Msg
+import fr.mescourses.core.llm.MsgRole
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -34,41 +39,71 @@ class LiteRtLmEngine(private val context: Context) : LlmEngine {
 
     private var engine: Engine? = null
     private var conversation: Conversation? = null
+    private var loadedMaxTokens: Int? = null
 
     /** Événements d'outils émis pendant la génération en cours. */
     @Volatile private var toolEvents: Channel<ChatEvent>? = null
 
     override fun isLoaded() = engine != null
 
-    override suspend fun load(modelPath: String, preferGpu: Boolean): String = withContext(Dispatchers.Default) {
+    override suspend fun load(modelPath: String, preferGpu: Boolean, maxTokens: Int?): String = withContext(Dispatchers.Default) {
         close()
-        val candidates = buildList {
+        val sizes = listOfNotNull(maxTokens, DEFAULT_MAX_TOKENS).distinct()
+        val backends = buildList {
             if (preferGpu) add("GPU" to Backend.GPU())
             add("CPU" to Backend.CPU())
         }
         var lastError: Throwable? = null
-        for ((label, backend) in candidates) {
-            try {
-                val e = Engine(EngineConfig(modelPath = modelPath, backend = backend, cacheDir = context.cacheDir.path))
-                e.initialize()
-                engine = e
-                return@withContext label
-            } catch (t: Throwable) {
-                Log.w(TAG, "Échec du chargement en $label", t)
-                lastError = t
+        for (n in sizes) {
+            for ((label, backend) in backends) {
+                try {
+                    val e = Engine(
+                        EngineConfig(
+                            modelPath = modelPath,
+                            backend = backend,
+                            maxNumTokens = n,
+                            cacheDir = context.cacheDir.path,
+                        ),
+                    )
+                    e.initialize()
+                    engine = e
+                    loadedMaxTokens = n
+                    Log.i(TAG, "Modèle chargé en $label avec maxNumTokens=$n")
+                    return@withContext label
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Échec du chargement en $label avec maxNumTokens=$n", t)
+                    lastError = t
+                }
             }
         }
         throw IllegalStateException("Impossible de charger le modèle : ${lastError?.message}", lastError)
     }
 
-    override fun newConversation(systemPrompt: String, tools: List<AgentTool>) {
+    override fun maxTokens(): Int = loadedMaxTokens ?: DEFAULT_MAX_TOKENS
+
+    override fun newConversation(
+        systemPrompt: String,
+        tools: List<AgentTool>,
+        initial: List<Msg>,
+        prefill: Boolean,
+        maxOutputTokens: Int?,
+    ) {
         val e = engine ?: error("Modèle non chargé")
         conversation?.close()
         conversation = e.createConversation(
             ConversationConfig(
                 systemInstruction = Contents.of(systemPrompt),
+                initialMessages = initial.map {
+                    when (it.role) {
+                        MsgRole.USER -> Message.user(it.text)
+                        MsgRole.ASSISTANT -> Message.model(it.text)
+                    }
+                },
                 tools = tools.map { tool(ToolAdapter(it)) },
                 samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.7),
+                prefillPrefaceOnInit = prefill,
+                maxOutputToken = maxOutputTokens,
+                thinkingConfig = ThinkingConfig(enableThinking = false),
             ),
         )
     }
@@ -89,7 +124,18 @@ class LiteRtLmEngine(private val context: Context) : LlmEngine {
 
     override fun hasConversation() = conversation != null
 
-    override suspend fun generateOnce(systemPrompt: String, prompt: String): String = withContext(Dispatchers.Default) {
+    override fun tokenCount(): Int? = runCatching { conversation?.getTokenCount() }.getOrNull()
+
+    override fun cancel() {
+        runCatching { conversation?.cancelProcess() }
+    }
+
+    override suspend fun generateOnce(
+        systemPrompt: String,
+        prompt: String,
+        jsonSchema: String?,
+        maxOutputTokens: Int?,
+    ): String = withContext(Dispatchers.Default) {
         val e = engine ?: error("Modèle non chargé")
         runCatching { conversation?.close() }
         conversation = null
@@ -97,11 +143,16 @@ class LiteRtLmEngine(private val context: Context) : LlmEngine {
             ConversationConfig(
                 systemInstruction = Contents.of(systemPrompt),
                 samplerConfig = SamplerConfig(topK = 20, topP = 0.9, temperature = 0.4),
+                maxOutputToken = maxOutputTokens,
+                thinkingConfig = ThinkingConfig(enableThinking = false),
+                enableResponseFormat = jsonSchema != null,
             ),
         )
         try {
             val out = StringBuilder()
-            temp.sendMessageAsync(prompt).collect { out.append(it.toString()) }
+            // ResponseFormat.json(schéma) = Type.JSON_OBJECT contraint par le schéma (0.18.1 n'a pas de JSON_SCHEMA).
+            val format = jsonSchema?.let { ResponseFormat.json(it) }
+            temp.sendMessageAsync(prompt, responseFormat = format).collect { out.append(it.toString()) }
             out.toString()
         } finally {
             temp.close()
@@ -113,6 +164,7 @@ class LiteRtLmEngine(private val context: Context) : LlmEngine {
         runCatching { engine?.close() }
         conversation = null
         engine = null
+        loadedMaxTokens = null
     }
 
     /** Adapte un outil métier au format OpenAPI attendu par LiteRT-LM. */
@@ -128,12 +180,14 @@ class LiteRtLmEngine(private val context: Context) : LlmEngine {
             val obj = result as? JsonObject
             val ok = obj?.get("ok")?.jsonPrimitive?.content != "false"
             val summary = (obj?.get("message") ?: obj?.get("erreur"))?.jsonPrimitive?.content.orEmpty()
-            toolEvents?.trySend(ChatEvent.ToolResult(agentTool.name, ok, summary))
-            return result.toString()
+            val text = result.toString()
+            toolEvents?.trySend(ChatEvent.ToolResult(agentTool.name, ok, summary, size = text.length))
+            return text
         }
     }
 
     private companion object {
         const val TAG = "LiteRtLmEngine"
+        const val DEFAULT_MAX_TOKENS = 4096
     }
 }
