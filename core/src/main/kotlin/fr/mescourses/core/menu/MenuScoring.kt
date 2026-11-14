@@ -1,6 +1,10 @@
 package fr.mescourses.core.menu
 
+import fr.mescourses.core.catalog.Course
+import fr.mescourses.core.catalog.NutritionTag
+import fr.mescourses.core.catalog.NutritionTags
 import fr.mescourses.core.ingredients.FoodName
+import fr.mescourses.core.ingredients.PairingGraph
 import fr.mescourses.core.model.MenuDish
 import fr.mescourses.core.model.Recipe
 import fr.mescourses.core.recipes.RecipeFilter
@@ -64,9 +68,10 @@ object DishForms {
 data class Chosen(
     val keys: Set<String>, val kind: DishKind, val protein: String?, val fromCookbook: Boolean,
     val form: String? = null, val site: String? = null,
+    val tags: Set<NutritionTag> = emptySet(),
 ) {
     companion object {
-        fun of(c: Candidate) = Chosen(c.keys, c.kind, c.protein, c.fromCookbook, c.form, c.siteName)
+        fun of(c: Candidate) = Chosen(c.keys, c.kind, c.protein, c.fromCookbook, c.form, c.siteName, c.tags)
 
         fun of(d: MenuDish) = Chosen(
             keys = d.mainIngredients.map(IngredientOverlap::key).filter { it.isNotEmpty() }.toSet(),
@@ -75,6 +80,12 @@ data class Chosen(
             fromCookbook = d.recipeId != null,
             form = DishForms.of(d.title),
             site = d.sourceUrl?.let { fr.mescourses.core.recipes.RecipeSites.forUrl(it)?.name },
+            tags = NutritionTags.of(
+                d.title,
+                d.mainIngredients,
+                d.course ?: Course.of(emptyList(), d.title, d.mainIngredients).takeIf { it != Course.AUTRE } ?: Course.PLAT,
+                d.totalMinutes,
+            ),
         )
     }
 }
@@ -87,7 +98,7 @@ data class Chosen(
 object MenuComposer {
 
     /** Points d'une candidate, compte tenu des plats déjà retenus. */
-    fun score(c: Candidate, chosen: List<Chosen>, wishes: MenuWishes): Double {
+    fun score(c: Candidate, chosen: List<Chosen>, wishes: MenuWishes, pairings: PairingGraph = PairingGraph.EMPTY): Double {
         var s = c.base
         val counts = chosen.groupingBy { it.kind }.eachCount()
         val slotsLeft = wishes.meals - chosen.size
@@ -133,6 +144,13 @@ object MenuComposer {
         // Dosage classiques / découvertes.
         val target = (wishes.meals * wishes.novelty.cookbookShare).roundToInt()
         if (c.fromCookbook) s += if (chosen.count { it.fromCookbook } < target) 5 else -5
+        // Accords d'ingrédients et équilibre nutritionnel du menu.
+        val chosenKeys = chosen.flatMapTo(HashSet()) { it.keys }
+        s += 3.0 * pairings.affinityScore(c.keys + chosenKeys)
+        val comfortCount = chosen.count { NutritionTag.COMFORT in it.tags }
+        if (NutritionTag.COMFORT in c.tags && comfortCount >= 1) s -= 3.0 * comfortCount
+        if (NutritionTag.LIGHT in c.tags && comfortCount >= 1) s += 2.0
+        if (NutritionTag.OMEGA3 in c.tags && chosen.none { NutritionTag.OMEGA3 in it.tags || it.kind == DishKind.POISSON }) s += 2.0
         return s
     }
 
@@ -143,12 +161,18 @@ object MenuComposer {
     }
 
     /** Complète [chosen] jusqu'au nombre de repas voulu avec les meilleures candidates de [pool]. */
-    fun compose(pool: List<Candidate>, wishes: MenuWishes, chosen: List<Chosen> = emptyList(), exclude: Set<Candidate> = emptySet()): List<Candidate> {
+    fun compose(
+        pool: List<Candidate>,
+        wishes: MenuWishes,
+        chosen: List<Chosen> = emptyList(),
+        exclude: Set<Candidate> = emptySet(),
+        pairings: PairingGraph = PairingGraph.EMPTY,
+    ): List<Candidate> {
         val picked = ArrayList<Candidate>()
         val state = chosen.toMutableList()
         val left = pool.filterNot { it in exclude }.toMutableList()
         while (state.size < wishes.meals && left.isNotEmpty()) {
-            val best = left.maxBy { score(it, state, wishes) }
+            val best = left.maxBy { score(it, state, wishes, pairings) }
             left -= best
             picked += best
             state += Chosen.of(best)
@@ -166,7 +190,13 @@ object MenuComposer {
      * d'ingrédients avec le reste du menu, sans dégrader le menu (saison, composition, variété).
      * [dishes] : chaque plat du menu avec sa candidate d'origine si elle est connue. Null = rien à gagner.
      */
-    fun improveSharing(pool: List<Candidate>, wishes: MenuWishes, dishes: List<Pair<Chosen, Candidate?>>, exclude: Set<Candidate> = emptySet()): Swap? {
+    fun improveSharing(
+        pool: List<Candidate>,
+        wishes: MenuWishes,
+        dishes: List<Pair<Chosen, Candidate?>>,
+        exclude: Set<Candidate> = emptySet(),
+        pairings: PairingGraph = PairingGraph.EMPTY,
+    ): Swap? {
         val w = wishes.copy(meals = dishes.size)
         val taken = dishes.mapNotNull { it.second }.toSet() + exclude
         return dishes.indices.mapNotNull { i ->
@@ -174,15 +204,22 @@ object MenuComposer {
             val (current, origin) = dishes[i]
             val before = shared(current.keys, others)
             val best = pool.filterNot { it in taken }
-                .filter { shared(it.keys, others) > before && (origin == null || score(it, others, w) >= score(origin, others, w)) }
-                .maxByOrNull { score(it, others, w) } ?: return@mapNotNull null
+                .filter { shared(it.keys, others) > before && (origin == null || score(it, others, w, pairings) >= score(origin, others, w, pairings)) }
+                .maxWithOrNull(compareBy<Candidate> { shared(it.keys, others) }.thenBy { score(it, others, w, pairings) })
+                ?: return@mapNotNull null
             Swap(i, best, before, shared(best.keys, others))
         }.maxByOrNull { it.sharedAfter - it.sharedBefore }
     }
 
     /** Meilleure candidate pour une place du menu, les autres plats étant fixés. */
-    fun replacement(pool: List<Candidate>, wishes: MenuWishes, others: List<Chosen>, exclude: Set<Candidate>): Candidate? =
-        compose(pool, wishes.copy(meals = others.size + 1), others, exclude).firstOrNull()
+    fun replacement(
+        pool: List<Candidate>,
+        wishes: MenuWishes,
+        others: List<Chosen>,
+        exclude: Set<Candidate>,
+        pairings: PairingGraph = PairingGraph.EMPTY,
+    ): Candidate? =
+        compose(pool, wishes.copy(meals = others.size + 1), others, exclude, pairings).firstOrNull()
 }
 
 /** Bilan d'un menu : saison, composition, taille de la liste. Affiché à l'écran et renvoyé au LLM après chaque outil. */

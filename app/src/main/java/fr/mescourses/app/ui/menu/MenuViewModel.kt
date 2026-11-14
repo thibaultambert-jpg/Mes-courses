@@ -16,6 +16,7 @@ import fr.mescourses.core.menu.CookingTime
 import fr.mescourses.core.menu.DishKind
 import fr.mescourses.core.menu.IngredientOverlap
 import fr.mescourses.core.menu.MenuComposer
+import fr.mescourses.core.menu.MenuHistory
 import fr.mescourses.core.menu.MenuInsights
 import fr.mescourses.core.menu.MenuPrompt
 import fr.mescourses.core.menu.MenuTextParser
@@ -358,7 +359,14 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                     // Les recettes que le compositeur retiendrait d'abord : la composition demandée y est toujours possible.
                     // … puis les autres, en alternant les sites pour que le chef ait vraiment le choix.
                     val bySite = fr.mescourses.core.recipes.RecipeSearcher.interleave(list.groupBy { it.siteName }.values.toList())
-                    c.candidates.set((MenuComposer.compose(list, wishes) + bySite).distinct().take(SHORTLIST))
+                    val shortlist = (MenuComposer.compose(list, wishes) + bySite).distinct().take(SHORTLIST)
+                    val today = java.time.LocalDate.now()
+                    val shown = if (shortlist.isEmpty()) emptyList() else MenuPrompt.systemWebBuild(
+                        today, wishes, shortlist,
+                        MenuHistory(c.menuHistory.all(), c.recipes.all(), today),
+                        c.settings.current.preferences,
+                    ).shown
+                    c.candidates.set(shown)
                     when {
                         list.isNotEmpty() -> chooseFromCandidates(wishes, found?.failedSites.orEmpty()).also { addCourseDishes(wishes) }
                         _state.value.model.available -> {
