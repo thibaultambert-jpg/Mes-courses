@@ -69,18 +69,6 @@ class CarrefourTools(
         if (organic) put("bio", true)
     }
 
-    private fun Cart.compact() = buildJsonObject {
-        put("lignes", buildJsonArray {
-            lines.forEach { l ->
-                add(buildJsonObject {
-                    put("id", l.ean); put("nom", l.name); put("qte", l.quantity)
-                    l.subtotal?.let { put("sous_total", it) }
-                })
-            }
-        })
-        total?.let { put("total", it) }
-    }
-
     val search = tool(
         "chercher_produit",
         "Cherche des produits chez $who.",
@@ -167,6 +155,19 @@ class CarrefourTools(
             }
         }
     }
+}
+
+/** Représentation compacte du panier pour le LLM (outils Courses et report de contexte). */
+fun Cart.compact(): JsonObject = buildJsonObject {
+    put("lignes", buildJsonArray {
+        lines.forEach { l ->
+            add(buildJsonObject {
+                put("id", l.ean); put("nom", l.name); put("qte", l.quantity)
+                l.subtotal?.let { put("sous_total", it) }
+            })
+        }
+    })
+    total?.let { put("total", it) }
 }
 
 /** Prompt système du mode Courses. */
