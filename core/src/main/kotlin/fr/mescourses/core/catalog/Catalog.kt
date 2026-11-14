@@ -116,7 +116,7 @@ data class CatalogEntry(
     companion object {
         fun of(details: RecipeJsonLdExtractor.Details, siteId: String, url: String, lastmod: String? = null): CatalogEntry {
             val r = details.recipe
-            val c = computed(r.title, r.ingredients.map { it.name }, r.ingredients.map { it.raw }, details.categories)
+            val c = computed(r.title, r.ingredients.map { it.name }, r.ingredients.map { it.raw }, details.categories, details.totalMinutes ?: r.prepMinutes?.let { p -> r.cookMinutes?.let { p + it } })
             return CatalogEntry(
                 url = url, siteId = siteId, title = r.title, imageUrl = r.imageUrl,
                 ingredients = r.ingredients.map { it.raw },
@@ -140,7 +140,7 @@ data class CatalogEntry(
  * une catégorie suivante le décidait.
  */
 fun CatalogEntry.recompute(): CatalogEntry {
-    val c = computed(title, IngredientParser.parseAll(ingredients).map { it.name }, ingredients, listOfNotNull(category))
+    val c = computed(title, IngredientParser.parseAll(ingredients).map { it.name }, ingredients, listOfNotNull(category), totalMinutes ?: prepMinutes?.let { p -> cookMinutes?.let { p + it } })
     return copy(
         course = c.course, kind = c.kind, months = c.months, produce = c.produce, balanced = c.balanced,
         keys = c.keys, nutritionTags = c.nutritionTags,
@@ -166,18 +166,20 @@ private class Computed(
     val nutritionTags: Set<NutritionTag>,
 )
 
-private fun computed(title: String, names: List<String>, raws: List<String>, categories: List<String>): Computed {
+private fun computed(title: String, names: List<String>, raws: List<String>, categories: List<String>, minutes: Int?): Computed {
     val texts = listOf(title) + names
+    val keys = keysOf(names, raws)
+    val course = Course.of(categories, title, names)
     // Saison : les fruits et légumes de la recette doivent tous se trouver ce mois-là.
     val months = Month.entries.filter { m -> Seasonality.report(texts, m).outOfSeason.isEmpty() }.map { it.value }
     val produce = Month.entries.flatMap { Seasonality.report(texts, it).seasonal }.distinct()
     return Computed(
-        course = Course.of(categories, title, names),
+        course = course,
         kind = DishKinds.of(title, names),
         months = months, produce = produce,
         balanced = PlateBalance.missing(texts).isEmpty(),
-        keys = keysOf(names, raws),
-        nutritionTags = emptySet(),
+        keys = keys,
+        nutritionTags = NutritionTags.of(title, keys, course, minutes),
     )
 }
 
