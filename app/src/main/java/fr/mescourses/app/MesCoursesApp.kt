@@ -23,6 +23,7 @@ class MesCoursesApp : Application() {
             level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL
         ) {
             container.model.releaseIfIdle()
+            container.embedder.release()
         }
     }
 }
