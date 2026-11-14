@@ -1,5 +1,8 @@
 package fr.mescourses.core.shopping
 
+import fr.mescourses.core.ingredients.IngredientMapper
+import fr.mescourses.core.menu.IngredientOverlap
+
 /** Rayons du magasin, dans l'ordre d'un parcours habituel. */
 enum class Aisle(val label: String, val emoji: String) {
     FRUITS_LEGUMES("Fruits & légumes", "🥕"),
@@ -41,7 +44,9 @@ enum class Aisle(val label: String, val emoji: String) {
          * Le mot-clé trouvé le plus tôt dans le nom décide, le plus long en cas d'égalité :
          * « lait de coco » → épicerie (pas crèmerie), « crème de marrons » → crèmerie… à corriger à la main au besoin.
          */
-        fun of(name: String): Aisle {
+        fun of(name: String): Aisle = IngredientMapper.aisleOverride(IngredientOverlap.key(name)) ?: computed(name)
+
+        private fun computed(name: String): Aisle {
             val k = " " + ShoppingListMerger.key(name) + " "
             var best: Triple<Int, Int, Aisle>? = null
             for ((aisle, kws) in keywords) for (kw in kws) {
