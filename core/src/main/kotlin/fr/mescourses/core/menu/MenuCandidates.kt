@@ -1,7 +1,13 @@
 package fr.mescourses.core.menu
 
+import fr.mescourses.core.catalog.CatalogEntry
 import fr.mescourses.core.catalog.CatalogQuery
 import fr.mescourses.core.catalog.CatalogStore
+import fr.mescourses.core.catalog.Course
+import fr.mescourses.core.catalog.NutritionTag
+import fr.mescourses.core.catalog.NutritionTags
+import fr.mescourses.core.catalog.TextEmbedder
+import fr.mescourses.core.ingredients.PairingGraph
 import fr.mescourses.core.ingredients.FoodName
 import fr.mescourses.core.model.MenuDish
 import fr.mescourses.core.model.Portions
@@ -46,6 +52,8 @@ data class Candidate(
     val fromCookbook: Boolean,
     /** Note propre à la recette, indépendante du reste du menu. */
     val base: Double,
+    /** Repères nutritionnels (léger, fibres, oméga-3, réconfort) : ceux du catalogue, sinon calculés ici. */
+    val tags: Set<NutritionTag> = emptySet(),
 ) {
     /** Forme du plat (pâtes, tarte, gratin…), pour ne pas en mettre trois au menu. */
     val form: String? get() = DishForms.of(recipe.title)
@@ -65,20 +73,56 @@ data class Candidate(
         course = course,
     )
 
-    /** Ligne du prompt : « 3. Gratin de chou-fleur [viande · 35 min · saison : chou-fleur] — chou-fleur, jambon, lait ». */
-    fun line(number: Int): String {
+    /**
+     * Ligne du prompt : « 3. Gratin de chou-fleur [viande · 35 min · saison : chou-fleur] (réconfort) — chou-fleur, jambon, lait ».
+     * Étiquettes nutrition : 2 au plus, entre parenthèses après le crochet.
+     * [compact] : titre de 48 caractères au plus, 3 ingrédients, une étiquette, sans « déjà cuisiné » ; 120 caractères au plus.
+     */
+    fun line(number: Int, compact: Boolean = false): String {
+        val title = if (compact && recipe.title.length > COMPACT_TITLE) recipe.title.take(COMPACT_TITLE - 1).trimEnd() + "…" else recipe.title
         val facts = listOfNotNull(
             kind.label,
             minutes?.let { "$it min" },
             seasonal.takeIf { it.isNotEmpty() }?.let { "saison : ${it.joinToString(", ")}" },
             outOfSeason.takeIf { it.isNotEmpty() }?.let { "hors saison : ${it.joinToString(", ")}" },
-            if (fromCookbook) (if (recipe.favorite) "favori" else "déjà cuisiné") else null,
+            when {
+                !fromCookbook -> null
+                recipe.favorite -> "favori"
+                compact -> null
+                else -> "déjà cuisiné"
+            },
         )
-        return "$number. ${recipe.title} [${facts.joinToString(" · ")}] — ${mainIngredients.take(4).joinToString(", ")}"
+        // Les étiquettes suivent le crochet, entre parenthèses : le début de ligne reste « N. Titre [type · durée · saison] ».
+        val labels = tags.sortedBy { it.ordinal }.take(if (compact) 1 else 2).map(::tagLabel)
+        val tagText = if (labels.isEmpty()) "" else labels.joinToString(" · ", prefix = " (", postfix = ")")
+        val head = "$number. $title [${facts.joinToString(" · ")}]$tagText"
+        if (!compact) return "$head — ${mainIngredients.take(4).joinToString(", ")}"
+        // Trop long : moins d'ingrédients d'abord, puis la ligne coupée.
+        val line = (3 downTo 1).map { n -> "$head — ${mainIngredients.take(n).joinToString(", ")}" }
+            .firstOrNull { it.length <= COMPACT_LINE } ?: "$head — ${mainIngredients.take(1).joinToString(", ")}"
+        return if (line.length > COMPACT_LINE) line.take(COMPACT_LINE - 1).trimEnd() + "…" else line
     }
 
     companion object {
-        fun of(recipe: Recipe, wishes: MenuWishes, history: MenuHistory, today: LocalDate, pantry: List<String>, fromCookbook: Boolean, rating: Double? = null): Candidate {
+        private const val COMPACT_TITLE = 48
+        private const val COMPACT_LINE = 120
+
+        /** Libellé court d'une étiquette nutrition, pour le prompt. */
+        fun tagLabel(tag: NutritionTag): String = when (tag) {
+            NutritionTag.LIGHT -> "léger"
+            NutritionTag.HIGH_FIBER -> "fibres"
+            NutritionTag.OMEGA3 -> "oméga-3"
+            NutritionTag.COMFORT -> "réconfort"
+        }
+
+        /**
+         * [entry] : la fiche du catalogue d'où vient la recette (ses étiquettes nutrition sont reprises) ;
+         * [course] : type de recette connu, sinon déduit du titre et des ingrédients.
+         */
+        fun of(
+            recipe: Recipe, wishes: MenuWishes, history: MenuHistory, today: LocalDate, pantry: List<String>, fromCookbook: Boolean,
+            rating: Double? = null, entry: CatalogEntry? = null, course: Course? = null,
+        ): Candidate {
             val bought = recipe.ingredients.map { FoodName.clean(it.name) }.filter { it.isNotBlank() && !Pantry.isStaple(it, pantry) }
             val keys = bought.map(IngredientOverlap::key).filter { it.isNotEmpty() }.toSet()
             val names = recipe.ingredients.map { it.name }
@@ -104,6 +148,11 @@ data class Candidate(
                 protein = PlateBalance.protein(listOf(recipe.title) + names),
                 fromCookbook = fromCookbook,
                 base = base,
+                tags = entry?.nutritionTags?.takeIf { it.isNotEmpty() } ?: NutritionTags.of(
+                    recipe.title, bought,
+                    course ?: entry?.course ?: Course.of(recipe.tags, recipe.title, names).takeIf { it != Course.AUTRE } ?: Course.PLAT,
+                    listOfNotNull(recipe.prepMinutes, recipe.cookMinutes).takeIf { it.isNotEmpty() }?.sum(),
+                ),
             )
         }
 
@@ -167,6 +216,10 @@ class CandidateFinder(
     private val sites: List<RecipeSite> = RecipeSites.searchable,
     /** Catalogue local : s'il contient des recettes, le menu se compose sans réseau. */
     private val catalog: CatalogStore? = null,
+    /** Vecteurs sémantiques des saisies : envies longues, restes avec leurs accords, recherche du chef. */
+    private val embedder: TextEmbedder? = null,
+    /** Accords d'ingrédients, pour enrichir la recherche des restes à écouler. */
+    private val pairings: PairingGraph = PairingGraph.EMPTY,
 ) {
     companion object {
         const val MAX_IMPORTS = 24
@@ -198,17 +251,34 @@ class CandidateFinder(
             "Batch cooking" to "batch cooking",
         )
 
+        private fun usefulWords(wish: String): List<String> =
+            wish.lowercase().replace(Regex("[^\\p{L}\\p{N} '-]"), " ").split(' ', '\'')
+                .filter { it.length > 1 && it.stripAccents() !in stopWords }
+
         /** Mots utiles d'une envie libre : « une raclette samedi » → « raclette ». */
         fun wishQuery(wish: String): String? {
             QUICK_WISHES.entries.firstOrNull { it.key.equals(wish.trim(), ignoreCase = true) }?.let { return it.value }
-            val words = wish.lowercase().replace(Regex("[^\\p{L}\\p{N} '-]"), " ").split(' ', '\'')
-                .filter { it.length > 1 && it.stripAccents() !in stopWords }
-            return words.takeIf { it.size in 1..4 }?.joinToString(" ")
+            return usefulWords(wish).takeIf { it.size in 1..4 }?.joinToString(" ")
+        }
+
+        /**
+         * Recherche d'une envie : de 1 à 4 mots utiles, ces mots (filtre du catalogue) et l'envie entière pour le sens ;
+         * au-delà, plus de filtre par mots : les 4 premiers vont aux sites, l'envie entière au vecteur sémantique.
+         */
+        fun wishSpec(wish: String): Spec? {
+            val trimmed = wish.trim()
+            wishQuery(trimmed)?.let { return Spec(it, it, semantic = trimmed) }
+            val words = usefulWords(trimmed)
+            if (words.isEmpty()) return null
+            return Spec(words.take(4).joinToString(" "), "", semantic = trimmed)
         }
     }
 
-    /** Une recherche de la semaine : le texte envoyé aux sites, et la même en critères pour le catalogue. */
-    data class Spec(val text: String, val words: String, val kind: DishKind? = null, val seasonal: Boolean = false)
+    /**
+     * Une recherche de la semaine : le texte envoyé aux sites, la même en critères pour le catalogue ([words] : filtre
+     * dur ; vide = pas de filtre par mots) et, s'il y a lieu, le texte à chercher par le sens ([semantic]).
+     */
+    data class Spec(val text: String, val words: String, val kind: DishKind? = null, val seasonal: Boolean = false, val semantic: String? = null)
 
     /**
      * Recherches de la semaine. Les légumes de saison tournent d'une semaine à l'autre (et ceux de la semaine
@@ -234,14 +304,23 @@ class CandidateFinder(
             } + quick
             Spec(text, vegetable, kind, seasonal = true)
         }
-        val useUp = w.useUp.take(2).map { Spec(it.trim() + quick, it.trim()) }
-        val wished = w.wishList().mapNotNull(::wishQuery).take(2).map { Spec(it, it) }
+        val useUp = w.useUp.take(2).map { rest ->
+            val r = rest.trim()
+            // Le reste filtre (il doit être dans la recette) ; ses meilleurs accords orientent le classement par le sens.
+            val pairs = pairings.bestPairings(IngredientOverlap.key(r), 2).map { it.first }
+            Spec(r + quick, r, semantic = if (pairs.isEmpty()) r else "$r avec ${pairs.joinToString(" et ")}")
+        }
+        val wished = w.wishList().mapNotNull(::wishSpec).take(2)
         // Les restes à écouler et les envies d'abord : ce sont les demandes explicites.
         return (useUp + wished + seasonal).filter { it.text.isNotBlank() }.distinctBy { it.text }
     }
 
     fun queries(wishes: MenuWishes, history: MenuHistory, date: LocalDate = today(), round: Int = 0): List<String> =
         specs(wishes, history, date, round).map { it.text }
+
+    /** Vecteur de [text] ; null sans modèle, s'il n'est pas prêt ou en cas d'erreur. */
+    private suspend fun embed(text: String): ByteArray? =
+        embedder?.takeIf { text.isNotBlank() }?.let { e -> runCatching { e.embedQuery(text) }.getOrNull() }
 
     private suspend fun local(): CatalogStore? = catalog?.takeIf { runCatching { it.count() }.getOrDefault(0) > 0 }
 
@@ -250,17 +329,18 @@ class CandidateFinder(
         store: CatalogStore, query: CatalogQuery, wishes: MenuWishes, past: MenuHistory, date: LocalDate, index: CookbookIndex, excluded: Set<String>,
     ): List<Candidate> {
         val list = pantry()
-        return store.search(query).asSequence()
+        val found = store.search(query).asSequence()
             .filter { e ->
                 RecipeSites.normalize(e.url) !in excluded && !index.isBanned(e.title) && !past.eatenRecently(e.title, e.url) && e.ingredients.size >= 3
             }
             .distinctBy { ShoppingListMerger.key(it.title) }
             .map { e ->
                 val known = index.byUrl(e.url)
-                Candidate.of(known ?: e.toRecipe(), wishes, past, date, list, fromCookbook = known != null, rating = e.rating)
+                Candidate.of(known ?: e.toRecipe(), wishes, past, date, list, fromCookbook = known != null, rating = e.rating, entry = e)
             }
-            .sortedByDescending { it.base }
             .toList()
+        // Recherche par le sens : le catalogue a déjà classé par proximité, on garde son ordre.
+        return if (query.vector != null) found else found.sortedByDescending { it.base }
     }
 
     private suspend fun findLocal(
@@ -275,10 +355,15 @@ class CandidateFinder(
         onProgress("Recherche dans le catalogue de recettes…")
         val seed = draw ?: (date.get(ChronoField.ALIGNED_WEEK_OF_YEAR) * 31 + date.year + round * 7)
         val lists = specs.map { spec ->
+            val words = CatalogQuery.words(spec.words)
+            val vector = spec.semantic?.let { embed(it) }
+            // Ni mot ni vecteur (envie longue sans modèle) : cette recherche ne vaut que pour les sites.
+            if (words.isEmpty() && vector == null) return@map emptyList()
             val query = CatalogQuery(
-                words = CatalogQuery.words(spec.words), courses = CatalogQuery.MEALS, kind = spec.kind,
+                words = words, courses = CatalogQuery.MEALS, kind = spec.kind,
                 // Les légumes de la semaine doivent donner des plats de saison ; une envie ou un reste à écouler, non.
                 month = date.monthValue.takeIf { spec.seasonal }, maxMinutes = w.time.maxMinutes, limit = LOCAL_FETCH, seed = seed,
+                vector = vector,
             )
             perSite(fromCatalog(store, query, w, past, date, index, excluded), LOCAL_PER_SITE).take(LOCAL_KEEP)
         }
@@ -376,7 +461,7 @@ class CandidateFinder(
             val base = CatalogQuery(
                 words = words, courses = courses, maxMinutes = wishes.time.maxMinutes, limit = LOCAL_FETCH, sites = sites,
                 // Sans mots (« une recette de Jow ») : des plats de saison, tirés au sort parmi les bien notés.
-                month = date.monthValue.takeIf { words.isEmpty() }, seed = seed,
+                month = date.monthValue.takeIf { words.isEmpty() }, seed = seed, vector = embed(text),
             )
             // « raclette », « crêpes » : pas toujours rangés parmi les plats, on élargit si rien ne sort.
             val found = fromCatalog(store, base, wishes, past, date, index, excluded)
