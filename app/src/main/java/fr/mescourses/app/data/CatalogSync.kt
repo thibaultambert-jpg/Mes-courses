@@ -8,6 +8,8 @@ import fr.mescourses.app.llm.ModelManager
 import fr.mescourses.core.catalog.CatalogEntry
 import fr.mescourses.core.catalog.CatalogSources
 import fr.mescourses.core.catalog.CatalogUpdater
+import fr.mescourses.core.catalog.EmbeddingText
+import fr.mescourses.core.catalog.TextEmbedder
 import fr.mescourses.core.recipes.RecipeSites
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -21,6 +23,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -98,6 +101,7 @@ class CatalogSync(
     private val store: RoomCatalogStore,
     private val scope: CoroutineScope,
     private val http: HttpClient,
+    private val embedder: TextEmbedder? = null,
 ) {
     val status = MutableStateFlow(CatalogStatus())
 
@@ -250,7 +254,7 @@ class CatalogSync(
         embedderJob = null
         scope.launch(Dispatchers.IO) {
             embedderLock.withLock {
-                embedder?.release()
+                (embedder ?: (this@CatalogSync.embedder as? LiteRtTextEmbedder))?.release()
                 val target = embedderFile()
                 target.delete()
                 File(target.parentFile, target.name + ".part").delete()
@@ -271,10 +275,55 @@ class CatalogSync(
         val installed = status.value.installed
         if (installed.isEmpty()) return@exclusive "Aucune base téléchargée"
         val report = updater.update(only = installed) { message -> status.update { it.copy(working = message) } }
+        val embedded = embedMissing()
         buildString {
             append(if (report.added == 0) "Aucune nouvelle recette" else "${report.added} nouvelle${if (report.added > 1) "s" else ""} recette${if (report.added > 1) "s" else ""}")
+            if (embedded > 0) append(" · $embedded vectorisée${if (embedded > 1) "s" else ""}")
             if (report.failedSites.isNotEmpty()) append(" · sans réponse : ${report.failedSites.joinToString(", ")}")
         }
+    }
+
+    /**
+     * Vectorise localement jusqu'à [MAX_EMBED_PER_UPDATE] fiches sans vecteur (typiquement les nouveautés lues par le
+     * téléphone). Tourne hors du thread principal par lots de [EMBED_BATCH_SIZE] fiches.
+     */
+    private suspend fun embedMissing(): Int {
+        val textEmbedder = embedder ?: return 0
+        return withContext(Dispatchers.IO) {
+            if (!textEmbedder.available()) return@withContext 0
+            val pending = store.withoutEmbedding(MAX_EMBED_PER_UPDATE)
+            if (pending.isEmpty()) return@withContext 0
+            var embedded = 0
+            try {
+                for (chunk in pending.chunked(EMBED_BATCH_SIZE)) {
+                    ensureActive()
+                    status.update { it.copy(working = "Vectorisation des fiches… ($embedded/${pending.size})") }
+                    val texts = chunk.map(::passageText)
+                    val vectors = textEmbedder.embedPassages(texts)
+                    if (vectors == null || vectors.size != chunk.size) {
+                        if (vectors != null) Log.w(TAG, "Lot de ${chunk.size} fiches : ${vectors.size} vecteurs reçus")
+                        break
+                    }
+                    for (i in chunk.indices) {
+                        ensureActive()
+                        store.setEmbedding(chunk[i].id, vectors[i])
+                        embedded++
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Vectorisation des fiches", e)
+            } finally {
+                if (embedded > 0) store.invalidateVectorIndex()
+            }
+            embedded
+        }
+    }
+
+    private fun passageText(row: IdTitleKeys): String {
+        val keys = row.keys.split(',').filter { it.isNotBlank() }
+        return EmbeddingText.passage(CatalogEntry(url = "", siteId = "", title = row.title, keys = keys))
     }
 
     /** Un seul travail à la fois ; l'état est relu à la fin, même en cas d'erreur. */
@@ -459,6 +508,8 @@ class CatalogSync(
         private const val REPO = "thibaultambert-jpg/Mes-courses"
         private const val TAG_NAME = "catalogue"
         private const val SETUP_DONE = "choix-des-bases-vu"
+        private const val MAX_EMBED_PER_UPDATE = 500
+        private const val EMBED_BATCH_SIZE = 32
         const val EMBEDDER_DIR = "embedder"
         const val DEFAULT_EMBEDDER_MODEL = "embeddinggemma-2-740m@256"
         const val DEFAULT_EMBEDDER_FILE = "embeddinggemma-2-740m.litertlm"
