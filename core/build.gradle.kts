@@ -30,4 +30,9 @@ dependencies {
     testImplementation(libs.ktor.client.mock)
 }
 
-tasks.test { useJUnitPlatform() }
+tasks.test {
+    useJUnitPlatform()
+    // Tests lents (performance) : ./gradlew -p core test -Dtests.lents=true
+    systemProperty("tests.lents", providers.systemProperty("tests.lents").getOrElse("false"))
+    testLogging { showStandardStreams = providers.systemProperty("tests.lents").getOrElse("false") == "true" }
+}
