@@ -12,7 +12,7 @@ enum class FilterGroup(val label: String, val single: Boolean) {
 }
 
 /** Mots-clés (titres de recettes) par catégorie d'ingrédient, partagés par les filtres et les pastilles. */
-private object Words {
+internal object Words {
     val viande = listOf(
         "boeuf", "veau", "porc", "agneau", "steak", "entrecote", "bourguignon", "saucisse", "jambon", "lardon", "chorizo",
         "viande", "filet mignon", "hachis", "boulette", "merguez", "gigot", "blanquette", "kefta",
