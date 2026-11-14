@@ -555,7 +555,8 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                     val limit = if (oneDish) 1 else 3
                     val currentWishes = config()
                     val currentCandidates = candidateSnapshot()
-                    val prompt = MenuPrompt.context(c.draft.get()) + "\n" + t
+                    val currentContext = MenuPrompt.context(c.draft.get())
+                    val prompt = currentContext + "\n" + t
                     val warm = warmed
                     val reusable = c.model.owns(OWNER) &&
                         warm != null &&
@@ -569,17 +570,17 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                             systemTokens = warm.systemTokens,
                             nextMessage = prompt,
                             expectedToolTokens = EXPECTED_TOOL_TOKENS,
-                        ) { CarryOver.menu(MenuPrompt.context(c.draft.get()), lastAnswer) } == Rollover.Keep
+                        ) { CarryOver.menu(currentContext, lastAnswer) } == Rollover.Keep
 
                     if (reusable) {
                         Log.d(TAG, "Réutilisation de la conversation pré-chauffée (maxChanges=$limit)")
                         adjusting = true
                         maxChanges = limit
                         c.resetMenuChanges(limit)
-                        warmed = warm!!.copy(used = true)
+                        warmed = warm.copy(used = true)
                     } else {
                         val initial = if (lastAnswer != null || c.model.hasConversation(OWNER)) {
-                            CarryOver.menu(MenuPrompt.context(c.draft.get()), lastAnswer)
+                            CarryOver.menu(currentContext, lastAnswer)
                         } else {
                             emptyList()
                         }
