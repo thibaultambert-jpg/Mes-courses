@@ -479,4 +479,145 @@ class MenuPlannerTest {
         assertTrue(next.repetition(listOf("poireau", "navet")) > 0)
         assertFalse(MenuHistory(past, emptyList(), today.plusWeeks(6)).eatenRecently("Tarte aux poireaux", null))
     }
+
+    // ---------- Recherche sémantique, accords et étiquettes (lot 5.1) ----------
+
+    /** Faux modèle : une dimension par racine de mot présente dans le texte (déterministe). */
+    private class FakeEmbedder : fr.mescourses.core.catalog.TextEmbedder {
+        val queries = mutableListOf<String>()
+        override suspend fun available() = true
+        override suspend fun embedQuery(text: String): ByteArray { queries += text; return vector(text) }
+        override suspend fun embedPassages(texts: List<String>) = texts.map(::vector)
+
+        companion object {
+            private val stems = listOf("chou", "pomme", "lardon", "cumin", "vinaigre", "fromage", "hiver", "legume", "mijot", "tomate", "concombre")
+            fun vector(text: String): ByteArray {
+                val key = fr.mescourses.core.shopping.ShoppingListMerger.key(text)
+                return ByteArray(fr.mescourses.core.catalog.Int8Vectors.DIM).also { v -> stems.forEachIndexed { i, s -> if (s in key) v[i] = 40 } }
+            }
+        }
+    }
+
+    /** Catalogue qui garde les requêtes reçues. */
+    private class SpyCatalog(val inner: InMemoryCatalog) : fr.mescourses.core.catalog.CatalogStore by inner {
+        val queries = mutableListOf<fr.mescourses.core.catalog.CatalogQuery>()
+        override suspend fun search(query: fr.mescourses.core.catalog.CatalogQuery) = inner.search(query).also { queries += query }
+    }
+
+    private fun catalogEntry(url: String, siteId: String, title: String, vararg ingredients: String): fr.mescourses.core.catalog.CatalogEntry {
+        val html = """<script type="application/ld+json">{"@type":"Recipe","name":"$title","recipeCategory":"Plat principal","totalTime":"PT30M",
+            "recipeIngredient":[${ingredients.joinToString(",") { "\"$it\"" }}]}</script>"""
+        val e = fr.mescourses.core.catalog.CatalogEntry.of(fr.mescourses.core.recipes.RecipeJsonLdExtractor.extractDetails(html, url)!!, siteId, url)
+        return e.copy(embedding = fr.mescourses.core.catalog.Int8Vectors.encode(FakeEmbedder.vector(title + " " + ingredients.joinToString(" "))))
+    }
+
+    private fun offlineFinder(catalog: fr.mescourses.core.catalog.CatalogStore, embedder: fr.mescourses.core.catalog.TextEmbedder? = null,
+                              pairings: fr.mescourses.core.ingredients.PairingGraph = fr.mescourses.core.ingredients.PairingGraph.EMPTY) =
+        CandidateFinder(RecipeSearcher { error("pas de réseau") }, RecipeImporter(listOf(PageFetcher { error("pas de réseau") })), recipes, history,
+            { emptyList() }, { today }, listOf(RecipeSites.byId("marmiton")!!), catalog, embedder, pairings)
+
+    private val winterCatalog get() = listOf(
+        catalogEntry("https://www.marmiton.org/recettes/recette_salade-tomates_1.aspx", "marmiton", "Salade de tomates au concombre", "4 tomates", "1 concombre", "1 oignon rouge"),
+        catalogEntry("https://www.marmiton.org/recettes/recette_gratin-hiver_2.aspx", "marmiton", "Gratin de légumes d'hiver au fromage", "2 panais", "1 céleri", "150 g de fromage râpé"),
+        catalogEntry("https://www.750g.com/poelee-poulet-r3.htm", "750g", "Poêlée de poulet au riz", "2 blancs de poulet", "200 g de riz", "1 oignon"),
+        catalogEntry("https://www.750g.com/curry-pois-chiches-r4.htm", "750g", "Curry de pois chiches", "400 g de pois chiches", "20 cl de lait de coco", "1 oignon"),
+    )
+
+    @Test fun envie_longue_devient_une_recherche_semantique() = runTest {
+        val wish = "je voudrais un plat mijoté et réconfortant avec des légumes d'hiver et du fromage fondu"
+        // Plus de 4 mots utiles : pas de requête par mots, mais une recherche par le sens.
+        assertNull(CandidateFinder.wishQuery(wish))
+        val spec = CandidateFinder.wishSpec(wish)!!
+        assertEquals("", spec.words)
+        assertEquals("mijoté réconfortant légumes hiver", spec.text)
+        assertEquals(wish, spec.semantic)
+        // Une envie courte garde ses mots, et son sens.
+        assertEquals(CandidateFinder.Spec("raclette", "raclette", semantic = "une raclette samedi"), CandidateFinder.wishSpec("une raclette samedi"))
+
+        val spy = SpyCatalog(InMemoryCatalog(winterCatalog))
+        val embedder = FakeEmbedder()
+        val finder = offlineFinder(spy, embedder)
+        val w = wishes.copy(wishes = wish, novelty = Novelty.DECOUVERTES)
+        assertTrue("mijoté réconfortant légumes hiver" in finder.queries(w, noHistory, today))
+        val found = finder.find(w)
+        assertTrue(wish in embedder.queries, embedder.queries.toString())
+        val semantic = spy.queries.single { it.vector != null }
+        assertTrue(semantic.words.isEmpty() && semantic.month == null, semantic.toString())
+        assertEquals("Gratin de légumes d'hiver au fromage", spy.inner.search(semantic).first().title)
+        assertTrue(found.candidates.any { it.recipe.title == "Gratin de légumes d'hiver au fromage" }, found.candidates.map { it.recipe.title }.toString())
+    }
+
+    @Test fun restes_a_ecouler_filtrent_par_mot_et_classent_par_accord() = runTest {
+        val pairings = fr.mescourses.core.ingredients.PairingGraph(listOf(
+            fr.mescourses.core.ingredients.PairingGraph.Pairing("chou rouge", "pomme", 0.8),
+            fr.mescourses.core.ingredients.PairingGraph.Pairing("chou rouge", "lardon", 0.7),
+            fr.mescourses.core.ingredients.PairingGraph.Pairing("chou rouge", "cumin", 0.2),
+        ))
+        val spy = SpyCatalog(InMemoryCatalog(listOf(
+            catalogEntry("https://www.marmiton.org/recettes/recette_chou-vinaigre_1.aspx", "marmiton", "Chou rouge au vinaigre", "1 chou rouge", "5 cl de vinaigre", "1 échalote"),
+            catalogEntry("https://www.marmiton.org/recettes/recette_chou-cumin_2.aspx", "marmiton", "Chou rouge au cumin", "1 chou rouge", "1 c. à café de cumin", "1 oignon"),
+            catalogEntry("https://www.750g.com/chou-rouge-lardons-r3.htm", "750g", "Chou rouge aux lardons", "1 chou rouge", "200 g de lardons", "1 oignon"),
+            catalogEntry("https://www.750g.com/chou-rouge-pommes-r4.htm", "750g", "Chou rouge aux pommes", "1 chou rouge", "2 pommes", "1 oignon"),
+            // Proche par le sens (pomme, lardons) mais sans chou rouge : le reste à écouler filtre.
+            catalogEntry("https://www.cuisineaz.com/recettes/tarte-pommes-lardons-5.aspx", "cuisineaz", "Tarte aux pommes et lardons", "3 pommes", "200 g de lardons", "1 pâte brisée"),
+        )))
+        val embedder = FakeEmbedder()
+        val finder = offlineFinder(spy, embedder, pairings)
+        val w = wishes.copy(useUp = listOf("chou rouge"), novelty = Novelty.DECOUVERTES)
+        val spec = finder.specs(w, noHistory, today).first()
+        assertEquals(CandidateFinder.Spec("chou rouge", "chou rouge", semantic = "chou rouge avec pomme et lardon"), spec)
+
+        val found = finder.find(w)
+        assertTrue("chou rouge avec pomme et lardon" in embedder.queries, embedder.queries.toString())
+        val query = spy.queries.single { it.vector != null }
+        assertEquals(listOf("chou", "rouge"), query.words)
+        // Le catalogue classe par le sens : les accords (pomme, lardons) avant le cumin et le vinaigre.
+        val ranked = spy.inner.search(query).map { it.title }
+        assertEquals(setOf("Chou rouge aux lardons", "Chou rouge aux pommes"), ranked.take(2).toSet(), ranked.toString())
+        assertEquals(setOf("Chou rouge au cumin", "Chou rouge au vinaigre"), ranked.drop(2).toSet(), ranked.toString())
+        val titles = found.candidates.map { it.recipe.title }
+        assertTrue(titles.all { "Chou rouge" in it }, titles.toString())
+        assertEquals(setOf("Chou rouge aux pommes", "Chou rouge aux lardons"), titles.take(2).toSet(), titles.toString())
+
+        // Sans accord connu, le sens se limite au reste lui-même.
+        assertEquals("chou rouge", offlineFinder(spy, embedder).specs(w, noHistory, today).first().semantic)
+    }
+
+    @Test fun ligne_de_candidate_compacte_et_etiquettes() {
+        val fish = Candidate.of(
+            recipe("Saumon aux lentilles vertes du Puy et petits légumes de saison", "2 pavés de saumon", "200 g de lentilles vertes", "2 carottes", "1 oignon", "1 citron"),
+            wishes, noHistory, today, emptyList(), fromCookbook = true,
+        )
+        assertEquals(setOf(fr.mescourses.core.catalog.NutritionTag.HIGH_FIBER, fr.mescourses.core.catalog.NutritionTag.OMEGA3), fish.tags)
+        val full = fish.line(4)
+        assertTrue(full.startsWith("4. Saumon aux lentilles vertes du Puy et petits légumes de saison [poisson · 30 min"), full)
+        assertTrue("déjà cuisiné] (fibres · oméga-3) — " in full, full)
+        val compact = fish.line(4, compact = true)
+        assertTrue(compact.length <= 120, compact)
+        assertTrue("(fibres) — " in compact && "oméga-3" !in compact && "déjà cuisiné" !in compact, compact)
+        val title = compact.removePrefix("4. ").substringBefore(" [")
+        assertTrue(title.length <= 48 && title.endsWith("…"), title)
+        assertTrue(compact.substringAfter(" — ").split(", ").size in 1..3, compact)
+
+        // Une candidate du catalogue reprend les étiquettes de sa fiche.
+        val entry = catalogEntry("https://www.marmiton.org/recettes/recette_soupe_9.aspx", "marmiton", "Soupe de potiron", "1 kg de potiron", "1 oignon", "20 cl de crème")
+            .copy(nutritionTags = setOf(fr.mescourses.core.catalog.NutritionTag.LIGHT))
+        val soup = Candidate.of(entry.toRecipe(), wishes, noHistory, today, emptyList(), fromCookbook = false, entry = entry)
+        assertEquals(setOf(fr.mescourses.core.catalog.NutritionTag.LIGHT), soup.tags)
+        assertTrue("] (léger) — " in soup.line(1), soup.line(1))
+    }
+
+    @Test fun sans_embedder_le_catalogue_se_cherche_comme_avant() = runTest {
+        val spy = SpyCatalog(InMemoryCatalog(winterCatalog + catalogEntry("https://www.marmiton.org/recettes/recette_raclette_9.aspx", "marmiton", "Raclette",
+            "800 g de fromage à raclette", "1 kg de pommes de terre", "8 tranches de jambon")))
+        val finder = offlineFinder(spy)
+        val w = wishes.copy(wishes = "je voudrais un plat mijoté et réconfortant avec des légumes d'hiver et du fromage fondu",
+            useUp = listOf("poulet"), novelty = Novelty.DECOUVERTES)
+        finder.find(w)
+        // Aucun vecteur, et l'envie longue (sans mots pour le catalogue) ne vaut que pour les sites.
+        assertTrue(spy.queries.isNotEmpty() && spy.queries.all { it.vector == null && it.words.isNotEmpty() }, spy.queries.toString())
+        assertEquals(listOf("poulet"), spy.queries.first().words)
+        assertEquals(listOf("Raclette"), finder.search("une raclette", wishes).map { it.recipe.title })
+        assertTrue(spy.queries.last().vector == null)
+    }
 }
