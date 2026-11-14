@@ -1,5 +1,7 @@
 package fr.mescourses.app.ui.menu
 
+import android.os.SystemClock
+import android.util.Log
 import fr.mescourses.core.catalog.Course
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -8,6 +10,12 @@ import fr.mescourses.app.llm.ChatEvent
 import fr.mescourses.app.llm.ModelController
 import fr.mescourses.app.llm.ModelStatus
 import fr.mescourses.app.work.Validation
+import fr.mescourses.core.llm.CarryOver
+import fr.mescourses.core.llm.ConversationPolicy
+import fr.mescourses.core.llm.Msg
+import fr.mescourses.core.llm.Rollover
+import fr.mescourses.core.llm.TokenEstimate
+import fr.mescourses.core.llm.Transcript
 import fr.mescourses.core.menu.Candidate
 import fr.mescourses.core.menu.CandidateFinder
 import fr.mescourses.core.menu.MenuCommand
@@ -25,7 +33,9 @@ import fr.mescourses.core.menu.ShoppingPreview
 import fr.mescourses.core.model.MenuDish
 import fr.mescourses.core.model.PlannedMeal
 import fr.mescourses.core.model.Portions
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -80,8 +90,19 @@ data class MenuUiState(
 class MenuViewModel(private val c: AppContainer) : ViewModel() {
 
     private companion object {
+        const val TAG = "MenuViewModel"
         const val OWNER = "menu"
+        const val EXPECTED_TOOL_TOKENS = 350
     }
+
+    /** État de la conversation pré-chauffée ou active : évite de réutiliser un prompt périmé ou déjà consommé. */
+    private data class WarmState(
+        val adjusting: Boolean,
+        val wishes: MenuWishes,
+        val candidates: List<Pair<String?, String>>,
+        val systemTokens: Int,
+        val used: Boolean = false,
+    )
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -294,16 +315,66 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     }
     fun consumeMessage() = _state.update { it.copy(message = null) }
 
+    private fun candidateSnapshot(): List<Pair<String?, String>> =
+        c.candidates.all().map { it.recipe.sourceUrl to it.recipe.title }
+
     /** [adjusting] : retouche d'un menu existant (le modèle n'a alors pas l'outil qui réécrit tout le menu). */
-    private suspend fun startConversation(adjusting: Boolean = false, maxChanges: Int? = this.maxChanges) {
+    private suspend fun startConversation(
+        adjusting: Boolean = false,
+        maxChanges: Int? = this.maxChanges,
+        wishes: MenuWishes = config(),
+        initial: List<Msg> = emptyList(),
+        prefill: Boolean = false,
+    ): WarmState {
         this.adjusting = adjusting
         this.maxChanges = maxChanges
-        val build = c.menuSystemPrompt(config(), adjusting)
+        val build = c.menuSystemPrompt(wishes, adjusting)
         if (!adjusting && build.shown.size < c.candidates.size) c.candidates.set(build.shown)
-        c.model.startConversation(OWNER, build.text, c.menuTools(adjusting, maxChanges))
+        val snapshot = candidateSnapshot()
+        val tools = c.menuTools(adjusting, maxChanges)
+        val sysTokens = TokenEstimate.text(build.text) + TokenEstimate.tools(tools.map { it.openApiJson() })
+        c.model.startConversation(OWNER, build.text, tools, initial = initial, prefill = prefill)
+        return WarmState(
+            adjusting = adjusting,
+            wishes = wishes,
+            candidates = snapshot,
+            systemTokens = sysTokens,
+            used = false,
+        ).also { warmed = it }
     }
+
+    /** Pré-chauffe en tâche de fond la prochaine conversation d'ajustement pour supprimer l'attente au tour suivant. */
+    private fun warmNext(wishes: MenuWishes = config()) {
+        if (!c.model.status.value.available) return
+        val previous = warmJob
+        warmJob = viewModelScope.launch {
+            previous?.cancelAndJoin()
+            warmed = null
+            try {
+                c.model.use {
+                    startConversation(adjusting = true, maxChanges = null, wishes = wishes, prefill = true)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Échec du pré-chauffage menu", e)
+                warmed = null
+            }
+        }
+    }
+
+    private suspend fun cancelWarm(clearLastAnswer: Boolean = false) {
+        warmJob?.cancelAndJoin()
+        warmJob = null
+        warmed = null
+        if (clearLastAnswer) lastAnswer = null
+    }
+
     private var maxChanges: Int? = null
     private var adjusting = false
+    @Volatile private var warmJob: Job? = null
+    @Volatile private var warmed: WarmState? = null
+    @Volatile private var lastAnswer: String? = null
 
     /** Menu d'avant la dernière retouche, pour « Annuler ». */
     private var before: List<MenuDish>? = null
@@ -339,6 +410,7 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
         if (_state.value.busy) return
         val wishes = config()
         job = viewModelScope.launch {
+            cancelWarm(clearLastAnswer = true)
             c.draft.set(emptyList())
             step.value = MenuStep.PROPOSITION
             _state.update { it.copy(chat = emptyList(), busy = true) }
@@ -477,18 +549,58 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                     _state.update { it.copy(chat = it.chat + ChatLine(true, t)) }
                     c.chef.keepAwake("Le chef ajuste ton menu…") { execute(command) }
                 } else c.chef.keepAwake("Le chef ajuste ton menu…") {
-                    // Conversation neuve à chaque demande : le message porte déjà l'état du menu, et le contexte
-                    // du modèle (limité sur téléphone) ne grossit plus d'un échange à l'autre.
+                    warmJob?.join()
                     // Un plat est nommé : une seule retouche permise. Demande générale (« plus végétarien ») : trois au plus.
                     val oneDish = Regex("""\bplat\s*\d|\b\d+\s*(er|e|[eè]me)\b""", RegexOption.IGNORE_CASE).containsMatchIn(t)
-                    startConversation(adjusting = c.candidates.size > 0, maxChanges = if (oneDish) 1 else 3)
-                    exchange(MenuPrompt.context(c.draft.get()) + "\n" + t, shownAs = shownAs ?: t)
+                    val limit = if (oneDish) 1 else 3
+                    val currentWishes = config()
+                    val currentCandidates = candidateSnapshot()
+                    val prompt = MenuPrompt.context(c.draft.get()) + "\n" + t
+                    val warm = warmed
+                    val reusable = c.model.owns(OWNER) &&
+                        warm != null &&
+                        !warm.used &&
+                        warm.adjusting &&
+                        warm.wishes == currentWishes &&
+                        warm.candidates == currentCandidates &&
+                        ConversationPolicy(c.model.budget(ModelController.Kind.MENU)).decide(
+                            tokenCount = c.model.tokenCount(),
+                            transcript = c.model.transcript(OWNER) ?: Transcript(),
+                            systemTokens = warm.systemTokens,
+                            nextMessage = prompt,
+                            expectedToolTokens = EXPECTED_TOOL_TOKENS,
+                        ) { CarryOver.menu(MenuPrompt.context(c.draft.get()), lastAnswer) } == Rollover.Keep
+
+                    if (reusable) {
+                        Log.d(TAG, "Réutilisation de la conversation pré-chauffée (maxChanges=$limit)")
+                        adjusting = true
+                        maxChanges = limit
+                        c.resetMenuChanges(limit)
+                        warmed = warm!!.copy(used = true)
+                    } else {
+                        val initial = if (lastAnswer != null || c.model.hasConversation(OWNER)) {
+                            CarryOver.menu(MenuPrompt.context(c.draft.get()), lastAnswer)
+                        } else {
+                            emptyList()
+                        }
+                        Log.d(TAG, "Nouvelle conversation menu (initial=${initial.size} msg, maxChanges=$limit)")
+                        startConversation(
+                            adjusting = true,
+                            maxChanges = limit,
+                            wishes = currentWishes,
+                            initial = initial,
+                            prefill = false,
+                        )
+                        warmed = warmed?.copy(used = true)
+                    }
+                    exchange(prompt, shownAs = shownAs ?: t)
                 }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 _state.update { it.copy(chat = it.chat + ChatLine(false, "⚠️ ${e.message}", tool = true, ok = false)) }
             } finally {
                 exchanging = false
-                _state.update { it.copy(busy = false, progress = null) }
+                _state.update { it.copy(busy = c.chef.validating, progress = null) }
             }
         }
     }
@@ -755,17 +867,31 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     /** Envoie un message au LLM et suit les appels d'outils ; renvoie le texte de la réponse. */
     private suspend fun exchange(prompt: String, shownAs: String?, retry: Boolean = true): String {
         _state.update { s -> s.copy(busy = true, chat = if (shownAs != null) s.chat + ChatLine(true, shownAs) else s.chat) }
+        warmed = warmed?.copy(used = true)
         val answer = StringBuilder()
+        val startedAt = SystemClock.elapsedRealtime()
+        var firstTokenLogged = false
+        var succeeded = false
         try {
             c.model.use { c.model.send(OWNER, prompt).collect { ev ->
                 when (ev) {
                     is ChatEvent.Token -> {
+                        if (!firstTokenLogged) {
+                            firstTokenLogged = true
+                            Log.d(TAG, "1er token menu en ${SystemClock.elapsedRealtime() - startedAt} ms")
+                        }
                         answer.append(ev.text)
                         _state.update { s ->
                             val chat = s.chat.toMutableList()
                             val last = chat.lastOrNull()
-                            if (last != null && !last.fromUser && !last.tool) chat[chat.lastIndex] = last.copy(text = (last.text + ev.text).replace(modelMarkers, ""))
-                            else chat += ChatLine(false, ev.text.replace(modelMarkers, ""))
+                            if (last != null && !last.fromUser && !last.tool) {
+                                val updated = (last.text + ev.text).replace(modelMarkers, "")
+                                if (updated.isEmpty()) chat.removeAt(chat.lastIndex)
+                                else chat[chat.lastIndex] = last.copy(text = updated)
+                            } else {
+                                val cleaned = ev.text.replace(modelMarkers, "")
+                                if (cleaned.isNotEmpty()) chat += ChatLine(false, cleaned)
+                            }
                             s.copy(chat = chat)
                         }
                     }
@@ -775,18 +901,25 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                     }
                 }
             } }
+            succeeded = true
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
+            if (e is CancellationException) throw e
             if (isBadToolCall(e)) {
                 if (retry) {
-                    startConversation(adjusting)
+                    val initial = if (adjusting && (lastAnswer != null || c.model.hasConversation(OWNER))) {
+                        CarryOver.menu(MenuPrompt.context(c.draft.get()), lastAnswer)
+                    } else {
+                        emptyList()
+                    }
+                    startConversation(adjusting, maxChanges, initial = initial)
                     return exchange(prompt, shownAs = null, retry = false)
                 }
                 say("Le chef n'a pas réussi à faire cette retouche. Reformule plus simplement (un seul changement à la fois), ou utilise les boutons des plats.", ok = false)
             } else if (ModelController.isContextFull(e)) {
-                // Mémoire de travail du modèle pleine : on repart d'une conversation vide, une fois.
+                // Mémoire de travail du modèle pleine : on repart d'une conversation compacte, une fois.
                 if (retry) {
-                    startConversation(adjusting)
+                    val initial = if (adjusting) CarryOver.menu(MenuPrompt.context(c.draft.get()), lastAnswer) else emptyList()
+                    startConversation(adjusting, maxChanges, initial = initial)
                     return exchange(prompt, shownAs = null, retry = false)
                 }
                 _state.update { it.copy(chat = it.chat + ChatLine(false, "⚠️ Demande trop longue pour l'assistant du téléphone : reformule-la plus court, ou utilise les boutons des plats.", tool = true, ok = false)) }
@@ -794,6 +927,13 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
                 chatError(e)
             }
         }
+        _state.update { s ->
+            val last = s.chat.lastOrNull()
+            if (last != null && !last.fromUser && !last.tool && last.text.isBlank()) s.copy(chat = s.chat.dropLast(1)) else s
+        }
+        val cleanAnswer = answer.toString().replace(modelMarkers, "").trim()
+        if (cleanAnswer.isNotEmpty()) lastAnswer = cleanAnswer
+        if (succeeded) warmNext(config())
         return answer.toString()
     }
 
@@ -817,10 +957,15 @@ class MenuViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     fun clearDraft() = viewModelScope.launch {
+        cancelWarm(clearLastAnswer = true)
         c.draft.set(emptyList())
         before = null
         _state.update { it.copy(chat = emptyList(), canUndo = false) }
         step.value = if (week.value.isNotEmpty()) MenuStep.SEMAINE else MenuStep.REGLAGES
+    }
+
+    override fun onCleared() {
+        warmJob?.cancel()
     }
 
     /** Génère les recettes, remplit le livre (Historique) et la liste de courses. */

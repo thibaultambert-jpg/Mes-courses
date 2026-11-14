@@ -16,6 +16,47 @@ import kotlinx.serialization.json.contentOrNull
 object RecipeResponseParser {
     private val json = Json { isLenient = true; ignoreUnknownKeys = true }
 
+    /** Schéma JSON attendu par [parse] (ingrédients d'une recette, sans étapes). */
+    val RECIPE_JSON_SCHEMA = """
+        {
+          "type": "object",
+          "properties": {
+            "titre": { "type": "string" },
+            "personnes": { "type": "integer" },
+            "ingredients": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "aliment": { "type": "string" },
+                  "quantite": { "type": "number" },
+                  "unite": { "type": "string" }
+                },
+                "required": ["aliment", "quantite", "unite"]
+              }
+            }
+          },
+          "required": ["titre", "personnes", "ingredients"]
+        }
+    """.trimIndent()
+
+    /** Schéma JSON attendu par [parseSteps] (étapes, temps et conseil). */
+    val STEPS_JSON_SCHEMA = """
+        {
+          "type": "object",
+          "properties": {
+            "preparation_min": { "type": "integer" },
+            "cuisson_min": { "type": "integer" },
+            "etapes": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "conseil": { "type": "string" }
+          },
+          "required": ["preparation_min", "cuisson_min", "etapes"]
+        }
+    """.trimIndent()
+
     fun parse(text: String, fallbackTitle: String, fallbackServings: Int): Recipe? =
         parseJson(text, fallbackTitle, fallbackServings) ?: parseText(text, fallbackTitle, fallbackServings)
 

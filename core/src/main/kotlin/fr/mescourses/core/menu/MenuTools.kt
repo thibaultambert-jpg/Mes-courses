@@ -32,9 +32,15 @@ class MenuTools(
     /** Recherche sur les sites à la demande du modèle (null = indisponible). */
     private val search: (suspend (String) -> List<Candidate>)? = null,
     /** Retouches permises pendant cette demande (null = sans limite) : le modèle a tendance à en faire plusieurs. */
-    private val maxChanges: Int? = null,
+    @field:Volatile var maxChanges: Int? = null,
 ) {
-    private var changes = 0
+    @Volatile private var changes = 0
+
+    /** Remet à zéro le compteur de retouches et met à jour le plafond (réutilisation d'une conversation pré-chauffée). */
+    fun resetChanges(newMaxChanges: Int? = this.maxChanges) {
+        changes = 0
+        this.maxChanges = newMaxChanges
+    }
 
     /** « type » demandé au modèle : entrée ou dessert ; tout le reste = plat principal (null). */
     private fun courseOf(args: JsonObject): fr.mescourses.core.catalog.Course? =
@@ -59,7 +65,8 @@ class MenuTools(
             override val description = description
             override val parameters = parameters
             override suspend fun execute(args: JsonObject): JsonElement {
-                if (changing && maxChanges != null && changes >= maxChanges) {
+                val limit = maxChanges
+                if (changing && limit != null && changes >= limit) {
                     return toolError("La retouche demandée est déjà faite : ne modifie rien d'autre. Réponds maintenant à l'utilisateur en une phrase.")
                 }
                 val result = try { run(args) } catch (e: Exception) { toolError(e.message ?: e.toString()) }

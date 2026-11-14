@@ -335,21 +335,37 @@ class AppContainer(context: Context) {
         else MenuPrompt.systemWebBuild(today, wishes, pool, MenuHistory(menuHistory.all(), cookbook, today), settings.current.preferences, adjusting)
     }
 
-    fun menuTools(adjusting: Boolean = false, maxChanges: Int? = null): List<AgentTool> = MenuTools(
+    val menuToolsInstance = MenuTools(
         draft, recipes, ::defaultPortions, candidates,
         wishes = { currentWishes },
         search = { words -> candidateFinder.search(words, currentWishes ?: MenuWishes(settings.current.meals, defaultPortions()), limit = 4) },
-        maxChanges = maxChanges,
-    ).all(adjusting)
+    )
+
+    fun menuTools(adjusting: Boolean = false, maxChanges: Int? = null): List<AgentTool> {
+        menuToolsInstance.resetChanges(maxChanges)
+        return menuToolsInstance.all(adjusting)
+    }
+
+    fun resetMenuChanges(maxChanges: Int? = null) {
+        menuToolsInstance.resetChanges(maxChanges)
+    }
 
     fun shoppingSystemPrompt(): String = ShoppingPrompt.system(settings.current.preferOrganic, settings.current.preferences, activeRetailer.value)
 
     fun shoppingTools(): List<AgentTool> = CarrefourTools(backend(), confirmations).all()
 
-    fun stepsWriter() = RecipeStepsWriter(TextGenerator { system, prompt -> model.generateOnce(system, prompt) })
+    private fun jsonTextGenerator(): TextGenerator = object : TextGenerator {
+        override suspend fun generate(system: String, prompt: String): String =
+            model.generateOnce(system, prompt)
+
+        override suspend fun generate(system: String, prompt: String, jsonSchema: String?): String =
+            model.generateOnce(system, prompt, jsonSchema)
+    }
+
+    fun stepsWriter() = RecipeStepsWriter(jsonTextGenerator())
 
     fun menuValidator() = MenuValidator(
-        generator = TextGenerator { system, prompt -> model.generateOnce(system, prompt) },
+        generator = jsonTextGenerator(),
         recipes = recipes,
         shopping = shopping,
         plan = plan,

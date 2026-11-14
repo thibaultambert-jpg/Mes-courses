@@ -18,6 +18,9 @@ import kotlin.math.max
 /** Génère un texte avec le LLM local, sans outils (conversation jetable). */
 fun interface TextGenerator {
     suspend fun generate(system: String, prompt: String): String
+
+    /** Variante avec schéma JSON contraint ; repli par défaut sur [generate] à 2 arguments pour les tests. */
+    suspend fun generate(system: String, prompt: String, jsonSchema: String?): String = generate(system, prompt)
 }
 
 data class ValidationResult(val newRecipes: Int, val reused: Int, val shoppingItems: Int, val failures: List<String>)
@@ -111,10 +114,18 @@ class MenuValidator(
         var missing = emptyList<PlateBalance.Component>()
         for (attempt in 0 until 3) {
             val text = runCatching {
-                generator.generate(MenuPrompt.RECIPE_SYSTEM, MenuPrompt.recipeRequest(dish, servings, alreadyBought.take(25), missing))
+                generator.generate(
+                    MenuPrompt.RECIPE_SYSTEM,
+                    MenuPrompt.recipeRequest(dish, servings, alreadyBought.take(25), missing),
+                    jsonSchema = RecipeResponseParser.RECIPE_JSON_SCHEMA,
+                )
             }.getOrNull() ?: continue
             val recipe = RecipeResponseParser.parse(text, dish.title, servings)
-                ?.let { r -> r.copy(tags = if (r.steps.isEmpty()) listOf("menu", STEPS_PENDING) else listOf("menu")) } ?: continue
+                ?.let { r -> r.copy(tags = if (r.steps.isEmpty()) listOf("menu", STEPS_PENDING) else listOf("menu")) }
+            if (recipe == null) {
+                System.err.println("MenuValidator : JSON recette illisible pour « ${dish.title} » (essai ${attempt + 1}/3)")
+                continue
+            }
             val nowMissing = PlateBalance.missing(listOf(recipe.title) + recipe.ingredients.map { it.name })
             if (nowMissing.isEmpty()) return recipe
             if (best == null || nowMissing.size < missing.size || missing.isEmpty()) best = recipe
@@ -136,9 +147,14 @@ class RecipeStepsWriter(private val generator: TextGenerator) {
     /** Renvoie la recette complétée, ou null si le modèle n'a pas répondu correctement (2 essais). */
     suspend fun complete(recipe: Recipe): Recipe? {
         val prompt = MenuPrompt.stepsRequest(recipe.title, recipe.servings, recipe.ingredients.map { it.raw }, recipe.description)
-        repeat(2) {
-            val text = runCatching { generator.generate(MenuPrompt.RECIPE_SYSTEM, prompt) }.getOrNull() ?: return@repeat
-            val steps = RecipeResponseParser.parseSteps(text) ?: return@repeat
+        repeat(2) { attempt ->
+            val text = runCatching {
+                generator.generate(MenuPrompt.RECIPE_SYSTEM, prompt, jsonSchema = RecipeResponseParser.STEPS_JSON_SCHEMA)
+            }.getOrNull() ?: return@repeat
+            val steps = RecipeResponseParser.parseSteps(text) ?: run {
+                System.err.println("RecipeStepsWriter : JSON étapes illisible pour « ${recipe.title} » (essai ${attempt + 1}/2)")
+                return@repeat
+            }
             return recipe.copy(
                 steps = steps.steps,
                 prepMinutes = steps.prepMinutes ?: recipe.prepMinutes,

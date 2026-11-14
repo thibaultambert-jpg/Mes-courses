@@ -19,6 +19,8 @@ import fr.mescourses.core.menu.MenuTools
 import fr.mescourses.core.menu.MenuValidator
 import fr.mescourses.core.menu.MenuWishes
 import fr.mescourses.core.menu.Novelty
+import fr.mescourses.core.menu.RecipeResponseParser
+import fr.mescourses.core.menu.RecipeStepsWriter
 import fr.mescourses.core.menu.ShoppingPreview
 import fr.mescourses.core.menu.TextGenerator
 import fr.mescourses.core.model.MenuDish
@@ -34,6 +36,7 @@ import fr.mescourses.core.season.Seasonality
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.time.LocalDate
@@ -707,5 +710,83 @@ class MenuPlannerTest {
         val lastLine = build.text.lines().first { it.startsWith("${build.shown.size}. ") }
         assertTrue(lastLine.length <= 120 && "déjà cuisiné" !in lastLine, lastLine)
         assertFalse("${build.shown.size + 1}. Recette" in build.text)
+    }
+
+    @Test fun menu_tools_reset_changes_reutilise_les_outils() = runTest {
+        draft.set(listOf(MenuDish("Quiche", "", Portions(2, 1)), MenuDish("Salade", "", Portions(2, 1))))
+        val menuTools = MenuTools(draft, recipes, { Portions(2, 1) })
+        // Les outils sont capturés une seule fois (comme lors du pré-chauffage de la conversation).
+        val tools = menuTools.all(adjusting = true).associateBy { it.name }
+        assertNull(menuTools.maxChanges)
+
+        suspend fun call(name: String, argsJson: String) =
+            tools.getValue(name).execute(Json.parseToJsonElement(argsJson) as JsonObject).jsonObject
+
+        menuTools.resetChanges(1)
+        assertEquals(1, menuTools.maxChanges)
+        assertEquals("true", call("replace_dish", """{"numero":1,"titre":"Tarte aux poireaux"}""")["ok"]!!.jsonPrimitive.content)
+        assertEquals("false", call("replace_dish", """{"numero":2,"titre":"Soupe de potimarron"}""")["ok"]!!.jsonPrimitive.content)
+        assertEquals(listOf("Tarte aux poireaux", "Salade"), draft.state.value.map { it.title })
+
+        menuTools.resetChanges(2)
+        assertEquals(2, menuTools.maxChanges)
+        assertEquals("true", call("replace_dish", """{"numero":2,"titre":"Soupe de potimarron"}""")["ok"]!!.jsonPrimitive.content)
+        assertEquals("true", call("replace_dish", """{"numero":1,"titre":"Gratin de légumes"}""")["ok"]!!.jsonPrimitive.content)
+        assertEquals("false", call("replace_dish", """{"numero":2,"titre":"Velouté"}""")["ok"]!!.jsonPrimitive.content)
+        assertEquals(listOf("Gratin de légumes", "Soupe de potimarron"), draft.state.value.map { it.title })
+
+        menuTools.resetChanges()
+        assertEquals(2, menuTools.maxChanges)
+        assertEquals("true", call("replace_dish", """{"numero":2,"titre":"Velouté"}""")["ok"]!!.jsonPrimitive.content)
+        assertEquals("Velouté", draft.state.value[1].title)
+    }
+
+    @Test fun schemas_json_valides_et_transmis_par_validator_et_steps_writer() = runTest {
+        val recipeSchema = Json.parseToJsonElement(RecipeResponseParser.RECIPE_JSON_SCHEMA) as JsonObject
+        assertEquals("object", recipeSchema["type"]!!.jsonPrimitive.content)
+        assertTrue(setOf("titre", "personnes", "ingredients").all { it in recipeSchema["properties"]!!.jsonObject })
+        assertEquals(listOf("titre", "personnes", "ingredients"), recipeSchema["required"]!!.jsonArray.map { it.jsonPrimitive.content })
+
+        val stepsSchema = Json.parseToJsonElement(RecipeResponseParser.STEPS_JSON_SCHEMA) as JsonObject
+        assertEquals("object", stepsSchema["type"]!!.jsonPrimitive.content)
+        assertTrue(setOf("preparation_min", "cuisson_min", "etapes", "conseil").all { it in stepsSchema["properties"]!!.jsonObject })
+        assertEquals(listOf("preparation_min", "cuisson_min", "etapes"), stepsSchema["required"]!!.jsonArray.map { it.jsonPrimitive.content })
+
+        val seenSchemas = mutableListOf<String?>()
+        val generator = object : TextGenerator {
+            override suspend fun generate(system: String, prompt: String): String =
+                error("La surcharge avec jsonSchema devait être appelée")
+
+            override suspend fun generate(system: String, prompt: String, jsonSchema: String?): String {
+                seenSchemas += jsonSchema
+                return when (jsonSchema) {
+                    RecipeResponseParser.RECIPE_JSON_SCHEMA ->
+                        """{"titre":"Poêlée","personnes":2,"ingredients":[{"aliment":"panais","quantite":400,"unite":"g"},{"aliment":"tofu","quantite":200,"unite":"g"},{"aliment":"riz","quantite":150,"unite":"g"}]}"""
+                    RecipeResponseParser.STEPS_JSON_SCHEMA ->
+                        """{"preparation_min":10,"cuisson_min":20,"etapes":["Couper les légumes.","Tout cuire à la poêle."],"conseil":"Servir chaud."}"""
+                    else -> error("Schéma inattendu : $jsonSchema")
+                }
+            }
+        }
+
+        val shopping = InMemoryShopping()
+        val plan = InMemoryPlan()
+        draft.set(listOf(MenuDish("Poêlée de panais au tofu", "", Portions(2), invented = true)))
+        val validator = MenuValidator(generator, recipes, shopping, plan, draft, childFactor = { 0.5 }, today = { today }, pantry = { emptyList() })
+        val result = validator.validate()
+
+        assertEquals(1, result.newRecipes)
+        assertTrue(result.failures.isEmpty())
+        val saved = recipes.state.value.single()
+        assertTrue(MenuValidator.STEPS_PENDING in saved.tags)
+
+        val completed = RecipeStepsWriter(generator).complete(saved)
+        assertNotNull(completed)
+        assertEquals(listOf("Couper les légumes.", "Tout cuire à la poêle."), completed.steps)
+        assertEquals(10, completed.prepMinutes)
+        assertEquals(20, completed.cookMinutes)
+        assertEquals("Servir chaud.", completed.notes)
+        assertFalse(MenuValidator.STEPS_PENDING in completed.tags)
+        assertEquals(listOf<String?>(RecipeResponseParser.RECIPE_JSON_SCHEMA, RecipeResponseParser.STEPS_JSON_SCHEMA), seenSchemas)
     }
 }
