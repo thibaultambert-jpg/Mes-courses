@@ -1,9 +1,12 @@
 package fr.mescourses.tools.catalog
 
 import fr.mescourses.core.catalog.CatalogEntry
+import fr.mescourses.core.catalog.CatalogRationalizer
 import fr.mescourses.core.catalog.CatalogSource
 import fr.mescourses.core.catalog.CatalogSources
+import fr.mescourses.core.catalog.RationalizationConfig
 import fr.mescourses.core.catalog.SiteCrawler
+import fr.mescourses.core.catalog.recompute
 import fr.mescourses.core.recipes.RecipeSites
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -29,7 +32,14 @@ import kotlin.system.exitProcess
  *   - `<id>.erreurs.tsv` les fiches encore en erreur à la fin du passage (adresse, message), toutes, pas seulement les premières.
  *   Relancer la commande reprend où le passage précédent s'est arrêté ; une fiche modifiée depuis est relue.
  *
- * `stats --out <dossier>` : compte les recettes par site, type de plat et note.
+ * `stats --out <dossier>` : compte les recettes par site, type de plat et note, avec vecteur, avec étiquettes.
+ *
+ * `rationalize --in <dossier> --out <dossier> [--config <fichier.json>] [--site <id>]`
+ *   Lit les `<site>.jsonl(.gz)` de `--in` (ou le seul `--site`), applique la rationalisation du cœur à l'ensemble des fiches,
+ *   écrit `<out>/<site>.jsonl` par site et `<out>/rationalize-report.md` (rapport et configuration utilisée).
+ *
+ * `split --in <fichier.jsonl(.gz)> --out <dossier>`
+ *   Découpe une base consolidée en `<out>/<site>.jsonl` par `siteId`, après recalcul des champs dérivés de chaque fiche.
  */
 fun main(args: Array<String>) {
     val options = args.drop(1).chunked(2).filter { it.size == 2 && it[0].startsWith("--") }.associate { it[0].drop(2) to it[1] }
@@ -45,7 +55,9 @@ fun main(args: Array<String>) {
             }
         }
         "stats" -> stats(out)
-        else -> fail("commandes : build, stats")
+        "rationalize" -> rationalize(options, out)
+        "split" -> split(options, out)
+        else -> fail("commandes : build, stats, rationalize, split")
     }
 }
 
@@ -174,21 +186,84 @@ private class Builder(private val source: CatalogSource, out: File, rate: Double
     }
 }
 
+/** Lit un `.jsonl` ou `.jsonl.gz` (détecté par les octets 1f 8b) ; les lignes vides ou illisibles sont comptées et ignorées. */
+private fun readEntries(file: File): List<CatalogEntry> {
+    val gz = file.inputStream().use { val a = ByteArray(2); it.read(a) == 2 && a[0] == 0x1f.toByte() && a[1] == 0x8b.toByte() }
+    val list = ArrayList<CatalogEntry>()
+    var skipped = 0
+    val raw = file.inputStream().buffered(1 shl 16)
+    (if (gz) GZIPInputStream(raw, 1 shl 16) else raw).bufferedReader(Charsets.UTF_8).useLines { lines ->
+        for (line in lines) {
+            if (line.isBlank()) { skipped++; continue }
+            val e = runCatching { json.decodeFromString(CatalogEntry.serializer(), line) }.getOrNull()
+            if (e == null) skipped++ else list.add(e)
+        }
+    }
+    if (skipped > 0) System.err.println("${file.name} : $skipped lignes vides ou illisibles ignorées")
+    return list
+}
+
+private fun writeEntries(file: File, entries: List<CatalogEntry>) {
+    file.bufferedWriter(Charsets.UTF_8).use { w ->
+        for (e in entries) { w.write(json.encodeToString(CatalogEntry.serializer(), e)); w.write("\n") }
+    }
+}
+
+private fun rationalize(options: Map<String, String>, out: File) {
+    val input = File(options["in"] ?: fail("--in manquant"))
+    val site = options["site"]
+    val files = input.listFiles { f -> f.isFile && (f.name.endsWith(".jsonl") || f.name.endsWith(".jsonl.gz")) }.orEmpty()
+        .filter { site == null || it.name.removeSuffix(".gz").removeSuffix(".jsonl") == site }.sortedBy { it.name }
+    if (files.isEmpty()) fail("aucun fichier .jsonl(.gz) dans $input" + (site?.let { " pour le site $it" } ?: ""))
+    val configText = options["config"]?.let { File(it).readText() }
+    val config = configText?.let { RationalizationConfig.load(it) } ?: RationalizationConfig()
+    val entries = files.flatMap { readEntries(it) }
+    val result = CatalogRationalizer.process(entries, config)
+    out.mkdirs()
+    val outputs = result.kept.groupBy { it.siteId }
+    outputs.toSortedMap().forEach { (id, list) -> writeEntries(File(out, "$id.jsonl"), list) }
+    val configUsed = configText ?: "(configuration par défaut) " + Json.encodeToString(RationalizationConfig.serializer(), config)
+    val report = result.report.markdown() + "\n\n## Configuration utilisée\n\n```json\n$configUsed\n```\n"
+    File(out, "rationalize-report.md").writeText(report)
+    println("${entries.size} fiches lues, ${result.kept.size} gardées, ${outputs.size} sites écrits dans $out")
+    println(result.report.markdown())
+}
+
+private fun split(options: Map<String, String>, out: File) {
+    val input = File(options["in"] ?: fail("--in manquant"))
+    if (!input.isFile) fail("fichier introuvable : $input")
+    val entries = readEntries(input)
+    var noSite = 0
+    val bySite = sortedMapOf<String, MutableList<CatalogEntry>>()
+    for (e in entries) {
+        if (e.siteId.isBlank()) { noSite++; continue }
+        bySite.getOrPut(e.siteId) { ArrayList() }.add(e.recompute())
+    }
+    out.mkdirs()
+    var total = 0
+    for ((id, list) in bySite) {
+        writeEntries(File(out, "$id.jsonl"), list)
+        total += list.size
+        println("$id : ${list.size}")
+    }
+    println("Total : $total fiches, ${bySite.size} sites" + if (noSite > 0) " ($noSite fiches sans siteId ignorées)" else "")
+}
+
 private fun stats(out: File) {
-    println("| Site | Recettes | Plats, soupes, salades | Bien notées | Avec note | Sans durée |")
-    println("|---|---|---|---|---|---|")
+    println("| Site | Recettes | Plats, soupes, salades | Bien notées | Avec note | Sans durée | Avec vecteur | Avec étiquettes |")
+    println("|---|---|---|---|---|---|---|---|")
     var total = 0
     var bytes = 0L
-    out.listFiles { f -> f.name.endsWith(".jsonl") }.orEmpty().sortedBy { it.name }.forEach { file ->
+    out.listFiles { f -> f.name.endsWith(".jsonl") || f.name.endsWith(".jsonl.gz") }.orEmpty().sortedBy { it.name }.forEach { file ->
         // La dernière lecture d'une fiche l'emporte (une fiche modifiée est relue).
         val byId = LinkedHashMap<String, CatalogEntry>()
-        file.forEachLine { line -> runCatching { json.decodeFromString(CatalogEntry.serializer(), line) }.getOrNull()?.let { byId[it.id] = it } }
+        readEntries(file).forEach { byId[it.id] = it }
         val list = byId.values
         total += list.size
         bytes += file.length()
-        println("| ${file.nameWithoutExtension} | ${list.size} | ${list.count { it.course.meal }} | " +
-            "${list.count { fr.mescourses.core.catalog.CatalogPolicy.wellRated(it) }} | ${list.count { it.rating != null }} | ${list.count { it.totalMinutes == null }} |")
+        println("| ${file.name.removeSuffix(".gz").removeSuffix(".jsonl")} | ${list.size} | ${list.count { it.course.meal }} | " +
+            "${list.count { fr.mescourses.core.catalog.CatalogPolicy.wellRated(it) }} | ${list.count { it.rating != null }} | ${list.count { it.totalMinutes == null }} | " +
+            "${list.count { it.embedding != null }} | ${list.count { it.nutritionTags.isNotEmpty() }} |")
     }
     println("\nTotal : $total recettes, ${bytes / 1_000_000} Mo de JSON")
 }
-
