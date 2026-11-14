@@ -10,8 +10,9 @@ object FoodName {
     private val leading = Regex(
         """^(?i)(quelques|quelque|un peu de|un peu d['’]|un|une|des|du|de la|de l['’]|de|d['’]|la|le|les|l['’]|""" +
             """morceaux?|brins?|branches?|tiges?|tranches?|gousses?|t[eê]tes?|feuilles?|bottes?|bouquets?|pinc[ée]es?|""" +
-            """zestes?|jus|filets?|blancs?|pav[ée]s?|dés|cubes?|lamelles?|rondelles?|bo[iî]tes?|pots?|sachets?|""" +
+            """zestes?|jus|filets?|blancs?(?!\s+d['’]o?[eœ]ufs?)|pav[ée]s?|dés|cubes?|lamelles?|rondelles?|bo[iî]tes?|pots?|sachets?|""" +
             """poign[ée]es?|bols?|verres?|noisettes?|noix|cuill[eè]res?|cuiller[ée]es?|c\.? ?[àa] ?(soupe|caf[ée]|s|c)\.?|unit[ée]s?|pi[eè]ces?|""" +
+            """cm|pouces?|[ée]clats?|quartiers?|c\.?\s*[àa]\s*(?:th[ée]|t)\.?|bou|paquets?|""" +
             """petits?|petites?|gros|grosses?|beaux?|belles?)\s+"""
     )
 

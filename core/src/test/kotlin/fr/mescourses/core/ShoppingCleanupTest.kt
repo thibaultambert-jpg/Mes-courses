@@ -42,6 +42,38 @@ class ShoppingCleanupTest {
         assertEquals("pommes de terre", FoodName.clean("pommes de terre"))
     }
 
+    // « blancs d'œufs » reste tel quel (le produit à acheter reste identifiable comme œufs), mais « blancs de poulet » perd « blancs ».
+    @Test fun blanc_d_oeuf_conserve() {
+        assertEquals("blancs d'œufs", FoodName.clean("blancs d'œufs"))
+        assertEquals("blanc d'oeuf", FoodName.clean("blanc d'oeuf"))
+        assertEquals("blancs d’œufs", FoodName.clean("blancs d’œufs"))
+        assertEquals("poulet", FoodName.clean("blancs de poulet"))
+    }
+
+    @Test fun paquet_et_cm_retires() {
+        assertEquals("crème", FoodName.clean("paquet crème"))
+        assertEquals("crème", FoodName.clean(IngredientParser.parse("1 paquet crème").name))
+        assertEquals("gingembre", FoodName.clean("cm de gingembre"))
+        assertEquals("gingembre", FoodName.clean(IngredientParser.parse("2 cm de gingembre").name))
+    }
+
+    @Test fun cuillere_a_the_retiree() {
+        assertEquals("vanille", FoodName.clean("c. à thé de vanille"))
+        assertEquals("vanille", FoodName.clean("C à t vanille"))
+        assertEquals("vanille", FoodName.clean(IngredientParser.parse("1 c. à thé de vanille").name))
+    }
+
+    @Test fun bouquet_abrege() {
+        assertEquals("persil", FoodName.clean("bou persil"))
+        assertEquals("persil", FoodName.clean(IngredientParser.parse("1 bou persil").name))
+    }
+
+    @Test fun eclats_et_quartiers() {
+        assertEquals("noisettes", FoodName.clean("éclats de noisettes"))
+        assertEquals("citron", FoodName.clean("quartiers de citron"))
+        assertEquals("citron", FoodName.clean(IngredientParser.parse("2 quartiers de citron").name))
+    }
+
     @Test fun recette_vers_liste_sans_placard() {
         val r = Recipe(
             title = "Poulet",
