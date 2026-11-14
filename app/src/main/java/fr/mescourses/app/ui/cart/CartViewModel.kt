@@ -309,33 +309,36 @@ class ShoppingChatViewModel(private val c: AppContainer) : ViewModel() {
         if (t.isEmpty() || busy.value) return
         job = viewModelScope.launch {
             busy.value = true
+            c.model.setChatForeground(true)
             lines.update { it + ShoppingChatLine(true, t) }
             try {
                 val id = owner
-                if (!c.model.owns(id)) c.model.startConversation(id, c.shoppingSystemPrompt(), c.shoppingTools())
+                // Conversation fermée par la file d'étapes entre deux messages : send(id, …) la rouvre elle-même.
+                if (!c.model.hasConversation(id)) c.model.startConversation(id, c.shoppingSystemPrompt(), c.shoppingTools())
                 try {
-                    chat(t)
+                    chat(id, t)
                 } catch (e: Exception) {
                     // Mémoire de l'assistant pleine : conversation neuve, un seul nouvel essai.
                     if (e is kotlinx.coroutines.CancellationException || !fr.mescourses.app.llm.ModelController.isContextFull(e)) throw e
                     lines.update { it + ShoppingChatLine(false, "↻ Mémoire de l'assistant pleine : nouvelle conversation.", tool = true, ok = true) }
                     c.model.startConversation(id, c.shoppingSystemPrompt(), c.shoppingTools())
                     val last = lines.value.lastOrNull { !it.fromUser && !it.tool }?.text?.trim()?.takeLast(600)
-                    chat(last?.let { "Rappel de ta réponse précédente : « $it »\n$t" } ?: t)
+                    chat(id, last?.let { "Rappel de ta réponse précédente : « $it »\n$t" } ?: t)
                 }
             } catch (e: Exception) {
                 c.session().onError(e)
                 lines.update { it + ShoppingChatLine(false, "⚠️ ${e.message}", tool = true, ok = false) }
             } finally {
                 busy.value = false
+                c.model.setChatForeground(false)
             }
         }
     }
 
     /** Envoie un message à l'assistant et affiche sa réponse et ses recherches au fil de l'eau. */
-    private suspend fun chat(t: String) {
+    private suspend fun chat(id: String, t: String) {
         c.model.use {
-            c.model.send(t).collect { ev ->
+            c.model.send(id, t).collect { ev ->
                 when (ev) {
                     is ChatEvent.Token -> lines.update { l ->
                         val last = l.lastOrNull()
@@ -357,6 +360,7 @@ class ShoppingChatViewModel(private val c: AppContainer) : ViewModel() {
     fun stop() {
         job?.cancel()
         busy.value = false
+        c.model.setChatForeground(false)
     }
 
     private fun label(tool: String) = when (tool) {
