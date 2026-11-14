@@ -10,7 +10,16 @@ import fr.mescourses.app.retail.SessionState
 import fr.mescourses.core.carrefour.CarrefourException
 import fr.mescourses.core.retail.Retailer
 import fr.mescourses.app.llm.ChatEvent
+import fr.mescourses.app.llm.ModelController
 import fr.mescourses.app.llm.ModelStatus
+import fr.mescourses.core.agent.AgentTool
+import fr.mescourses.core.agent.str
+import fr.mescourses.core.carrefour.compact
+import fr.mescourses.core.llm.CarryOver
+import fr.mescourses.core.llm.ConversationPolicy
+import fr.mescourses.core.llm.Rollover
+import fr.mescourses.core.llm.TokenEstimate
+import fr.mescourses.core.llm.Transcript
 import fr.mescourses.core.cart.CartLine
 import fr.mescourses.core.cart.CartPlanner
 import fr.mescourses.core.cart.LineStatus
@@ -18,6 +27,7 @@ import fr.mescourses.core.carrefour.Cart
 import fr.mescourses.core.carrefour.TimeSlot
 import fr.mescourses.core.model.ShoppingItem
 import fr.mescourses.core.shopping.ShoppingListMerger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.SharingStarted
@@ -29,6 +39,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 
 enum class Phase { IDLE, RECHERCHE, VALIDATION, ENVOI, TERMINE }
 
@@ -300,9 +312,43 @@ class ShoppingChatViewModel(private val c: AppContainer) : ViewModel() {
     val lines = MutableStateFlow<List<ShoppingChatLine>>(emptyList())
     val busy = MutableStateFlow(false)
     private var job: Job? = null
+    private var warmJob: Job? = null
+
+    /** Dernières recherches et dernière réponse par conversation (reportés lors d'une rotation de contexte). */
+    private val seenByOwner = mutableMapOf<String, LinkedHashSet<String>>()
+    private val lastAnswerByOwner = mutableMapOf<String, String>()
 
     /** Une conversation par enseigne : les outils de Gemma sont liés au drive de l'enseigne active. */
     private val owner: String get() = "courses-" + c.activeRetailer.value.name
+
+    init {
+        warmUp()
+    }
+
+    /** Pré-chauffe le prompt système et les outils à l'entrée de l'écran pendant que l'utilisateur tape. */
+    private fun warmUp() {
+        val id = owner
+        if (!c.model.status.value.available || c.model.hasConversation(id)) return
+        warmJob = viewModelScope.launch {
+            try {
+                c.model.use {
+                    if (!c.model.hasConversation(id)) {
+                        c.model.startConversation(
+                            id,
+                            c.shoppingSystemPrompt(),
+                            c.shoppingTools(),
+                            prefill = true,
+                            maxOutputTokens = MAX_OUTPUT_TOKENS,
+                        )
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Pré-chauffage facultatif : send() démarrera la conversation et remontera l'erreur si besoin.
+            }
+        }
+    }
 
     fun send(text: String) {
         val t = text.trim()
@@ -312,20 +358,42 @@ class ShoppingChatViewModel(private val c: AppContainer) : ViewModel() {
             c.model.setChatForeground(true)
             lines.update { it + ShoppingChatLine(true, t) }
             try {
+                warmJob?.join()
                 val id = owner
-                // Conversation fermée par la file d'étapes entre deux messages : send(id, …) la rouvre elle-même.
-                if (!c.model.hasConversation(id)) c.model.startConversation(id, c.shoppingSystemPrompt(), c.shoppingTools())
+                val system = c.shoppingSystemPrompt()
+                val tools = c.shoppingTools()
+                if (!c.model.hasConversation(id)) {
+                    c.model.startConversation(id, system, tools, prefill = false, maxOutputTokens = MAX_OUTPUT_TOKENS)
+                } else {
+                    check(c.model.ensureLoaded()) { "Assistant indisponible" }
+                    val policy = ConversationPolicy(c.model.budget(ModelController.Kind.COURSES))
+                    val transcript = c.model.transcript(id) ?: Transcript()
+                    val tokenCount = if (c.model.owns(id)) c.model.tokenCount() else null
+                    val decision = policy.decide(
+                        tokenCount = tokenCount,
+                        transcript = transcript,
+                        systemTokens = systemTokens(system, tools),
+                        nextMessage = t,
+                        expectedToolTokens = EXPECTED_TOOL_TOKENS,
+                    ) { emptyList() }
+                    if (decision is Rollover.Recreate) {
+                        lines.update { it + ShoppingChatLine(false, "↻ Nouvelle conversation (mémoire)", tool = true, ok = true) }
+                        val initial = CarryOver.courses(cartSummary(), seenFor(id), lastAnswerByOwner[id])
+                        c.model.startConversation(id, system, tools, initial = initial, prefill = false, maxOutputTokens = MAX_OUTPUT_TOKENS)
+                    }
+                }
                 try {
                     chat(id, t)
                 } catch (e: Exception) {
                     // Mémoire de l'assistant pleine : conversation neuve, un seul nouvel essai.
-                    if (e is kotlinx.coroutines.CancellationException || !fr.mescourses.app.llm.ModelController.isContextFull(e)) throw e
+                    if (e is CancellationException || !ModelController.isContextFull(e)) throw e
                     lines.update { it + ShoppingChatLine(false, "↻ Mémoire de l'assistant pleine : nouvelle conversation.", tool = true, ok = true) }
-                    c.model.startConversation(id, c.shoppingSystemPrompt(), c.shoppingTools())
-                    val last = lines.value.lastOrNull { !it.fromUser && !it.tool }?.text?.trim()?.takeLast(600)
-                    chat(id, last?.let { "Rappel de ta réponse précédente : « $it »\n$t" } ?: t)
+                    val initial = CarryOver.courses(cartSummary(), seenFor(id), lastAnswerByOwner[id])
+                    c.model.startConversation(id, system, tools, initial = initial, prefill = false, maxOutputTokens = MAX_OUTPUT_TOKENS)
+                    chat(id, t)
                 }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 c.session().onError(e)
                 lines.update { it + ShoppingChatLine(false, "⚠️ ${e.message}", tool = true, ok = false) }
             } finally {
@@ -337,15 +405,22 @@ class ShoppingChatViewModel(private val c: AppContainer) : ViewModel() {
 
     /** Envoie un message à l'assistant et affiche sa réponse et ses recherches au fil de l'eau. */
     private suspend fun chat(id: String, t: String) {
+        val answer = StringBuilder()
         c.model.use {
             c.model.send(id, t).collect { ev ->
                 when (ev) {
-                    is ChatEvent.Token -> lines.update { l ->
-                        val last = l.lastOrNull()
-                        if (last != null && !last.fromUser && !last.tool) l.dropLast(1) + last.copy(text = last.text + ev.text)
-                        else l + ShoppingChatLine(false, ev.text)
+                    is ChatEvent.Token -> {
+                        answer.append(ev.text)
+                        lines.update { l ->
+                            val last = l.lastOrNull()
+                            if (last != null && !last.fromUser && !last.tool) l.dropLast(1) + last.copy(text = last.text + ev.text)
+                            else l + ShoppingChatLine(false, ev.text)
+                        }
                     }
-                    is ChatEvent.ToolCall -> lines.update { it + ShoppingChatLine(false, "🔎 ${label(ev.name)}…", tool = true) }
+                    is ChatEvent.ToolCall -> {
+                        recordToolCall(id, ev.name, ev.arguments)
+                        lines.update { it + ShoppingChatLine(false, "🔎 ${label(ev.name)}…", tool = true) }
+                    }
                     is ChatEvent.ToolResult -> lines.update { l ->
                         val i = l.indexOfLast { it.tool }
                         if (i < 0) l else l.toMutableList().also { m ->
@@ -355,11 +430,45 @@ class ShoppingChatViewModel(private val c: AppContainer) : ViewModel() {
                 }
             }
         }
+        answer.toString().trim().takeIf { it.isNotEmpty() }?.let { lastAnswerByOwner[id] = it }
     }
+
+    private fun recordToolCall(id: String, name: String, arguments: String) {
+        if (name != "chercher_produit") return
+        val args = runCatching { Json.parseToJsonElement(arguments).jsonObject }.getOrNull() ?: return
+        val q = (args.str("requete") ?: args.str("query"))?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        val set = seenByOwner.getOrPut(id) { LinkedHashSet() }
+        set.remove(q)
+        set.add(q)
+    }
+
+    private fun seenFor(id: String): List<String> = seenByOwner[id]?.toList().orEmpty().takeLast(MAX_SEEN)
+
+    private fun systemTokens(system: String, tools: List<AgentTool>): Int =
+        TokenEstimate.text(system) + TokenEstimate.tools(tools.map { it.openApiJson() })
+
+    private suspend fun cartSummary(): String? = runCatching {
+        val cart = c.backend().cart()
+        val active = cart.lines.filter { it.quantity > 0 }
+        if (active.isEmpty()) return@runCatching Cart(emptyList(), cart.total, cart.context).compact().toString()
+        var count = active.size
+        var json = Cart(active, cart.total, cart.context).compact().toString()
+        while (json.length > MAX_CART_SUMMARY_CHARS && count > 1) {
+            count--
+            json = Cart(active.take(count), cart.total, cart.context).compact().toString()
+        }
+        val omitted = active.size - count
+        val bounded = if (json.length <= MAX_CART_SUMMARY_CHARS) json else json.take(MAX_CART_SUMMARY_CHARS - 1) + "…"
+        if (omitted > 0) "$bounded (+$omitted autre(s))" else bounded
+    }.getOrNull()
 
     fun stop() {
         job?.cancel()
         busy.value = false
+        c.model.setChatForeground(false)
+    }
+
+    override fun onCleared() {
         c.model.setChatForeground(false)
     }
 
@@ -371,5 +480,12 @@ class ShoppingChatViewModel(private val c: AppContainer) : ViewModel() {
         "modifier_quantite" -> "Modification du panier"
         "creneaux_drive" -> "Créneaux du drive"
         else -> tool
+    }
+
+    private companion object {
+        const val EXPECTED_TOOL_TOKENS = 700
+        const val MAX_OUTPUT_TOKENS = 400
+        const val MAX_CART_SUMMARY_CHARS = 450
+        const val MAX_SEEN = 12
     }
 }
